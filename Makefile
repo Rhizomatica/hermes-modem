@@ -1,11 +1,11 @@
-.PHONY: all src datalink audioio common clean
+.PHONY: all freedv datalink audioio common clean
 
-all: src datalink audioio common
+all: freedv datalink audioio common
 
-src:
-	$(MAKE) -C src
+freedv:
+	$(MAKE) -C freedv
 
-datalink: src common audioio
+datalink: freedv common audioio
 	$(MAKE) -C datalink
 
 audioio: 
@@ -15,7 +15,7 @@ common:
 	$(MAKE) -C common
 
 clean:
-	$(MAKE) -C src clean
+	$(MAKE) -C freedv clean
 	$(MAKE) -C datalink clean
 	$(MAKE) -C audioio clean
 	$(MAKE) -C common clean
