@@ -1,21 +1,35 @@
 CFLAGS=-DGIT_HASH=\"hermes\" -D_GNU_SOURCE=1 -I. -Wall -Wno-strict-overflow -std=gnu11 -fPIC -g -O2
 CC=gcc
 
+LIBNAME = libfreedvdata.a
+
+OBJS_COMMON = freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o \
+              codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o \
+              phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o \
+              freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o \
+              nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o \
+              postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o \
+              HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o \
+              H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o \
+              H_212_158.o phi0.o gp_interleaver.o
+
 all: freedv_data_tx freedv_data_rx freedv_data_raw_tx freedv_data_raw_rx
 
-freedv_data_tx: freedv_data_tx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o
-	$(CC) $(CFLAGS) -o freedv_data_tx freedv_data_tx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o -lm
-
-freedv_data_rx: freedv_data_rx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o
-	$(CC) $(CFLAGS) -o freedv_data_rx freedv_data_tx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o -lm
+$(LIBNAME): $(OBJS_COMMON)
+	ar rcs $(LIBNAME) $(OBJS_COMMON)
 
 
-freedv_data_raw_tx: freedv_data_raw_tx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o modem_stats.o
-	$(CC) $(CFLAGS) -o freedv_data_raw_tx freedv_data_raw_tx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o modem_stats.o -lm
+freedv_data_tx: freedv_data_tx.o $(LIBNAME)
+	$(CC) $(CFLAGS) -o $@ freedv_data_tx.o $(LIBNAME) -lm
 
-freedv_data_raw_rx: freedv_data_raw_rx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o modem_stats.o
-	$(CC) $(CFLAGS) -o freedv_data_raw_tx freedv_data_raw_tx.o freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_1600.o fdmdv.o codec2_fft.o codec2.o pack.o kiss_fftr.o newamp1.o quantise.o lsp.o lpc.o mbest.o phase.o sine.o varicode.o freedv_700.o freedv_vhf_framing.o fmfsk.o filter.o freedv_data_channel.o ldpc_codes.o mpdecode_core.o interldpc.o golay23.o linreg.o nlp.o codebooknewamp1.o codebooknewamp1_energy.o codebooknewamp2.o codebooknewamp2_energy.o postfilter.o interp.o codebook.o codebookd.o codebookge.o codebookjmv.o ofdm_mode.o HRA_112_112.o HRA_56_56.o HRAb_396_504.o H_256_768_22.o H_256_512_4.o HRAa_1536_512.o H_128_256_5.o H_2064_516_sparse.o H_4096_8192_3d.o H_16200_9720.o H_1024_2048_4f.o H_212_158.o phi0.o gp_interleaver.o modem_stats.o -lm
+freedv_data_rx: freedv_data_rx.o $(LIBNAME)
+	$(CC) $(CFLAGS) -o $@ freedv_data_rx.o $(LIBNAME) -lm
 
+freedv_data_raw_tx: freedv_data_raw_tx.o modem_stats.o $(LIBNAME)
+	$(CC) $(CFLAGS) -o $@ freedv_data_raw_tx.o modem_stats.o $(LIBNAME) -lm
+
+freedv_data_raw_rx: freedv_data_raw_rx.o modem_stats.o octave.o $(LIBNAME)
+	$(CC) $(CFLAGS) -o $@ freedv_data_raw_rx.o modem_stats.o octave.o $(LIBNAME) -lm
 
 
 freedv_data_tx.o: freedv_data_tx.c freedv_api.h
@@ -207,8 +221,11 @@ gp_interleaver.o: gp_interleaver.c gp_interleaver.h
 modem_stats.o: modem_stats.c modem_stats.h
 	$(CC) $(CFLAGS) -c modem_stats.c
 
+octave.o: octave.c octave.h
+	$(CC) $(CFLAGS) -c octave.c
+
 clean:
 	rm -f freedv_data_tx freedv_data_rx freedv_data_raw_tx freedv_data_raw_rx
-	rm -f *.o
+	rm -f *.o *.a
 
 .PHONY: all clean
