@@ -3,8 +3,10 @@
 */
 
 #include <ffaudio/audio.h>
+#include <ffaudio/util.h>
 #include <ffbase/ring.h>
 #include <aaudio/AAudio.h>
+#include <dlfcn.h>
 
 static int ffaaudio_init(ffaudio_init_conf *conf)
 {
@@ -65,13 +67,6 @@ static unsigned buffer_msec_to_frames(const ffaudio_conf *conf, unsigned msec)
 	return conf->sample_rate * msec / 1000;
 }
 
-/** msec -> bytes:
-rate*width*channels*msec/1000 */
-static ffuint buffer_msec_to_size(const ffaudio_conf *conf, ffuint msec)
-{
-	return conf->sample_rate * (conf->format & 0xff) / 8 * conf->channels * msec / 1000;
-}
-
 static void on_event_dummy(void *param) {}
 static aaudio_data_callback_result_t on_play(AAudioStream *stream, void *userData, void *audioData, int32_t numFrames);
 static aaudio_data_callback_result_t on_capture(AAudioStream *stream, void *userData, void *audioData, int32_t numFrames);
@@ -117,6 +112,20 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 
 	if (b->capture)
 		AAudioStreamBuilder_setDirection(asb, AAUDIO_DIRECTION_INPUT);
+
+	if (conf->device_id && !strcmp(conf->device_id, "unprocessed")) {
+		typedef AAUDIO_API void (*AAudioStreamBuilder_setInputPreset_t)(AAudioStreamBuilder* builder, aaudio_input_preset_t inputPreset);
+		static AAudioStreamBuilder_setInputPreset_t _AAudioStreamBuilder_setInputPreset;
+		if (!_AAudioStreamBuilder_setInputPreset) {
+			void *dl = dlopen("libaaudio.so", 0);
+			if (dl) {
+				_AAudioStreamBuilder_setInputPreset = dlsym(dl, "AAudioStreamBuilder_setInputPreset");
+				dlclose(dl);
+			}
+		}
+		if (_AAudioStreamBuilder_setInputPreset)
+			_AAudioStreamBuilder_setInputPreset(asb, AAUDIO_INPUT_PRESET_UNPROCESSED);
+	}
 
 	if (conf->format != 0)
 		AAudioStreamBuilder_setFormat(asb, fmt_aa_ffa(conf->format));
@@ -179,9 +188,9 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	r = AAudioStream_getBufferSizeInFrames(b->as);
 	conf->buffer_length_msec = buffer_frames_to_msec(conf, r);
 	b->period_ms = conf->buffer_length_msec / 4;
-	b->frame_size = (conf->format & 0xff) / 8 * conf->channels;
+	b->frame_size = _ffau_f_bits(conf->format)/8 * conf->channels;
 
-	ffuint bufsize = buffer_msec_to_size(conf, conf->buffer_length_msec);
+	ffuint bufsize = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec);
 	if (NULL == (b->ring = ffring_alloc(bufsize, FFRING_1_WRITER))) {
 		b->err = "ffring_alloc()";
 		b->errcode = 0;

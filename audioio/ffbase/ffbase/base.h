@@ -118,17 +118,12 @@ ffmem_copy ffmem_move
 #endif
 
 #if defined FF_WIN
-	#include <winsock2.h>
 	#include <windows.h>
 	#include <stdlib.h>
 #else
 	#ifndef _POSIX_C_SOURCE
 		#define _POSIX_C_SOURCE  200112L // for posix_memalign()
 	#endif
-	#ifndef __USE_XOPEN2K
-		#define __USE_XOPEN2K
-	#endif
-	#include <alloca.h>
 	#include <stdlib.h>
 	#include <string.h>
 	#include <unistd.h>
@@ -461,7 +456,7 @@ static inline void ffmem_free(void *ptr)
 
 static inline void* ffmem_align(ffsize size, ffsize align)
 {
-	return _aligned_malloc(size, align);
+	return FFMEM_ASSERT(_aligned_malloc(size, align));
 }
 
 static inline void ffmem_alignfree(void *ptr)
@@ -497,7 +492,7 @@ static inline void* ffmem_align(ffsize size, ffsize align)
 	int e = posix_memalign(&buf, align, size);
 	if (e != 0) {
 		errno = e;
-		return NULL;
+		return FFMEM_ASSERT(NULL);
 	}
 	return buf;
 }
