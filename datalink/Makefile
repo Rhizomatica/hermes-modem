@@ -40,7 +40,7 @@ endif
 
 
 CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../freedv -I.. -I../audioio/ffbase -I../common
+CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../freedv -I.. -I../audioio/ffaudio -I../common
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
