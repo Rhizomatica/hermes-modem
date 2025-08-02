@@ -1,9 +1,9 @@
 *.pyc
 *.o
 *.a
-src/freedv_data_raw_rx
-src/freedv_data_raw_tx
-src/freedv_data_rx
-src/freedv_data_tx
-src/libfreedvdata.a
+freedv/freedv_data_raw_rx
+freedv/freedv_data_raw_tx
+freedv/freedv_data_rx
+freedv/freedv_data_tx
+freedv/libfreedvdata.a
 modem
