@@ -32,9 +32,13 @@
 
 
 #include "freedv_api.h"
+#include "arq.h"
 
 #include "defines.h"
 #include "audioio/audioio.h"
+
+extern cbuf_handle_t capture_buffer;
+extern cbuf_handle_t playback_buffer;
 
 int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC3,
@@ -65,8 +69,8 @@ int main(int argc, char *argv[])
     int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;
-    int base_tcp_port = 7002; // default ARQ TCP port
-    int broadcast_port = 7004; // default broadcast TCP port
+    int base_tcp_port = DEFAULT_ARQ_PORT; // default ARQ TCP port
+    int broadcast_port = DEFAULT_BROADCAST_PORT; // default broadcast TCP port
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
@@ -88,8 +92,8 @@ int main(int argc, char *argv[])
         printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
         printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
         printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
-        printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
-        printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 7004.\n");
+        printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
+        printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
         printf(" -l                         Lists all modulator/coding modes.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -v                         Verbose mode. Prints more information during execution.\n");
@@ -297,7 +301,7 @@ int main(int argc, char *argv[])
     default:
         printf("Selected audio system not supported. Trying to continue.\n");
     }
-
+    
     if (list_sndcards)
     {
         list_soundcards(audio_system);
@@ -307,7 +311,51 @@ int main(int argc, char *argv[])
             free(output_dev);
         return EXIT_SUCCESS;
     }    
-  
+
+    pthread_t radio_capture;
+    pthread_t radio_playback;
+    
+    if (audio_system == AUDIO_SUBSYSTEM_SHM)
+    {
+    try_shm_connect1:
+        capture_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
+        if (capture_buffer == NULL)
+        {
+            printf("Shared memory not created. Waiting for the radio daemon\n");
+            sleep(2);
+            goto try_shm_connect1;
+        }
+
+    try_shm_connect2:
+        playback_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
+        if (playback_buffer == NULL)
+        {
+            printf("Shared memory not created. Waiting for the radio daemon...\n");
+            sleep(2);
+            goto try_shm_connect2;
+        }
+        printf("Connected to shared memory buffers.\n");
+    }
+    else
+    {
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
+    }
+
+    
+    arq_init(base_tcp_port, mod_config);
+
+
+    if (audio_system == AUDIO_SUBSYSTEM_SHM)
+    {
+        // test code
+        circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
+        circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
+        circular_buf_free_shm(capture_buffer);
+        circular_buf_free_shm(playback_buffer);
+    }
+    else{
+        audioio_deinit(&radio_capture, &radio_playback);
+    }
     return 0;
 
 }

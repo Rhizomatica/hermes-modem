@@ -34,17 +34,11 @@
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-#if defined(_WIN32)
-extern HANDLE            capture_prep_mutex;
-#else
-extern pthread_mutex_t   capture_prep_mutex;
-#endif
-
 
 int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
-						  pthread_t *radio_playback, pthread_t *radio_capture_prep);
+						  pthread_t *radio_playback);
 
-int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_t *radio_capture_prep);
+int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
 
 int tx_transfer(double *buffer, size_t len);
 int rx_transfer(double *buffer, size_t len);

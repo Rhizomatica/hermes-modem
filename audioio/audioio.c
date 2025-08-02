@@ -1,6 +1,6 @@
 /* Audio subsystem
  *
- * Copyright (C) 2024 Rhizomatica
+ * Copyright (C) 2024-2025 Rhizomatica
  * Author: Rafael Diniz <rafael@rhizomatica.org>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
@@ -19,7 +19,7 @@
 
 #include "ring_buffer_posix.h"
 #include "shm_posix.h"
-#include "common_defines.h"
+#include "../datalink/defines.h"
 #include "os_interop.h"
 
 #include "audioio.h"
@@ -31,13 +31,6 @@ cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
-
-#if defined(_WIN32)
-    HANDLE            capture_prep_mutex;
-#else
-    pthread_mutex_t   capture_prep_mutex;
-#endif
-
 
 // tap to file FOR DEBUGGING PURPOSES //
 #define ENABLE_FLOAT64_TAP 0
@@ -128,9 +121,9 @@ void *radio_playback_thread(void *device_ptr)
     ffuint frame_size;
     ffuint msec_bytes;
 
-    uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+    uint8_t *buffer = (uint8_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(double) * 2);
     double *buffer_double =  (double *) buffer;
-    int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
+    int32_t *buffer_internal_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
 
     ffuint total_written = 0;
     int ch_layout = STEREO;
@@ -370,7 +363,7 @@ void *radio_capture_thread(void *device_ptr)
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-    buffer_internal = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+    buffer_internal = (double *) malloc(SIGNAL_BUFFER_SIZE * sizeof(double) * 2);
 
 #if 0 // TODO: parametrize this
     if (radio_type == RADIO_SBITX)
@@ -567,7 +560,7 @@ int rx_transfer(double *buffer, size_t len)
 
 
 int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
-                          pthread_t *radio_playback, pthread_t *radio_capture_prep)
+                          pthread_t *radio_playback)
 {
     audio_subsystem = audio_subsys;
 
@@ -576,13 +569,13 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 #endif
 
 #if defined(_WIN32)
-    uint8_t *buffer_cap = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
-    uint8_t *buffer_play = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
-    capture_buffer = circular_buf_init(buffer_cap, AUDIO_PAYLOAD_BUFFER_SIZE);
-    playback_buffer = circular_buf_init(buffer_play, AUDIO_PAYLOAD_BUFFER_SIZE);
+    uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
+    uint8_t *buffer_play = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
+    capture_buffer = circular_buf_init(buffer_cap, SIGNAL_BUFFER_SIZE);
+    playback_buffer = circular_buf_init(buffer_play, SIGNAL_BUFFER_SIZE);
 #else
-    capture_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
-    playback_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
+    capture_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
+    playback_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
 #endif
 
     clear_buffer(capture_buffer);
@@ -594,9 +587,8 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     return 0;
 }
 
-int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_t *radio_capture_prep)
+int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
 {
-    pthread_join(*radio_capture_prep, NULL);
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
 
@@ -610,10 +602,10 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_
     free(playback_buffer->buffer);
     circular_buf_free(playback_buffer);
 #else
-    circular_buf_destroy_shm(capture_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
+    circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
     circular_buf_free_shm(capture_buffer);
 
-    circular_buf_destroy_shm(playback_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
+    circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
     circular_buf_free_shm(playback_buffer);
 #endif
     return 0;
