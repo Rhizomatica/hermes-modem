@@ -46,9 +46,9 @@ LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
 all: ../modem
 
-../modem: main.o arq.o net.o fsm.o arith.o crc6.o ../freedv/libfreedvdata.a ../audioio/audioio.a \
+../modem: main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../freedv/libfreedvdata.a ../audioio/audioio.a \
 		../common/os_interop.o ../common/ring_buffer_posix.o ../common/shm_posix.o
-	$(CC) -o ../modem main.o arq.o net.o fsm.o arith.o crc6.o ../freedv/libfreedvdata.a ../audioio/audioio.a \
+	$(CC) -o ../modem main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../freedv/libfreedvdata.a ../audioio/audioio.a \
 		../common/os_interop.o ../common/ring_buffer_posix.o ../common/shm_posix.o $(LDFLAGS)
 
 main.o: main.c
@@ -68,6 +68,9 @@ arith.o: arith.c
 
 crc6.o: crc6.c
 	$(CC) $(CFLAGS) -c crc6.c
+
+modem.o: modem.c
+	$(CC) $(CFLAGS) -c modem.c
 
 clean:
 	rm -f *.o

@@ -32,8 +32,9 @@
 
 
 #include "freedv_api.h"
+#include "ldpc_codes.h"
 #include "arq.h"
-
+#include "modem.h"
 #include "defines.h"
 #include "audioio/audioio.h"
 
@@ -202,6 +203,10 @@ int main(int argc, char *argv[])
             freedv_close(freedv);
 
         }
+
+        printf("Available LDPC codes:\n");
+        ldpc_codes_list();
+
         return EXIT_SUCCESS;
     }
 
@@ -341,9 +346,13 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
     }
 
-    
+
+    printf("Initializing ARQ modem on TCP port %d\n", base_tcp_port);
     arq_init(base_tcp_port, mod_config);
 
+    printf("Initializing Modem\n");
+    struct freedv *freedv = NULL;
+    init_modem(&freedv, mod_config);
 
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
     {
