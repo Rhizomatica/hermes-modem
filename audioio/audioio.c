@@ -112,8 +112,8 @@ void *radio_playback_thread(void *device_ptr)
     ffuint frame_size;
     ffuint msec_bytes;
 
-    // input is int16_t (aka. short)
-    uint16_t *input_buffer = (uint16_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int16_t));
+    // input is int32_t
+    uint32_t *input_buffer = (uint32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
 
     // output is int32_t
     int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
@@ -179,28 +179,27 @@ void *radio_playback_thread(void *device_ptr)
 
         total_written = 0;
 
-        int samples_read = n / sizeof(int16_t);
+        int samples_read = n / sizeof(int32_t);
 
-        // convert from int16 to int32
         for (int i = 0; i < samples_read; i++)
         {
             int idx = i * cfg->channels;
             if (ch_layout == LEFT)
             {
-                buffer_output_stereo[idx] = (int32_t) input_buffer[i] << 16;
+                buffer_output_stereo[idx] = input_buffer[i];
                 buffer_output_stereo[idx + 1] = 0;
             }
 
             if (ch_layout == RIGHT)
             {
                 buffer_output_stereo[idx] = 0;
-                buffer_output_stereo[idx + 1] = (int32_t) input_buffer[i] << 16;
+                buffer_output_stereo[idx + 1] = input_buffer[i];
             }
 
 
             if (ch_layout == STEREO)
             {
-                buffer_output_stereo[idx] = (int32_t) input_buffer[i] << 16;
+                buffer_output_stereo[idx] = input_buffer[i];
                 buffer_output_stereo[idx + 1] = buffer_output_stereo[idx];
             }
         }
@@ -309,7 +308,7 @@ void *radio_capture_thread(void *device_ptr)
 
     int ch_layout = STEREO;
 
-    int16_t *buffer_output = NULL;
+    int32_t *buffer_output = NULL;
 
     if ( audio->init(&aconf) != 0)
     {
@@ -340,7 +339,7 @@ void *radio_capture_thread(void *device_ptr)
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-    buffer_output = (int16_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int16_t) * 2);
+    buffer_output = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2);
 
 #if 0 // TODO: parametrize this
     if (radio_type == RADIO_SBITX)
@@ -372,22 +371,22 @@ void *radio_capture_thread(void *device_ptr)
         {
             if (ch_layout == LEFT)
             {
-                buffer_output[i] = (int16_t) buffer[i*2] >> 16;
+                buffer_output[i] = buffer[i*2];
             }
 
             if (ch_layout == RIGHT)
             {
-                buffer_output[i] = (int16_t) buffer[i*2 + 1] >> 16;
+                buffer_output[i] = buffer[i*2 + 1];
             }
 
             if (ch_layout == STEREO)
             {
-                buffer_output[i] = (int16_t) ((buffer[i*2] + buffer[i*2 + 1]) / 2) >> 16;
+                buffer_output[i] = (buffer[i*2] + buffer[i*2 + 1]) / 2;
             }
         }
 
-        if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(int16_t))
-            write_buffer(capture_buffer, (uint8_t *)buffer_output, frames_to_write * sizeof(int16_t));
+        if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(int32_t))
+            write_buffer(capture_buffer, (uint8_t *)buffer_output, frames_to_write * sizeof(int32_t));
         else
             printf("Buffer full in capture buffer!\n");
     }

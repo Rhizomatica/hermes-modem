@@ -43,21 +43,38 @@ extern cbuf_handle_t playback_buffer;
 
 void *radio_shm_playback_thread(void *freedv_ptr)
 {
+#if 0
     while(!shutdown_)
     {
+        size_t buffer_size = size_buffer(playback_buffer);
+        
+        if (buffer_size >= period_bytes)
+        {
+            read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes);
+            n = period_bytes;
+        }
+        else
+        {
+            // we just play zeros if there is nothing to play
+            memset(input_buffer, 0, period_bytes);
+            if (buffer_size > 0)
+                read_buffer(playback_buffer, (uint8_t *) input_buffer, buffer_size);
+            n = buffer_size;
+        }
 
     }
-
+#endif
     return NULL;
 }
 
 void *radio_shm_capture_thread(void *freedv_ptr)
 {
+#if 0
     while(!shutdown_)
     {
 
     }
-
+#endif
     return NULL;
 }
 
