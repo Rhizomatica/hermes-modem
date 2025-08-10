@@ -27,7 +27,9 @@
 
 #include "freedv_api.h"
 
-int init_modem(struct freedv **freedv, int mode);
+int init_modem(struct freedv **freedv, int mode, int frames_per_burst, pthread_t *radio_capture, pthread_t *radio_playback);
+
+int shutdown_modem(struct freedv *freedv, pthread_t *radio_capture, pthread_t *radio_playback);
 
 // always send the frame size in bytes_in
 int send_modulated_data(struct freedv *freedv, uint8_t *bytes_in, int frames_per_burst);

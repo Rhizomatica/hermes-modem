@@ -317,52 +317,30 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }    
 
+    struct freedv *freedv = NULL;
     pthread_t radio_capture;
     pthread_t radio_playback;
     
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
     {
-    try_shm_connect1:
-        capture_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
-        if (capture_buffer == NULL)
-        {
-            printf("Shared memory not created. Waiting for the radio daemon\n");
-            sleep(2);
-            goto try_shm_connect1;
-        }
-
-    try_shm_connect2:
-        playback_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
-        if (playback_buffer == NULL)
-        {
-            printf("Shared memory not created. Waiting for the radio daemon...\n");
-            sleep(2);
-            goto try_shm_connect2;
-        }
-        printf("Connected to shared memory buffers.\n");
+        printf("Initializing I/O from Shared Memory (SHM)\n");
+        init_modem(&freedv, mod_config, 1, &radio_capture, &radio_playback); // frames per burst is 1 for now
     }
     else
     {
+        printf("Initializing I/O from Sound Card\n");
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
     }
-
 
     printf("Initializing ARQ modem on TCP port %d\n", base_tcp_port);
     arq_init(base_tcp_port, mod_config);
 
-    printf("Initializing Modem\n");
-    struct freedv *freedv = NULL;
-    init_modem(&freedv, mod_config);
-
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
     {
-        // test code
-        circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
-        circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
-        circular_buf_free_shm(capture_buffer);
-        circular_buf_free_shm(playback_buffer);
+        shutdown_modem(freedv, &radio_capture, &radio_playback);
     }
-    else{
+    else
+    {
         audioio_deinit(&radio_capture, &radio_playback);
     }
     return 0;

@@ -32,15 +32,6 @@ cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
 
-// tap to file FOR DEBUGGING PURPOSES //
-#define ENABLE_FLOAT64_TAP 0
-#define ENABLE_FLOAT64_TAP_BEFORE 0
-#if ENABLE_FLOAT64_TAP_BEFORE == 1
-	FILE *tap_play;
-#endif
-// FOR DEBUGGING PURPOSES //
-
-
 struct conf {
     const char *cmd;
     ffaudio_conf buf;
@@ -121,16 +112,14 @@ void *radio_playback_thread(void *device_ptr)
     ffuint frame_size;
     ffuint msec_bytes;
 
-    uint8_t *buffer = (uint8_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(double) * 2);
-    double *buffer_double =  (double *) buffer;
-    int32_t *buffer_internal_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
+    // input is int16_t (aka. short)
+    uint16_t *input_buffer = (uint16_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int16_t));
+
+    // output is int32_t
+    int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
 
     ffuint total_written = 0;
     int ch_layout = STEREO;
-
-#if ENABLE_FLOAT64_TAP == 1
-    FILE *tap_pay = fopen("tap-playback.f64", "w");
-#endif
 
     if ( audio->init(&aconf) != 0)
     {
@@ -176,47 +165,43 @@ void *radio_playback_thread(void *device_ptr)
         size_t buffer_size = size_buffer(playback_buffer);
         if (buffer_size >= period_bytes)
         {
-            read_buffer(playback_buffer, buffer, period_bytes);
+            read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes);
             n = period_bytes;
         }
         else
         {
             // we just play zeros if there is nothing to play
-            memset(buffer, 0, period_bytes);
+            memset(input_buffer, 0, period_bytes);
             if (buffer_size > 0)
-                read_buffer(playback_buffer, buffer, buffer_size);
+                read_buffer(playback_buffer, (uint8_t *) input_buffer, buffer_size);
             n = buffer_size;
         }
 
-#if ENABLE_FLOAT64_TAP == 1
-        fwrite(buffer, 1, n, tap);
-#endif
-
         total_written = 0;
 
-        int samples_read = n / sizeof(double);
+        int samples_read = n / sizeof(int16_t);
 
-        // convert from double to int32
+        // convert from int16 to int32
         for (int i = 0; i < samples_read; i++)
         {
             int idx = i * cfg->channels;
             if (ch_layout == LEFT)
             {
-                buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
-                buffer_internal_stereo[idx + 1] = 0;
+                buffer_output_stereo[idx] = (int32_t) input_buffer[i] << 16;
+                buffer_output_stereo[idx + 1] = 0;
             }
 
             if (ch_layout == RIGHT)
             {
-                buffer_internal_stereo[idx] = 0;
-                buffer_internal_stereo[idx + 1] = buffer_double[i] * INT_MAX;
+                buffer_output_stereo[idx] = 0;
+                buffer_output_stereo[idx + 1] = (int32_t) input_buffer[i] << 16;
             }
 
 
             if (ch_layout == STEREO)
             {
-                buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
-                buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx];
+                buffer_output_stereo[idx] = (int32_t) input_buffer[i] << 16;
+                buffer_output_stereo[idx + 1] = buffer_output_stereo[idx];
             }
         }
 
@@ -224,7 +209,7 @@ void *radio_playback_thread(void *device_ptr)
 
         while (n >= frame_size)
         {
-            r = audio->write(b, ((uint8_t *)buffer_internal_stereo) + total_written, n);
+            r = audio->write(b, ((uint8_t *)buffer_output_stereo) + total_written, n);
 
             if (r == -FFAUDIO_ESYNC) {
                 printf("detected underrun");
@@ -246,10 +231,6 @@ void *radio_playback_thread(void *device_ptr)
         // printf("n = %lld total written = %u\n", n, total_written);
     }
 
-#if ENABLE_FLOAT64_TAP == 1
-    fclose(tap);
-#endif
-
     r = audio->drain(b);
     if (r < 0)
         printf("ffaudio.drain: %s", audio->error(b));
@@ -270,8 +251,8 @@ cleanup_play:
 
 finish_play:
 
-    free(buffer);
-    free(buffer_internal_stereo);
+    free(input_buffer);
+    free(buffer_output_stereo);
 
     printf("radio_playback_thread exit\n");
 
@@ -328,11 +309,7 @@ void *radio_capture_thread(void *device_ptr)
 
     int ch_layout = STEREO;
 
-    double *buffer_internal = NULL;
-
-#if ENABLE_FLOAT64_TAP == 1
-    FILE *tap = fopen("tap-capture.f64", "w");
-#endif
+    int16_t *buffer_output = NULL;
 
     if ( audio->init(&aconf) != 0)
     {
@@ -363,7 +340,7 @@ void *radio_capture_thread(void *device_ptr)
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-    buffer_internal = (double *) malloc(SIGNAL_BUFFER_SIZE * sizeof(double) * 2);
+    buffer_output = (int16_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int16_t) * 2);
 
 #if 0 // TODO: parametrize this
     if (radio_type == RADIO_SBITX)
@@ -395,27 +372,22 @@ void *radio_capture_thread(void *device_ptr)
         {
             if (ch_layout == LEFT)
             {
-                buffer_internal[i] = (double) buffer[i*2] / (double) INT_MAX;
+                buffer_output[i] = (int16_t) buffer[i*2] >> 16;
             }
 
             if (ch_layout == RIGHT)
             {
-                buffer_internal[i] = (double) buffer[i*2 + 1] / (double) INT_MAX;
+                buffer_output[i] = (int16_t) buffer[i*2 + 1] >> 16;
             }
 
             if (ch_layout == STEREO)
             {
-                buffer_internal[i] = (double) ((buffer[i*2] + buffer[i*2 + 1]) / 2.0) / (double) INT_MAX;
+                buffer_output[i] = (int16_t) ((buffer[i*2] + buffer[i*2 + 1]) / 2) >> 16;
             }
-
         }
 
-#if ENABLE_FLOAT64_TAP == 1
-        fwrite(buffer_internal, 1, frames_to_write * sizeof(double), tap);
-#endif
-
-        if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(double))
-            write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
+        if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(int16_t))
+            write_buffer(capture_buffer, (uint8_t *)buffer_output, frames_to_write * sizeof(int16_t));
         else
             printf("Buffer full in capture buffer!\n");
     }
@@ -428,12 +400,7 @@ void *radio_capture_thread(void *device_ptr)
     if (r != 0)
         printf("ffaudio.clear: %s", audio->error(b));
 
-    free(buffer_internal);
-
-#if ENABLE_FLOAT64_TAP == 1
-    fclose(tap);
-#endif
-
+    free(buffer_output);
 
 cleanup_cap:
 
@@ -530,15 +497,12 @@ void list_soundcards(int audio_system)
     }
 }
 
+#if 0
 // size in "double" samples
 int tx_transfer(double *buffer, size_t len)
 {
     uint8_t *buffer_internal = (uint8_t *) buffer;
     int buffer_size_bytes = len * sizeof(double);
-
-#if ENABLE_FLOAT64_TAP_BEFORE == 1
-    fwrite(buffer_internal, 1, buffer_size_bytes, tap_play);
-#endif
 
     write_buffer(playback_buffer, buffer_internal, buffer_size_bytes);
 
@@ -557,16 +521,12 @@ int rx_transfer(double *buffer, size_t len)
 
     return 0;
 }
-
+#endif
 
 int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
                           pthread_t *radio_playback)
 {
     audio_subsystem = audio_subsys;
-
-#if ENABLE_FLOAT64_TAP_BEFORE == 1
-    tap_play = fopen("tap-playback-b.f64", "w");
-#endif
 
 #if defined(_WIN32)
     uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
@@ -591,10 +551,6 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
 {
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
-
-#if ENABLE_FLOAT64_TAP_BEFORE == 1
-    fclose(tap_play);
-#endif
 
 #if defined(_WIN32)
     free(capture_buffer->buffer);
