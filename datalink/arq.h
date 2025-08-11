@@ -27,9 +27,6 @@
 #define TCP_BLOCK_SIZE 128
 #define CALLSIGN_MAX_SIZE 16 
 
-#define DATA_TX_BUFFER_SIZE 8192
-#define DATA_RX_BUFFER_SIZE 8192
-
 #define RX 0
 #define TX 1
 

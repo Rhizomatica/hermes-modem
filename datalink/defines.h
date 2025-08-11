@@ -10,6 +10,9 @@
 
 #define INT_BUFFER_SIZE 4096
 
+#define DATA_TX_BUFFER_SIZE 8192
+#define DATA_RX_BUFFER_SIZE 8192
+
 // audio buffers shared memory interface
 // 1536000 * 8
 #define SIGNAL_BUFFER_SIZE 12288000

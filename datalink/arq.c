@@ -30,8 +30,8 @@
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-cbuf_handle_t data_tx_buffer;
-cbuf_handle_t data_rx_buffer;
+extern cbuf_handle_t data_tx_buffer;
+extern cbuf_handle_t data_rx_buffer;
 
 extern bool shutdown_;
 
@@ -459,13 +459,6 @@ int arq_init(int tcp_base_port, int initial_mode)
 
     arq_conn.call_burst_size = CALL_BURST_SIZE;
 
-    uint8_t *buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
-    uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
-    data_tx_buffer = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
-    data_rx_buffer = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
-
-    // TODO: init modem here?
-    
     reset_arq_info(&arq_conn);
 
     init_model(); // the arithmetic encoder init function
@@ -861,6 +854,7 @@ void *dsp_thread_tx(void *conn)
         // our connection request
         if (arq_fsm.current == state_connecting_caller || arq_fsm.current == state_connecting_callee)
         {
+            
             // tx_transfer(...);
         }
 

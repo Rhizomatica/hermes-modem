@@ -41,53 +41,19 @@ extern bool shutdown_; // global shutdown flag
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-void *radio_shm_playback_thread(void *freedv_ptr)
-{
-#if 0
-    while(!shutdown_)
-    {
-        size_t buffer_size = size_buffer(playback_buffer);
-        
-        if (buffer_size >= period_bytes)
-        {
-            read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes);
-            n = period_bytes;
-        }
-        else
-        {
-            // we just play zeros if there is nothing to play
-            memset(input_buffer, 0, period_bytes);
-            if (buffer_size > 0)
-                read_buffer(playback_buffer, (uint8_t *) input_buffer, buffer_size);
-            n = buffer_size;
-        }
-
-    }
-#endif
-    return NULL;
-}
-
-void *radio_shm_capture_thread(void *freedv_ptr)
-{
-#if 0
-    while(!shutdown_)
-    {
-
-    }
-#endif
-    return NULL;
-}
+cbuf_handle_t data_tx_buffer;
+cbuf_handle_t data_rx_buffer;
 
 
 int init_modem(struct freedv **freedv, int mode, int frames_per_burst, pthread_t *radio_capture, pthread_t *radio_playback)
 {
-    // connect to shared memory buffers
+// connect to shared memory buffers
 try_shm_connect1:
     capture_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
     if (capture_buffer == NULL)
     {
         printf("Shared memory not created. Waiting for the radio daemon\n");
-        sleep(2);
+        sleep(1);
         goto try_shm_connect1;
     }
 
@@ -96,10 +62,16 @@ try_shm_connect2:
     if (playback_buffer == NULL)
     {
         printf("Shared memory not created. Waiting for the radio daemon...\n");
-        sleep(2);
+        sleep(1);
         goto try_shm_connect2;
     }
-    printf("Connected to shared memory buffers.\n");
+    printf("Connected to shared memory radio I/O buffers.\n");
+
+    uint8_t *buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
+    uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
+    data_tx_buffer = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
+    data_rx_buffer = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
+    printf("Created data buffers for TX and RX.\n");
     
     char codename[80] = "H_256_512_4";
     struct freedv_advanced adv = {0, 2, 100, 8000, 1000, 200, codename};
@@ -111,21 +83,20 @@ try_shm_connect2:
     
     freedv_set_frames_per_burst(*freedv, frames_per_burst);
 
-    pthread_create(radio_capture, NULL, radio_shm_capture_thread, (void *) *freedv);
-    pthread_create(radio_playback, NULL, radio_shm_playback_thread, (void *) *freedv);
-    
     return 0;
 }
 
 int shutdown_modem(struct freedv *freedv, pthread_t *radio_capture, pthread_t *radio_playback)
 {
-    pthread_join(*radio_capture, NULL);
-    pthread_join(*radio_playback, NULL);
-
     circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
     circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
     circular_buf_free_shm(capture_buffer);
     circular_buf_free_shm(playback_buffer);
+
+    free(data_tx_buffer->buffer);
+    free(data_rx_buffer->buffer);
+    circular_buf_free(data_tx_buffer);
+    circular_buf_free(data_rx_buffer);
     
     freedv_close(freedv);   
 

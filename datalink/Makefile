@@ -46,10 +46,10 @@ LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
 all: ../mercury
 
-../mercury: main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../modem/freedv/libfreedvdata.a ../audioio/audioio.a \
+../mercury: main.o arq.o net.o fsm.o arith.o crc6.o modem.o broadcast.o ../modem/freedv/libfreedvdata.a ../audioio/audioio.a \
 		../common/os_interop.o ../common/ring_buffer_posix.o ../common/shm_posix.o
 	$(CC) -o ../mercury  \
-		main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../modem/freedv/libfreedvdata.a ../audioio/audioio.a \
+		main.o arq.o net.o fsm.o arith.o crc6.o modem.o broadcast.o ../modem/freedv/libfreedvdata.a ../audioio/audioio.a \
 		../common/os_interop.o ../common/ring_buffer_posix.o ../common/shm_posix.o $(LDFLAGS)
 
 main.o: main.c
@@ -72,6 +72,9 @@ crc6.o: crc6.c
 
 modem.o: modem.c
 	$(CC) $(CFLAGS) -c modem.c
+
+broadcast.o: broadcast.c
+	$(CC) $(CFLAGS) -c broadcast.c
 
 clean:
 	rm -f *.o
