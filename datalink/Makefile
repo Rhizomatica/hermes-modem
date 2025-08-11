@@ -40,15 +40,16 @@ endif
 
 
 CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../freedv -I.. -I../audioio/ffaudio -I../common
+CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../modem/freedv -I.. -I../audioio/ffaudio -I../common
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
-all: ../modem
+all: ../mercury
 
-../modem: main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../freedv/libfreedvdata.a ../audioio/audioio.a \
+../mercury: main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../modem/freedv/libfreedvdata.a ../audioio/audioio.a \
 		../common/os_interop.o ../common/ring_buffer_posix.o ../common/shm_posix.o
-	$(CC) -o ../modem main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../freedv/libfreedvdata.a ../audioio/audioio.a \
+	$(CC) -o ../mercury  \
+		main.o arq.o net.o fsm.o arith.o crc6.o modem.o ../modem/freedv/libfreedvdata.a ../audioio/audioio.a \
 		../common/os_interop.o ../common/ring_buffer_posix.o ../common/shm_posix.o $(LDFLAGS)
 
 main.o: main.c

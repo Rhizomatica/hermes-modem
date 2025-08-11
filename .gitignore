@@ -1,9 +1,9 @@
 *.pyc
 *.o
 *.a
-freedv/freedv_data_raw_rx
-freedv/freedv_data_raw_tx
-freedv/freedv_data_rx
-freedv/freedv_data_tx
-freedv/libfreedvdata.a
-modem
+modem/freedv/freedv_data_raw_rx
+modem/freedv/freedv_data_raw_tx
+modem/freedv/freedv_data_rx
+modem/freedv/freedv_data_tx
+modem/freedv/libfreedvdata.a
+mercury
