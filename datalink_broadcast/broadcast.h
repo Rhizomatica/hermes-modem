@@ -18,23 +18,22 @@
  *
  */
 
-
-#ifndef MODEM_H
-#define MODEM_H
+#ifndef BROADCAST_H_
+#define BROADCAST_H_
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "modem.h"
 
-#include "freedv_api.h"
+/* Function declarations */
 
-int init_modem(struct freedv **freedv, int mode, int frames_per_burst, pthread_t *radio_capture, pthread_t *radio_playback);
+/**
+ * Run the broadcast subsystem.
+ *
+ * @param freedv Pointer to the FreeDV structure.
+ * @param tcp_port The TCP port to use for the server.
+ */
+void broadcast_run(generic_modem_t *g_modem, int tcp_port);
 
-int shutdown_modem(struct freedv *freedv, pthread_t *radio_capture, pthread_t *radio_playback);
 
-// always send the frame size in bytes_in
-int send_modulated_data(struct freedv *freedv, uint8_t *bytes_in, int frames_per_burst);
-
-int receive_modulated_data(struct freedv *freedv, uint8_t *bytes_out, size_t *nbytes_out);
-
-
-#endif // MODEM_H
+#endif // BROADCAST_H_

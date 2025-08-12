@@ -18,22 +18,28 @@
  *
  */
 
-#ifndef BROADCAST_H_
-#define BROADCAST_H_
+
+#ifndef MODEM_H
+#define MODEM_H
 
 #include <stdint.h>
 #include <stdbool.h>
+
 #include "freedv_api.h"
 
-/* Function declarations */
+typedef struct generic_modem {
+    struct freedv *freedv;
+    void *future_extension; // Placeholder for future extensions
+} generic_modem_t;
 
-/**
- * Run the broadcast subsystem.
- *
- * @param freedv Pointer to the FreeDV structure.
- * @param tcp_port The TCP port to use for the server.
- */
-void broadcast_run(struct freedv *freedv, int tcp_port);
+int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst);
+
+int shutdown_modem(generic_modem_t *g_modem);
+
+// always send the frame size in bytes_in
+int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst);
+
+int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out);
 
 
-#endif // BROADCAST_H_
+#endif // MODEM_H

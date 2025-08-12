@@ -25,7 +25,7 @@
 #include "fsm.h"
 #include "../audioio/audioio.h"
 #include "net.h"
-#include "defines.h"
+#include "defines_modem.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;

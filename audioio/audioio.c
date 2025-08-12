@@ -19,7 +19,7 @@
 
 #include "ring_buffer_posix.h"
 #include "shm_posix.h"
-#include "../datalink/defines.h"
+#include "../common/defines_modem.h"
 #include "os_interop.h"
 
 #include "audioio.h"

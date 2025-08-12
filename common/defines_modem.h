@@ -1,6 +1,6 @@
 
-#ifndef HAVE_DEFINES_H
-#define HAVE_DEFINES_H
+#ifndef HAVE_DEFINES_MODEM_H
+#define HAVE_DEFINES_MODEM_H
 
 #define MAX_PATH 255
 
@@ -26,4 +26,4 @@
 #endif
 
 
-#endif // HAVE_DEFINES_H
+#endif // HAVE_DEFINES_MODEM_H

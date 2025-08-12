@@ -28,9 +28,10 @@
 #include <arpa/inet.h>
 
 #include "modem.h"
-#include "defines.h"
-#include "ring_buffer_posix.h"
 #include "arq.h"
+#include "defines_modem.h"
+#include "ring_buffer_posix.h"
+
 
 extern cbuf_handle_t data_tx_buffer;
 extern cbuf_handle_t data_rx_buffer;
@@ -39,9 +40,9 @@ extern bool shutdown_; // global shutdown flag
 extern arq_info arq_conn; // ARQ connection info
 
 // Function to handle TX logic
-void *broadcast_tx_thread(void *freedv_ptr)
+void *broadcast_tx_thread(void *g_modem)
 {
-    struct freedv *freedv = (struct freedv *)freedv_ptr;
+    struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame);
 
@@ -65,7 +66,7 @@ void *broadcast_tx_thread(void *freedv_ptr)
             read_buffer(data_tx_buffer, data, bytes_per_modem_frame);
 
             // Transmit the data
-            send_modulated_data(freedv, data, 1);
+            send_modulated_data(g_modem, data, 1);
             usleep(5000000); // 5s for now - TODO !!! some delay for transmission
         }
     }
@@ -75,9 +76,9 @@ void *broadcast_tx_thread(void *freedv_ptr)
 }
 
 // Function to handle RX logic
-void *broadcast_rx_thread(void *freedv_ptr)
+void *broadcast_rx_thread(void *g_modem)
 {
-    struct freedv *freedv = (struct freedv *)freedv_ptr;
+    struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame);
     size_t nbytes_out = 0;
@@ -93,7 +94,7 @@ void *broadcast_rx_thread(void *freedv_ptr)
         if (arq_conn.TRX == RX)
         {
             // Receive data
-            receive_modulated_data(freedv, data, &nbytes_out);
+            receive_modulated_data(g_modem, data, &nbytes_out);
             if (nbytes_out > 0)
             {
                 write_buffer(data_rx_buffer, data, nbytes_out);
@@ -156,7 +157,7 @@ void *tcp_server_thread(void *port_ptr)
 
         printf("Client connected.\n");
 
-        uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
+        uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);;
         if (!buffer)
         {
             fprintf(stderr, "Failed to allocate memory for TCP buffer.\n");
@@ -211,15 +212,15 @@ void *tcp_server_thread(void *port_ptr)
 }
 
 // Main function to handle broadcast operations
-void broadcast_run(struct freedv *freedv, int tcp_port)
+void broadcast_run(generic_modem_t *g_modem, int tcp_port)
 {
     printf("Starting broadcast system...\n");
 
     pthread_t tx_thread, rx_thread, server_thread;
 
     // Create TX and RX threads
-    pthread_create(&tx_thread, NULL, broadcast_tx_thread, (void *)freedv);
-    pthread_create(&rx_thread, NULL, broadcast_rx_thread, (void *)freedv);
+    pthread_create(&tx_thread, NULL, broadcast_tx_thread, (void *)g_modem);
+    pthread_create(&rx_thread, NULL, broadcast_rx_thread, (void *)g_modem);
 
     // Create TCP server thread
     pthread_create(&server_thread, NULL, tcp_server_thread, (void *)&tcp_port);

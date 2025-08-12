@@ -36,7 +36,7 @@
 #include "arq.h"
 #include "modem.h"
 #include "broadcast.h"
-#include "defines.h"
+#include "defines_modem.h"
 #include "audioio/audioio.h"
 
 extern cbuf_handle_t capture_buffer;
@@ -318,14 +318,13 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }    
 
-    struct freedv *freedv = NULL;
-    pthread_t radio_capture;
-    pthread_t radio_playback;
+    generic_modem_t g_modem;
+    pthread_t radio_capture, radio_playback;
     
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
     {
         printf("Initializing I/O from Shared Memory (SHM)\n");
-        init_modem(&freedv, mod_config, 1, &radio_capture, &radio_playback); // frames per burst is 1 for now
+        init_modem(&g_modem, mod_config, 1); // frames per burst is 1 for now
     }
     else
     {
@@ -337,11 +336,11 @@ int main(int argc, char *argv[])
     // arq_init(base_tcp_port, mod_config);
 
     // we block here
-    broadcast_run(freedv, broadcast_port);
+    broadcast_run(&g_modem, broadcast_port);
 
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
     {
-        shutdown_modem(freedv, &radio_capture, &radio_playback);
+        shutdown_modem(&g_modem);
     }
     else
     {

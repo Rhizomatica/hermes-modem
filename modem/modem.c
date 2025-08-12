@@ -34,7 +34,7 @@
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
 
-#include "defines.h"
+#include "defines_modem.h"
 
 extern bool shutdown_; // global shutdown flag
 
@@ -45,7 +45,7 @@ cbuf_handle_t data_tx_buffer;
 cbuf_handle_t data_rx_buffer;
 
 
-int init_modem(struct freedv **freedv, int mode, int frames_per_burst, pthread_t *radio_capture, pthread_t *radio_playback)
+int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
 {
 // connect to shared memory buffers
 try_shm_connect1:
@@ -72,21 +72,21 @@ try_shm_connect2:
     data_tx_buffer = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
     data_rx_buffer = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
     printf("Created data buffers for TX and RX.\n");
-    
+
     char codename[80] = "H_256_512_4";
     struct freedv_advanced adv = {0, 2, 100, 8000, 1000, 200, codename};
 
     if (mode == FREEDV_MODE_FSK_LDPC)
-        *freedv = freedv_open_advanced(mode, &adv);
+        g_modem->freedv = freedv_open_advanced(mode, &adv);
     else 
-        *freedv = freedv_open(mode);
+        g_modem->freedv = freedv_open(mode);
     
-    freedv_set_frames_per_burst(*freedv, frames_per_burst);
+    freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
     return 0;
 }
 
-int shutdown_modem(struct freedv *freedv, pthread_t *radio_capture, pthread_t *radio_playback)
+int shutdown_modem(generic_modem_t *g_modem)
 {
     circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
     circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
@@ -98,13 +98,14 @@ int shutdown_modem(struct freedv *freedv, pthread_t *radio_capture, pthread_t *r
     circular_buf_free(data_tx_buffer);
     circular_buf_free(data_rx_buffer);
     
-    freedv_close(freedv);   
+    freedv_close(g_modem->freedv);   
 
     return 0;
 }
 
-int send_modulated_data(struct freedv *freedv, uint8_t *bytes_in, int frames_per_burst)
+int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst)
 {
+    struct freedv *freedv = g_modem->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2; /* 16 bits used for the CRC */
     size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
@@ -155,8 +156,9 @@ int send_modulated_data(struct freedv *freedv, uint8_t *bytes_in, int frames_per
     return 0;
 }
 
-int receive_modulated_data(struct freedv *freedv, uint8_t *bytes_out, size_t *nbytes_out)
+int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out)
 {
+    struct freedv *freedv = g_modem->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2; /* 16 bits used for the CRC */
 
