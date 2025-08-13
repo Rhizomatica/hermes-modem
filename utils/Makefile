@@ -4,7 +4,7 @@ CFLAGS = -Wall -Wextra -O2
 LDFLAGS = -pthread
 
 # Source and output files
-SRC = broadcast_test.c
+SRC = broadcast_test.c kiss.c
 OUT = broadcast_test
 
 # Default target
