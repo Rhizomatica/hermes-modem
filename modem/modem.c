@@ -111,7 +111,8 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
     int16_t mod_out_short[n_mod_out];
     int32_t mod_out_int32[n_mod_out];
-
+    int total_samples = 0;
+    
     /* send preamble */
     int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
     // converting from s16le to s32le
@@ -120,7 +121,8 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         mod_out_int32[i] = (int32_t)mod_out_short[i] << 16;
     }
     write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_preamble);
-
+    total_samples += n_preamble;
+    
     /* The raw data modes require a CRC in the last two bytes */
     uint16_t crc16 = freedv_gen_crc16(bytes_in, payload_bytes_per_modem_frame);
     bytes_in[bytes_per_modem_frame - 2] = crc16 >> 8;
@@ -136,6 +138,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
             mod_out_int32[j] = (int32_t)mod_out_short[j] << 16;
         }
         write_buffer(playback_buffer, (uint8_t *) mod_out_short, sizeof(int32_t) * n_mod_out);
+        total_samples += n_mod_out;
     }
     /* send postamble */
     int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
@@ -145,13 +148,17 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         mod_out_int32[i] = (int32_t)mod_out_short[i] << 16;
     }
     write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_postamble);
-
+    total_samples += n_postamble;
+    
     /* create some silence between bursts */
     int inter_burst_delay_ms = 200;
     int samples_delay = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
     int32_t silence[samples_delay];
     memset(silence, 0, samples_delay * sizeof(int32_t));
     write_buffer(playback_buffer, (uint8_t *) silence, sizeof(int32_t) * samples_delay);
+    total_samples += samples_delay;
+
+    usleep(total_samples * 1000000 / FREEDV_FS_8000); // wait for the samples to be played
     
     return 0;
 }

@@ -67,7 +67,6 @@ void *broadcast_tx_thread(void *g_modem)
 
             // Transmit the data
             send_modulated_data(g_modem, data, 1);
-            usleep(5000000); // 5s for now - TODO !!! some delay for transmission
         }
     }
 
@@ -106,6 +105,79 @@ void *broadcast_rx_thread(void *g_modem)
     free(data);
     return NULL;
 }
+
+void *send_thread(void *client_socket_ptr)
+{
+    int client_socket = *((int *)client_socket_ptr);
+    uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
+
+    if (!buffer)
+    {
+        fprintf(stderr, "Failed to allocate memory for send buffer.\n");
+        return NULL;
+    }
+
+    while (!shutdown_)
+    {
+        size_t n = read_buffer_all(data_rx_buffer, buffer);
+        if (n > 0)
+        {
+            ssize_t sent = send(client_socket, buffer, n, 0);
+            if (sent < 0)
+            {
+                perror("Error sending TCP data");
+                break;
+            }
+            if (sent < n)
+            {
+                fprintf(stderr, "Partial send: sent %zd bytes out of %zu\n", sent, n);
+            }
+            else
+            {
+                printf("Sent %zu bytes to client.\n", n);
+            }
+        }
+    }
+
+    free(buffer);
+    return NULL;
+}
+
+
+void *recv_thread(void *client_socket_ptr)
+{
+    int client_socket = *((int *)client_socket_ptr);
+    uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
+
+    if (!buffer)
+    {
+        fprintf(stderr, "Failed to allocate memory for recv buffer.\n");
+        return NULL;
+    }
+
+    while (!shutdown_)
+    {
+        ssize_t received = recv(client_socket, buffer, DATA_TX_BUFFER_SIZE, 0);
+        if (received > 0)
+        {
+            write_buffer(data_tx_buffer, buffer, received);
+        }
+        else if (received == 0)
+        {
+            printf("Client disconnected.\n");
+            break;
+        }
+        else if (received < 0)
+        {
+            perror("Error receiving TCP data");
+            break;
+        }
+    }
+
+    free(buffer);
+    return NULL;
+}
+
 
 // Function to handle TCP server logic
 void *tcp_server_thread(void *port_ptr)
@@ -157,52 +229,16 @@ void *tcp_server_thread(void *port_ptr)
 
         printf("Client connected.\n");
 
-        uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);;
-        if (!buffer)
-        {
-            fprintf(stderr, "Failed to allocate memory for TCP buffer.\n");
-            close(client_socket);
-            continue;
-        }
+        pthread_t recv_tid, send_tid;
 
-        while (!shutdown_)
-        {
-            ssize_t received = recv(client_socket, buffer, DATA_TX_BUFFER_SIZE, 0);
-            if (received < 0)
-            {
-                perror("Error receiving TCP data");
-                break;
-            }
-            else if (received == 0)
-            {
-                printf("Client disconnected.\n");
-                break;
-            }
+        // Create threads for receiving and sending data
+        pthread_create(&recv_tid, NULL, recv_thread, (void *)&client_socket);
+        pthread_create(&send_tid, NULL, send_thread, (void *)&client_socket);
 
-            write_buffer(data_tx_buffer, buffer, received);
+        // Wait for threads to finish
+        pthread_join(recv_tid, NULL);
+        pthread_join(send_tid, NULL);
 
-
-            if (size_buffer(data_rx_buffer) == 0)
-                continue;
-            
-            size_t n = read_buffer_all(data_rx_buffer, buffer);
-            if (n > 0)
-            {
-                ssize_t sent = send(client_socket, buffer, n, 0);
-                if (sent < 0)
-                {
-                    perror("Error sending TCP data");
-                    break;
-                }
-                else if (sent == 0)
-                {
-                    printf("Client disconnected while sending data.\n");
-                    break;
-                }
-            }
-        }
-
-        free(buffer);
         close(client_socket);
         printf("Waiting for a new client to connect...\n");
     }
