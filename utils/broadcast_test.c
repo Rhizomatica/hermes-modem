@@ -58,6 +58,7 @@ void *receive_thread(void *socket_ptr)
     while (1)
     {
         ssize_t received = recv(tcp_socket, buffer, BUFFER_SIZE, 0);
+        printf("Received %zd bytes from modem...\n", received);
         if (received > 0)
         {
             // KISS framing processing
@@ -149,8 +150,20 @@ int main(int argc, char *argv[])
             perror("Failed to send data");
             break;
         }
+        if (sent < kiss_frame_size)
+        {
+            fprintf(stderr, "Warning: Only sent %zd bytes out of %d\n", sent, kiss_frame_size);
+        }
         else
         {
+            for (int i = 0; i < kiss_frame_size; i++)
+            {
+                if (write_buffer[i] < 32 || write_buffer[i] > 126) // Non-printable characters
+                {
+                    write_buffer[i] = '.';
+                }
+                write_buffer[kiss_frame_size] = 0;
+            }
             printf("Sent %d bytes: %s\n", kiss_frame_size, write_buffer);
         }
     }
