@@ -59,7 +59,7 @@ void *broadcast_tx_thread(void *g_modem)
             if (arq_conn.TRX == RX)
             {
                 // Switch to TX mode
-                arq_conn.TRX = TX;
+                ptt_on();
                 printf("Switching to TX mode.\n");
             }
             // Read data from TX buffer
@@ -67,6 +67,8 @@ void *broadcast_tx_thread(void *g_modem)
 
             // Transmit the data
             send_modulated_data(g_modem, data, 1);
+            usleep(300000); // 300ms sleep
+            ptt_off();
         }
     }
 
