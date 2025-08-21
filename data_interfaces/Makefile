@@ -1,6 +1,6 @@
 # HERMES Modem
 #
-# Copyright (C) 2024-2025 Rhizomatica
+# Copyright (C) 2025 Rhizomatica
 # Author: Rafael Diniz <rafael@riseup.net>
 #
 # This is free software; you can redistribute it and/or modify
@@ -19,24 +19,17 @@
 # Boston, MA 02110-1301, USA.
 #
 
-CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../modem/freedv -I../modem -I../datalink_broadcast -I.. -I../audioio/ffaudio -I../common -I../data_interfaces
+CC=gcc
+CFLAGS=-Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE=1 -I../modem -I../modem/freedv -I../common -I../datalink_arq
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
+all: tcp_interfaces.o net.o
 
-all: arq.o fsm.o arith.o crc6.o
+tcp_interfaces.o: tcp_interfaces.c tcp_interfaces.h
+	$(CC) $(CFLAGS) -c tcp_interfaces.c
 
-arq.o: arq.c
-	$(CC) $(CFLAGS) -c arq.c
+net.o: net.c net.h
+	$(CC) $(CFLAGS) -c net.c
 
-fsm.o: fsm.c
-	$(CC) $(CFLAGS) -c fsm.c
-
-arith.o: arith.c
-	$(CC) $(CFLAGS) -c arith.c
-
-crc6.o: crc6.c
-	$(CC) $(CFLAGS) -c crc6.c
 
 clean:
 	rm -f *.o

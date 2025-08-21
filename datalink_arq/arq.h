@@ -21,10 +21,6 @@
 #ifndef ARQ_H_
 #define ARQ_H_
 
-#define DEFAULT_ARQ_PORT 8300
-#define DEFAULT_BROADCAST_PORT 8100
-
-#define TCP_BLOCK_SIZE 128
 #define CALLSIGN_MAX_SIZE 16 
 
 #define RX 0
@@ -64,18 +60,10 @@ void state_connecting_caller(int event);
 void state_connecting_callee(int event);
 
 // ARQ core functions
-int arq_init(int tcp_base_port, int initial_mode);
+int arq_init();
 void arq_shutdown();
 
 void print_arq_stats();
-
-// TCP/IP server threads
-void *server_worker_thread_ctl(void *port);
-void *server_worker_thread_data(void *port);
-void *data_worker_thread_tx(void *conn);
-void *data_worker_thread_rx(void *conn);
-void *control_worker_thread_tx(void *conn);
-void *control_worker_thread_rx(void *conn);
 
 // DSP threads
 void *dsp_thread_tx(void *conn);
@@ -89,12 +77,6 @@ void callee_accept_connection();
 int check_for_incoming_connection(uint8_t *data);
 int check_for_connection_acceptance_caller(uint8_t *data);
 char *get_timestamp();
-
-// TNC / radio functions
-void ptt_on();
-void ptt_off();
-void tnc_send_connected();
-void tnc_send_disconnected();
 
 // file crc6.cc
 uint16_t crc6_0X6F(uint16_t crc, const uint8_t *data, int data_len);

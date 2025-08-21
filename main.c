@@ -38,6 +38,7 @@
 #include "broadcast.h"
 #include "defines_modem.h"
 #include "audioio/audioio.h"
+#include "tcp_interfaces.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -332,12 +333,15 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
     }
 
-    // printf("Initializing ARQ modem on TCP port %d\n", base_tcp_port);
-    // arq_init(base_tcp_port, mod_config);
+    arq_init();
 
     // we block here
-    broadcast_run(&g_modem, broadcast_port);
+    broadcast_run(&g_modem);
 
+    printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
+    interfaces_init(base_tcp_port, broadcast_port);
+
+    
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
     {
         shutdown_modem(&g_modem);

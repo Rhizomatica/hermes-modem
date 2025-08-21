@@ -26,6 +26,7 @@
 #include "../audioio/audioio.h"
 #include "net.h"
 #include "defines_modem.h"
+#include "tcp_interfaces.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -38,9 +39,8 @@ extern bool shutdown_;
 // ARQ definitions
 arq_info arq_conn;
 
-#define DEBUG
 
-static pthread_t tid[8];
+static pthread_t tid[2];
 
 
 // our simple fsm struct
@@ -219,24 +219,6 @@ void state_connecting_callee(int event)
     }
 
     return;
-}
-
-void tnc_send_connected()
-{
-    char buffer[128];
-    sprintf(buffer, "CONNECTED %s %s %d\r", arq_conn.my_call_sign, arq_conn.dst_addr, 2300);
-    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    if (i < 0)
-        printf("Error sending connected message: %s\n", strerror(errno));
-}
-
-void tnc_send_disconnected()
-{
-    char buffer[128];
-    sprintf(buffer, "DISCONNECTED\r");
-    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    if (i < 0)
-        printf("Error sending disconnected message: %s\n", strerror(errno));
 }
 
 bool check_crc(uint8_t *data)
@@ -452,11 +434,8 @@ void reset_arq_info(arq_info *arq_conn_i)
 }
 
 
-int arq_init(int tcp_base_port, int initial_mode)
+int arq_init()
 {
-    status_ctl = NET_NONE;
-    status_data = NET_NONE;
-
     arq_conn.call_burst_size = CALL_BURST_SIZE;
 
     reset_arq_info(&arq_conn);
@@ -464,23 +443,10 @@ int arq_init(int tcp_base_port, int initial_mode)
     init_model(); // the arithmetic encoder init function
     fsm_init(&arq_fsm, state_no_connected_client);
     
-    // here is the thread that runs the accept(), each per port, and mantains the
-    // state of the connection
-    pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &tcp_base_port);
-    pthread_create(&tid[1], NULL, server_worker_thread_data, (void *) &tcp_base_port);
-
-    // control channel threads
-    pthread_create(&tid[2], NULL, control_worker_thread_rx, (void *) NULL);
-    pthread_create(&tid[3], NULL, control_worker_thread_tx, (void *) NULL);
-
-    // data channel threads
-    pthread_create(&tid[4], NULL, data_worker_thread_tx, (void *) NULL);
-    pthread_create(&tid[5], NULL, data_worker_thread_rx, (void *) NULL);
-
     // dsp threads
-    pthread_create(&tid[6], NULL, dsp_thread_tx, (void *) NULL);
-    pthread_create(&tid[7], NULL, dsp_thread_rx, (void *) NULL);
-    
+    pthread_create(&tid[0], NULL, dsp_thread_tx, (void *) NULL);
+    pthread_create(&tid[1], NULL, dsp_thread_rx, (void *) NULL);
+
     return EXIT_SUCCESS;
 }
 
@@ -489,328 +455,8 @@ void arq_shutdown()
 {
     pthread_join(tid[0], NULL);
     pthread_join(tid[1], NULL);
-    pthread_join(tid[2], NULL);
-    pthread_join(tid[3], NULL);
-    pthread_join(tid[4], NULL);
-    pthread_join(tid[5], NULL);
-    pthread_join(tid[6], NULL);
-    pthread_join(tid[7], NULL);
-
-    free(data_tx_buffer->buffer);
-    free(data_rx_buffer->buffer);
 }
 
-char *get_timestamp()
-{
-    static char buffer[32];
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    struct tm *tm = localtime(&tv.tv_sec);
-    snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d.%03ld\n", tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec / 1000);
-    return buffer;
-}
-
-void ptt_on()
-{
-    char buffer[] = "PTT ON\r";
-    arq_conn.TRX = TX;
-    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    // print timestamp with miliseconds precision
-#ifdef DEBUG
-    printf("PTT ON %s", get_timestamp());
-#endif
-}
-void ptt_off()
-{
-    char buffer[] = "PTT OFF\r";
-    arq_conn.TRX = RX;
-    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    // print timestamp with miliseconds precision
-#ifdef DEBUG
-    printf("PTT OFF %s", get_timestamp());
-#endif
-}
-
-// tx to tcp socket the received data from the modem
-void *data_worker_thread_tx(void *conn)
-{
-    uint8_t *buffer = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
-    
-    while(!shutdown_)
-    {
-        if (status_data != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-        if(arq_fsm.current == state_link_connected)
-        {
-            size_t n = read_buffer_all(data_rx_buffer, buffer);
-
-            ssize_t i = tcp_write(DATA_TCP_PORT, buffer, n);
-
-            if (i < (ssize_t) n)
-                fprintf(stderr, "Problems in data_worker_thread_tx!\n");
-        }
-        else
-        {
-            msleep(50);
-        }
-    }
-
-    free(buffer);
-    
-    return NULL;
-}
-
-// rx from tcp socket and send to trasmit by the modem
-void *data_worker_thread_rx(void *conn)
-{
-    uint8_t *buffer = (uint8_t *) malloc(TCP_BLOCK_SIZE);
-
-    while(!shutdown_)
-    {
-        if (status_data != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-
-        if(arq_fsm.current == state_link_connected)
-        {
-            int n = tcp_read(DATA_TCP_PORT, buffer, TCP_BLOCK_SIZE);
-
-            write_buffer(data_tx_buffer, buffer, n);
-        }
-        else
-        {
-            msleep(50);
-        }
-
-    }
-
-    free(buffer);
-    return NULL;
-}
-
-void *control_worker_thread_tx(void *conn)
-{
-    int counter = 0;
-    char imalive[] = "IAMALIVE\r";
-
-    while(!shutdown_)
-    {
-        if (status_ctl != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-        if (counter == 60)
-        {
-            counter = 0;
-            ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
-
-        }
-
-        sleep(1);
-        counter++;
-    }
-    
-    return NULL;
-}
-
-void *control_worker_thread_rx(void *conn)
-{
-    char *buffer = (char *) malloc(TCP_BLOCK_SIZE+1);
-    char temp[16];
-    int count = 0;
-
-    memset(buffer, 0, TCP_BLOCK_SIZE+1);
-
-    while(!shutdown_)
-    {
-        if (status_ctl != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-        int n = tcp_read(CTL_TCP_PORT, (uint8_t *)buffer + count, 1);
-
-        if (n < 0)
-        {
-            count = 0;
-            fprintf(stderr, "ERROR ctl socket reading\n");            
-            status_ctl = NET_RESTART;
-            continue;
-        }
-
-        if (buffer[count] != '\r')
-        {
-            count++;
-            continue;
-        }
-
-        // we found the '\r'
-        buffer[count] = 0;
-
-        if (count >= TCP_BLOCK_SIZE)
-        {
-            count = 0;
-            fprintf(stderr, "ERROR in command parsing\n");
-            continue;
-        }
-
-        count = 0;
-#ifdef DEBUG
-        fprintf(stderr,"Command received: %s\n", buffer);  
-#endif
-        
-        // now we parse the commands
-        if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
-        {
-            sscanf(buffer,"MYCALL %s", arq_conn.my_call_sign);
-            goto send_ok;
-        }
-        
-        if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
-        {
-            sscanf(buffer,"LISTEN %s", temp);
-            if (temp[1] == 'N') // ON
-            {
-                fsm_dispatch(&arq_fsm, EV_START_LISTEN);
-            }
-            if (temp[1] == 'F') // OFF
-            {
-                fsm_dispatch(&arq_fsm, EV_STOP_LISTEN);
-            }
-
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
-        {
-            sscanf(buffer,"PUBLIC %s", temp);
-            if (temp[1] == 'N') // ON
-                arq_conn.encryption = false;
-            if (temp[1] == 'F') // OFF
-               arq_conn.encryption = true;
-            
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "BW", strlen("BW")))
-        {
-            sscanf(buffer,"BW%d", &arq_conn.bw);
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
-        {
-            sscanf(buffer,"CONNECT %s %s", arq_conn.src_addr, arq_conn.dst_addr);
-            fsm_dispatch(&arq_fsm, EV_LINK_CALL_REMOTE);
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
-        {   
-            fsm_dispatch(&arq_fsm, EV_LINK_DISCONNECT);
-            goto send_ok;
-        }
-
-        fprintf(stderr, "Unknown command\n");
-        tcp_write(CTL_TCP_PORT, (uint8_t *) "WRONG\r", 6);
-        continue;
-        
-    send_ok:
-        tcp_write(CTL_TCP_PORT, (uint8_t *) "OK\r", 3);
-
-    }
-
-    free(buffer);
-
-    return NULL;
-}
-
-void *server_worker_thread_ctl(void *port)
-{
-    int tcp_base_port = *((int *) port);
-    int socket;
-    
-    while(!shutdown_)
-    {
-        int ret = tcp_open(tcp_base_port, CTL_TCP_PORT);
-
-        if (ret < 0)
-        {
-            fprintf(stderr, "Could not open TCP port %d\n", tcp_base_port);
-            shutdown_ = true;
-        }
-        
-        socket = listen4connection(CTL_TCP_PORT);
-
-        if (socket < 0)
-        {
-            status_ctl = NET_RESTART;
-            tcp_close(CTL_TCP_PORT);
-            continue;
-        }
-
-        fsm_dispatch(&arq_fsm, EV_CLIENT_CONNECT);
-        
-        // TODO: pthread wait here?
-        while (status_ctl == NET_CONNECTED)
-            sleep(1);
-
-        // inform the data thread
-        if (status_data == NET_CONNECTED)
-            status_data = NET_RESTART;
-
-        fsm_dispatch(&arq_fsm, EV_CLIENT_DISCONNECT);
-        
-        tcp_close(CTL_TCP_PORT);
-    }
-
-    return NULL;
-    
-}
-
-void *server_worker_thread_data(void *port)
-{
-    int tcp_base_port = *((int *) port);
-    int socket;
-
-    while(!shutdown_)
-    {
-        int ret = tcp_open(tcp_base_port+1, DATA_TCP_PORT);
-
-        if (ret < 0)
-        {
-            fprintf(stderr, "Could not open TCP port %d\n", tcp_base_port+1);
-            shutdown_ = true;
-        }
-        
-        socket = listen4connection(DATA_TCP_PORT);
-
-        if (socket < 0)
-        {
-            status_data = NET_RESTART;
-            tcp_close(DATA_TCP_PORT);
-            continue;
-        }
-
-        // pthread wait here?
-        while (status_data == NET_CONNECTED)
-            sleep(1);
-
-        tcp_close(DATA_TCP_PORT);
-    }
-    
-    return NULL;
-}
 
 void *dsp_thread_tx(void *conn)
 {

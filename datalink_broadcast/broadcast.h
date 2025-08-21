@@ -30,10 +30,9 @@
 /**
  * Run the broadcast subsystem.
  *
- * @param freedv Pointer to the FreeDV structure.
- * @param tcp_port The TCP port to use for the server.
+ * @param freedv Pointer to the modem structure.
  */
-void broadcast_run(generic_modem_t *g_modem, int tcp_port);
+void broadcast_run(generic_modem_t *g_modem);
 
 
 #endif // BROADCAST_H_
