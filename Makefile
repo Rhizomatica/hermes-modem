@@ -50,9 +50,9 @@ all: mercury
 
 mercury: internal_deps main.o 
 	$(CC) -o mercury  \
-		main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/crc6.o datalink_broadcast/broadcast.o modem/modem.o \
-		modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \
-		data_interfaces/tcp_interfaces.o data_interfaces/net.o $(LDFLAGS)
+		main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o modem/modem.o \
+		modem/framer.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \
+		common/crc6.o data_interfaces/tcp_interfaces.o data_interfaces/net.o $(LDFLAGS)
 
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c

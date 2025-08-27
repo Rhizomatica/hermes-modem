@@ -42,8 +42,11 @@
 
 static pthread_t tid[7];
 
-extern cbuf_handle_t data_tx_buffer;
-extern cbuf_handle_t data_rx_buffer;
+extern cbuf_handle_t data_tx_buffer_arq;
+extern cbuf_handle_t data_rx_buffer_arq;
+
+extern cbuf_handle_t data_tx_buffer_broadcast;
+extern cbuf_handle_t data_rx_buffer_broadcast;
 
 extern bool shutdown_;
 
@@ -144,7 +147,7 @@ void *data_worker_thread_tx(void *conn)
             continue;
         }
 
-        size_t n = read_buffer_all(data_rx_buffer, buffer);
+        size_t n = read_buffer_all(data_rx_buffer_arq, buffer);
 
         ssize_t i = tcp_write(DATA_TCP_PORT, buffer, n);
 
@@ -172,7 +175,7 @@ void *data_worker_thread_rx(void *conn)
 
         int n = tcp_read(DATA_TCP_PORT, buffer, TCP_BLOCK_SIZE);
 
-        write_buffer(data_tx_buffer, buffer, n);
+        write_buffer(data_tx_buffer_arq, buffer, n);
     }
 
     free(buffer);
@@ -335,7 +338,7 @@ void *send_thread(void *client_socket_ptr)
 
     while (!shutdown_)
     {
-        size_t n = read_buffer_all(data_rx_buffer, buffer);
+        size_t n = read_buffer_all(data_rx_buffer_broadcast, buffer);
         if (n > 0)
         {
             ssize_t sent = send(client_socket, buffer, n, 0);
@@ -375,7 +378,7 @@ void *recv_thread(void *client_socket_ptr)
         ssize_t received = recv(client_socket, buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
         {
-            write_buffer(data_tx_buffer, buffer, received);
+            write_buffer(data_tx_buffer_broadcast, buffer, received);
         }
         else if (received == 0)
         {

@@ -18,29 +18,20 @@ bool IN_FRAME;
 bool ESCAPE;
 
 uint8_t kiss_command = CMD_UNKNOWN;
-uint8_t frame_buffer[MAX_PAYLOAD];
-uint8_t write_buffer[MAX_PAYLOAD*2+3];
 
-void kiss_frame_received(int frame_len)
-{
-    // do something here...
-    int written = write(1, frame_buffer, frame_len);
-}
-
-void kiss_read(uint8_t sbyte)
+int kiss_read(uint8_t sbyte, uint8_t *frame_buffer)
 {
     if (IN_FRAME && sbyte == FEND && kiss_command == CMD_DATA)
     {
         IN_FRAME = false;
-        kiss_frame_received(frame_len);
-        return;
+        return frame_len;
     }
     if (sbyte == FEND)
     {
         IN_FRAME = true;
         kiss_command = CMD_UNKNOWN;
         frame_len = 0;
-        return;
+        return 0;
     }
     if (IN_FRAME && frame_len < MAX_PAYLOAD)
     {
@@ -49,14 +40,14 @@ void kiss_read(uint8_t sbyte)
         {
             // Strip of port nibble
             kiss_command = sbyte & 0x0F;
-            return;
+            return 0;
         }
         if (kiss_command == CMD_DATA)
         {
             if (sbyte == FESC)
             {
                 ESCAPE = true;
-                return;
+                return 0;
             }
             if (ESCAPE)
             {
@@ -70,9 +61,10 @@ void kiss_read(uint8_t sbyte)
             }
         }
     }
+    return 0;
 }
 
-int kiss_write_frame(uint8_t* buffer, int frame_len)
+int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t *write_buffer)
 {
     int write_len = 0;
     write_buffer[write_len++] = FEND;
@@ -95,7 +87,5 @@ int kiss_write_frame(uint8_t* buffer, int frame_len)
         }
     }
     write_buffer[write_len++] = FEND;
-
-    // TODO: write the buffer somewhere...
-    return write(1, write_buffer, write_len);
+    return write_len;
 }

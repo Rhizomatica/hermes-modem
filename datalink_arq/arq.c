@@ -31,8 +31,8 @@
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-extern cbuf_handle_t data_tx_buffer;
-extern cbuf_handle_t data_rx_buffer;
+extern cbuf_handle_t data_tx_buffer_arq;
+extern cbuf_handle_t data_rx_buffer_arq;
 
 extern bool shutdown_;
 
@@ -371,7 +371,7 @@ void callee_accept_connection()
 
     data[0] |= (uint8_t) crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
 
-    write_buffer(data_tx_buffer, data, frame_size);
+    write_buffer(data_tx_buffer_arq, data, frame_size);
 
 }
 
@@ -407,7 +407,7 @@ void call_remote()
 
     data[0] |= (uint8_t) crc6_0X6F(1, (uint8_t *)data + HEADER_SIZE, frame_size - HEADER_SIZE);
 
-    write_buffer(data_tx_buffer, data, frame_size);
+    write_buffer(data_tx_buffer_arq, data, frame_size);
     
     return;
 }
@@ -417,8 +417,8 @@ void call_remote()
 
 void clear_connection_data()
 {
-    clear_buffer(data_tx_buffer);
-    clear_buffer(data_rx_buffer);
+    clear_buffer(data_tx_buffer_arq);
+    clear_buffer(data_rx_buffer_arq);
     reset_arq_info(&arq_conn);
 }
 
@@ -469,7 +469,7 @@ void *dsp_thread_tx(void *conn)
     while(!shutdown_)
     {
         // should we add a header already here, to know the size of each package? (size need to match frame_size
-        if ((int) size_buffer(data_tx_buffer) < frame_size ||
+        if ((int) size_buffer(data_tx_buffer_arq) < frame_size ||
             arq_fsm.current == state_idle ||
             arq_fsm.current == state_no_connected_client)
         {
@@ -480,7 +480,7 @@ void *dsp_thread_tx(void *conn)
             
         if(arq_fsm.current != state_idle && arq_fsm.current != state_listen)
         {
-            read_buffer(data_tx_buffer, data, frame_size);
+            read_buffer(data_tx_buffer_arq, data, frame_size);
         }
         else
         {

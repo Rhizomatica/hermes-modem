@@ -256,6 +256,15 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name)
     return cbuf;
 }
 
+void circular_buf_disconnect_shm(cbuf_handle_t cbuf, size_t size)
+{
+    assert(cbuf && cbuf->internal && cbuf->buffer);
+#if !defined(_WIN32)
+    shm_unmap(cbuf->buffer, size);
+    shm_unmap(cbuf->internal, sizeof(struct circular_buf_t_aux));
+#endif
+}
+
 void circular_buf_free_shm(cbuf_handle_t cbuf)
 {
     free(cbuf);

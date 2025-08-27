@@ -18,33 +18,23 @@
  *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <string.h>
-#include <pthread.h>
-#include <arpa/inet.h>
 
-#include "modem.h"
-#include "arq.h"
-#include "defines_modem.h"
-#include "ring_buffer_posix.h"
-#include "tcp_interfaces.h"
+#ifndef FRAMER_H
+#define FRAMER_H
+
+#define PACKET_TYPE_ARQ_CONTROL 0x00
+#define PACKET_TYPE_ARQ_DATA 0x01
+#define PACKET_TYPE_BROADCAST_CONTROL 0x02
+#define PACKET_TYPE_BROADCAST_DATA 0x03
+
+#define HEADER_SIZE 1 // Size of the Hermes header
+
+// Parse the frame header, validate CRC
+// Returns packet type or negative if CRC error
+int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size);
 
 
-extern bool shutdown_; // global shutdown flag
-extern arq_info arq_conn; // ARQ connection info
 
 
-// Main function to handle broadcast operations
-void broadcast_run(generic_modem_t *g_modem)
-{
-    printf("Starting broadcast system...\n");
-
-    // Here we can implement broadcast-specific logic
-    printf("Nothing to do for now... raw broadcast..\n");
-
-    printf("Broadcast system stopped.\n");
-}
+#endif // FRAMER_H

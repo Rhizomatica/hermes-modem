@@ -28,7 +28,8 @@
 
 #include "modem.h"
 #include "ring_buffer_posix.h"
-
+#include "framer.h"
+#include "tcp_interfaces.h"
 #include "freedv_api.h"
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -36,14 +37,26 @@
 
 #include "defines_modem.h"
 
+/* Here we read and write from the input and output buffers which are connected */
+/* to the radio dsp paths. */
+
+/* The buffers can be connected to an external software (eg. sbitx_controller)  */
+/* or to the audioio subsystem which connects to a sound card. */
+
 extern bool shutdown_; // global shutdown flag
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-cbuf_handle_t data_tx_buffer;
-cbuf_handle_t data_rx_buffer;
+extern char *freedv_mode_names[];
 
+cbuf_handle_t data_tx_buffer_arq;
+cbuf_handle_t data_rx_buffer_arq;
+
+cbuf_handle_t data_tx_buffer_broadcast;
+cbuf_handle_t data_rx_buffer_broadcast;
+
+pthread_t tx_thread_tid, rx_thread_tid;
 
 int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
 {
@@ -65,13 +78,21 @@ try_shm_connect2:
         sleep(1);
         goto try_shm_connect2;
     }
-    printf("Connected to shared memory radio I/O buffers.\n");
+    printf("Connected to Shared Memory Radio I/O tx/rx buffers.\n");
 
+    // buffers for the ARQ datalink
     uint8_t *buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
     uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
-    data_tx_buffer = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
-    data_rx_buffer = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
-    printf("Created data buffers for TX and RX.\n");
+    data_tx_buffer_arq = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
+    data_rx_buffer_arq = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
+
+    // buffers for the broadcast datalink
+    buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
+    buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
+    data_tx_buffer_broadcast = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
+    data_rx_buffer_broadcast = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
+    
+    printf("Created data buffers for ARQ and BROADCAST datalink, tx/rx paths.\n");
 
     char codename[80] = "H_256_512_4";
     struct freedv_advanced adv = {0, 2, 100, 8000, 1000, 200, codename};
@@ -83,20 +104,35 @@ try_shm_connect2:
     
     freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
+    freedv_set_verbose(g_modem->freedv, 3);
+    printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);
+
+    // Create TX and RX threads
+    pthread_create(&tx_thread_tid, NULL, tx_thread, (void *)g_modem);
+    pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
+    
     return 0;
 }
 
 int shutdown_modem(generic_modem_t *g_modem)
 {
-    circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
-    circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
+    // Wait for threads to finish
+    pthread_join(tx_thread_tid, NULL);
+    pthread_join(rx_thread_tid, NULL);
+    
+    circular_buf_disconnect_shm(capture_buffer, SIGNAL_BUFFER_SIZE);
+    circular_buf_disconnect_shm(playback_buffer, SIGNAL_BUFFER_SIZE);
     circular_buf_free_shm(capture_buffer);
     circular_buf_free_shm(playback_buffer);
 
-    free(data_tx_buffer->buffer);
-    free(data_rx_buffer->buffer);
-    circular_buf_free(data_tx_buffer);
-    circular_buf_free(data_rx_buffer);
+    free(data_tx_buffer_arq->buffer);
+    free(data_rx_buffer_arq->buffer);
+    free(data_tx_buffer_broadcast->buffer);
+    free(data_rx_buffer_broadcast->buffer);
+    circular_buf_free(data_tx_buffer_arq);
+    circular_buf_free(data_rx_buffer_arq);
+    circular_buf_free(data_tx_buffer_broadcast);
+    circular_buf_free(data_rx_buffer_broadcast);
     
     freedv_close(g_modem->freedv);   
 
@@ -107,7 +143,6 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 {
     struct freedv *freedv = g_modem->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
-    size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2; /* 16 bits used for the CRC */
     size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
     int16_t mod_out_short[n_mod_out];
     int32_t mod_out_int32[n_mod_out];
@@ -122,11 +157,6 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
     write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_preamble);
     total_samples += n_preamble;
-    
-    /* The raw data modes require a CRC in the last two bytes */
-    uint16_t crc16 = freedv_gen_crc16(bytes_in, payload_bytes_per_modem_frame);
-    bytes_in[bytes_per_modem_frame - 2] = crc16 >> 8;
-    bytes_in[bytes_per_modem_frame - 1] = crc16 & 0xff;
 
     /* modulate and send a data frame */
     for (int i = 0; i < frames_per_burst; i++)
@@ -158,7 +188,14 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     write_buffer(playback_buffer, (uint8_t *) silence, sizeof(int32_t) * samples_delay);
     total_samples += samples_delay;
 
+    ptt_on();
+    
     usleep(total_samples * 1000000 / FREEDV_FS_8000); // wait for the samples to be played
+
+    // give some more tail time just to be in the safe side
+    usleep(TAIL_TIME_US);
+
+    ptt_off();
     
     return 0;
 }
@@ -166,13 +203,10 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out)
 {
     struct freedv *freedv = g_modem->freedv;
-    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
-    size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2; /* 16 bits used for the CRC */
 
     static int frames_received = 0;
     int input_size = freedv_get_n_max_modem_samples(freedv);
 
-    // TODO: read from buffer
     int16_t demod_in[input_size];
     int32_t buffer_in[input_size];
     
@@ -186,24 +220,8 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     
     *nbytes_out = freedv_rawdatarx(freedv, bytes_out, demod_in);
 
-    // check crc
     if (*nbytes_out > 0)
     {
-        uint16_t crc16 = freedv_gen_crc16(bytes_out, payload_bytes_per_modem_frame);
-        uint16_t received_crc16 = (bytes_out[*nbytes_out - 2] << 8) | bytes_out[*nbytes_out - 1];
-        if (crc16 != received_crc16)
-        {
-            fprintf(stderr, "CRC error in received frame\n");
-            *nbytes_out = 0; // reset output size on CRC error
-            return -1;
-        }
-        else
-        {
-            fprintf(stderr, "CRC check passed\n");
-            // remove CRC from output
-            *nbytes_out -= 2;
-        }
-
         frames_received++;
         int sync = 0;
         float snr_est = 0.0;
@@ -212,4 +230,101 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     }
 
     return 0;
+}
+
+
+// Threads
+
+
+// Function to handle TX logic for the broadcast tx path
+void *tx_thread(void *g_modem)
+{
+    struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
+    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
+    int frames_per_burst = freedv_get_frames_per_burst(freedv);
+    uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame * frames_per_burst);
+
+    if (!data)
+    {
+        fprintf(stderr, "Failed to allocate memory for TX data.\n");
+        return NULL;
+    }
+
+    while (!shutdown_)
+    {
+        if (size_buffer(data_tx_buffer_arq) >= bytes_per_modem_frame * frames_per_burst)
+        {
+            for (int i = 0; i < frames_per_burst; i++)
+            {
+                read_buffer(data_tx_buffer_arq, data + (bytes_per_modem_frame * i), bytes_per_modem_frame);
+            }
+            send_modulated_data(g_modem, data, frames_per_burst);
+        }
+
+        if (size_buffer(data_tx_buffer_broadcast) >= bytes_per_modem_frame * frames_per_burst)
+        {
+            for (int i = 0; i < frames_per_burst; i++)
+            {
+                read_buffer(data_tx_buffer_broadcast, data + (bytes_per_modem_frame * i), bytes_per_modem_frame);
+            }
+            send_modulated_data(g_modem, data, frames_per_burst);
+        }
+
+        if (size_buffer(data_tx_buffer_arq) < bytes_per_modem_frame * frames_per_burst &&
+            size_buffer(data_tx_buffer_broadcast) < bytes_per_modem_frame * frames_per_burst)
+        {
+            usleep(100000); // sleep for 100ms if there is no data to send
+        }
+    }
+
+    free(data);
+    return NULL;
+}
+
+// Function to handle RX logic for the broadcast rx path
+void *rx_thread(void *g_modem)
+{
+    struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
+    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
+    int frames_per_burst = freedv_get_frames_per_burst(freedv);
+    uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame * frames_per_burst);
+    size_t nbytes_out = 0;
+
+
+    
+    if (!data)
+    {
+        fprintf(stderr, "Failed to allocate memory for RX data.\n");
+        return NULL;
+    }
+
+    while (!shutdown_)
+    {
+        // we are running full-duplex for now - TODO: change to half-duplex
+        receive_modulated_data(g_modem, data, &nbytes_out);
+        if (nbytes_out > 0)
+        {
+            int frame_type = parse_frame_header(data, nbytes_out);
+
+            switch (frame_type)
+            {
+            case PACKET_TYPE_ARQ_CONTROL:
+            case PACKET_TYPE_ARQ_DATA:
+                write_buffer(data_rx_buffer_arq, data, nbytes_out);
+                break;
+            case PACKET_TYPE_BROADCAST_CONTROL:
+            case PACKET_TYPE_BROADCAST_DATA:
+                write_buffer(data_rx_buffer_broadcast, data, nbytes_out);
+                break;
+            default:
+                printf("Unknown frame type received.\n");
+                break;
+            }
+            
+            printf("Received %zu bytes of data, packet type %d, bytes_per_modem_frame: %zu\n", nbytes_out, frame_type, bytes_per_modem_frame);
+        }
+    }
+
+    free(data);
+    return NULL;
 }

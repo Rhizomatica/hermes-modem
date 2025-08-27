@@ -27,6 +27,8 @@
 
 #include "freedv_api.h"
 
+#define TAIL_TIME_US 100000 // 100 ms (in microseconds) tail time after sending data
+
 typedef struct generic_modem {
     struct freedv *freedv;
     void *future_extension; // Placeholder for future extensions
@@ -41,5 +43,10 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out);
 
+// Threads
+// tx to the modem the data received from the tcp socket
+void *tx_thread(void *g_modem);
+// rx from the modem and send to the tcp socket
+void *rx_thread(void *g_modem);
 
 #endif // MODEM_H

@@ -19,6 +19,7 @@
  */
 
 #include <stdint.h>
+#include "crc6.h"
 
 /**
  * Functions and types for CRC checks.

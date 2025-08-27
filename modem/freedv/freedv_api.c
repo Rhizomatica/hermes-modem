@@ -1424,6 +1424,16 @@ void freedv_set_frames_per_burst(struct freedv *freedv, int framesperburst) {
   }
 }
 
+// get frames per burst
+int freedv_get_frames_per_burst(struct freedv *freedv) {
+  assert(freedv != NULL);
+  if (freedv->ofdm != NULL)
+  {
+      return freedv->ofdm->packetsperburst;
+  }
+  return 1;
+}
+
 struct FSK *freedv_get_fsk(struct freedv *f) {
   return f->fsk;
 }

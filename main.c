@@ -322,17 +322,15 @@ int main(int argc, char *argv[])
     generic_modem_t g_modem;
     pthread_t radio_capture, radio_playback;
     
-    if (audio_system == AUDIO_SUBSYSTEM_SHM)
-    {
-        printf("Initializing I/O from Shared Memory (SHM)\n");
-        init_modem(&g_modem, mod_config, 1); // frames per burst is 1 for now
-    }
-    else
+    if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         printf("Initializing I/O from Sound Card\n");
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
     }
 
+    printf("Initializing Modem\n");
+    init_modem(&g_modem, mod_config, 1); // frames per burst is 1 for now
+    
     arq_init();
 
     // we block here
@@ -341,15 +339,15 @@ int main(int argc, char *argv[])
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
     interfaces_init(base_tcp_port, broadcast_port);
 
-    
-    if (audio_system == AUDIO_SUBSYSTEM_SHM)
-    {
-        shutdown_modem(&g_modem);
-    }
-    else
+
+    // we block somewhere here until shutdown
+    if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         audioio_deinit(&radio_capture, &radio_playback);
     }
+
+    shutdown_modem(&g_modem);
+
     return 0;
 
 }
