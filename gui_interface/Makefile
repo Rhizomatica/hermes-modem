@@ -1,7 +1,7 @@
 # Makefile for UDP JSON demo
 
 CC      = gcc
-CFLAGS  = -O2 -Wall -Wextra -pthread -std=gnu11 -D_GNU_SOURCE
+CFLAGS  = -O2 -Wall -Wno-stringop-truncation -pthread -std=gnu11 -D_GNU_SOURCE -DTEST_MAIN
 LDFLAGS = -pthread
 
 # Objects
