@@ -1,7 +1,7 @@
 # HERMES modem
 
-This is the Rhizomatica's HERMES (High-Frequency Emergency and Rural Multimedia Exchange System) modem, based
-on David Rowe's FreeDV modem.
+This is the Rhizomatica's HERMES (High-Frequency Emergency and Rural Multimedia Exchange System) modem. Currently based
+on David Rowe's FreeDV modem, while support for other modems, as Mercury, will come next.
 
 ```
 Usage modes: 
