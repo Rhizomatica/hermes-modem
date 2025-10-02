@@ -294,7 +294,7 @@ int main(int argc, char *argv[]) {
     while (1) {
         // Send status
         int bitrate = (rand() % 2) ? 1200 : 2400;
-        double snr = 15.0 + (rand() % 100) / 10.0;
+        double snr = 5.0 - (rand() % 100) / 10.0;
         int sync = rand() % 2;
         modem_direction_t dir = (counter % 2) ? DIR_TX : DIR_RX;
         int client = rand() % 2;
