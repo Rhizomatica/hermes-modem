@@ -44,13 +44,17 @@ typedef struct {
     int sync;                 // bool
     modem_direction_t dir;
     int client_tcp_connected; // bool
+    long bytes_transmitted;
+    long bytes_received;
 } modem_status_t;
 
 // ---- Message types ----
 typedef enum {
     MSG_UNKNOWN,
     MSG_STATUS,
-    MSG_CONFIG
+    MSG_CONFIG,
+    MSG_SOUNDCARD_LIST,
+    MSG_RADIO_LIST
 } message_type_t;
 
 // ---- Unified message ----
@@ -66,6 +70,16 @@ typedef struct {
     int arq_base_port;
     char aes_key[128];
     int encryption_enabled; // bool
+    // Soundcard list
+    struct {
+        char selected[64];
+        char list[512]; // JSON array string
+    } soundcard_list;
+    // Radio list
+    struct {
+        char selected[64];
+        char list[512]; // JSON array string
+    } radio_list;
 } modem_message_t;
 
 // ---- TX handle ----
@@ -90,7 +104,9 @@ int udp_tx_send_status(udp_tx_t *tx,
                        const char *user_callsign,
                        const char *dest_callsign,
                        int sync, modem_direction_t dir,
-                       int client_tcp_connected);
+                       int client_tcp_connected,
+                       long bytes_transmitted,
+                       long bytes_received);
 
 int udp_tx_send_config(udp_tx_t *tx,
                        const char *soundcard,
@@ -98,6 +114,15 @@ int udp_tx_send_config(udp_tx_t *tx,
                        int arq_base_port,
                        const char *aes_key,
                        int encryption_enabled);
+
+int udp_tx_send_soundcard_list(udp_tx_t *tx,
+                               const char *selected_soundcard,
+                               const char *soundcards[], int count);
+
+int udp_tx_send_radio_list(udp_tx_t *tx,
+                           const char *selected_radio,
+                           const char *radios[], int count);
+
 
 // RX thread
 void *rx_thread_main(void *arg);
