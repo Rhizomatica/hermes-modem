@@ -53,7 +53,7 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name);
 
 // unmaps the shared memory (detaches from the shared memory space)
 void circular_buf_disconnect_shm(cbuf_handle_t cbuf, size_t size);
-    
+
 // unmaps and unlink (destroy) the shared memory (destroys the shared memory space)
 void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name);
 

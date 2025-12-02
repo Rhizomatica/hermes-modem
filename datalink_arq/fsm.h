@@ -45,7 +45,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-    
+
 extern const char* fsm_event_names[];
 
 #ifdef __cplusplus

@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 
 #ifdef __linux__
 #include <sched.h>
@@ -39,6 +40,10 @@
 #include "defines_modem.h"
 #include "audioio/audioio.h"
 #include "tcp_interfaces.h"
+#include "ui_communication.h"
+
+#define DEFAULT_UI_TX_PORT 9700
+#define DEFAULT_UI_RX_PORT 9701
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -51,7 +56,7 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC14,
                        FREEDV_MODE_FSK_LDPC };
 
-char *freedv_mode_names[] = { "DATAC1",
+    char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
                               "DATAC0",
                               "DATAC4",
@@ -60,6 +65,13 @@ char *freedv_mode_names[] = { "DATAC1",
                               "FSK_LDPC" };
 
 bool shutdown_ = false; // global shutdown flag
+
+// Signal handler for graceful shutdown
+void signal_handler(int sig)
+{
+    printf("\nReceived signal %d, shutting down gracefully...\n", sig);
+    shutdown_ = true;
+}
 
 int main(int argc, char *argv[])
 {
@@ -78,11 +90,15 @@ int main(int argc, char *argv[])
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
     int mod_config = FREEDV_MODE_DATAC1;
-    
+    bool ui_enabled = false;
+    char ui_host[128] = "127.0.0.1";
+    uint16_t ui_tx_port = DEFAULT_UI_TX_PORT;
+    uint16_t ui_rx_port = 0;
+
     input_dev[0] = 0;
     output_dev[0] = 0;
 
-    
+
     if (argc < 2)
     {
  manual:
@@ -97,6 +113,8 @@ int main(int argc, char *argv[])
         printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
         printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
         printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
+        printf(" -U host[:tx[:rx]]          Enable UDP UI telemetry to host (defaults %d/%d). Use 'off' to disable.\n",
+               DEFAULT_UI_TX_PORT, DEFAULT_UI_RX_PORT);
         printf(" -l                         Lists all modulator/coding modes.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -v                         Verbose mode. Prints more information during execution.\n");
@@ -106,7 +124,7 @@ int main(int argc, char *argv[])
 
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:li:o:x:p:b:zv")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:li:o:x:p:b:zvU:")) != -1)
     {
         switch (opt)
         {
@@ -130,6 +148,40 @@ int main(int argc, char *argv[])
             if (optarg)
                 broadcast_port = atoi(optarg);
             break;
+        case 'U':
+        {
+            if (!optarg)
+                goto manual;
+            if (!strcmp(optarg, "off") || !strcmp(optarg, "disable")) {
+                ui_enabled = false;
+                break;
+            }
+
+            char tmp[128];
+            strncpy(tmp, optarg, sizeof(tmp) - 1);
+            tmp[sizeof(tmp) - 1] = '\0';
+
+            char *host = strtok(tmp, ":");
+            char *tx = strtok(NULL, ":");
+            char *rx = strtok(NULL, ":");
+
+            if (!host) {
+                fprintf(stderr, "Invalid -U argument\n");
+                goto manual;
+            }
+
+            strncpy(ui_host, host, sizeof(ui_host) - 1);
+            ui_host[sizeof(ui_host) - 1] = '\0';
+            ui_enabled = true;
+
+            ui_tx_port = tx ? (uint16_t)atoi(tx) : DEFAULT_UI_TX_PORT;
+            if (rx && *rx) {
+                ui_rx_port = (uint16_t)atoi(rx);
+            } else {
+                ui_rx_port = 0;
+            }
+            break;
+        }
         case 'x':
             if (!strcmp(optarg, "alsa"))
                 audio_system = AUDIO_SUBSYSTEM_ALSA;
@@ -168,7 +220,7 @@ int main(int argc, char *argv[])
             goto manual;
         }
     }
-    
+
 
     if (list_modes)
     {
@@ -196,12 +248,12 @@ int main(int argc, char *argv[])
             printf("payload_bytes_per_modem_frame: %zu\n", payload_bytes_per_modem_frame);
             printf("n_tx_modem_samples: %d\n", freedv_get_n_tx_modem_samples(freedv));
             printf("freedv_get_n_max_modem_samples: %d\n", freedv_get_n_max_modem_samples(freedv));
-            
+
             if (freedv_modes[i] != FREEDV_MODE_FSK_LDPC && verbose) {
                 freedv_ofdm_print_info(freedv);
             }
             printf("\n");
-      
+
             freedv_close(freedv);
 
         }
@@ -308,7 +360,7 @@ int main(int argc, char *argv[])
     default:
         printf("Selected audio system not supported. Trying to continue.\n");
     }
-    
+
     if (list_sndcards)
     {
         list_soundcards(audio_system);
@@ -317,30 +369,71 @@ int main(int argc, char *argv[])
         if (output_dev)
             free(output_dev);
         return EXIT_SUCCESS;
-    }    
+    }
+
+    int selected_mode = mod_config;
+    const size_t num_modes = sizeof(freedv_modes) / sizeof(freedv_modes[0]);
+    if (mod_config >= 0 && (size_t)mod_config < num_modes)
+    {
+        selected_mode = freedv_modes[mod_config];
+        printf("Selected FreeDV mode %s (%d)\n", freedv_mode_names[mod_config], selected_mode);
+    }
+    else
+    {
+        printf("Selected FreeDV mode constant %d\n", selected_mode);
+    }
+    mod_config = selected_mode;
 
     generic_modem_t g_modem;
     pthread_t radio_capture, radio_playback;
-    
+
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         printf("Initializing I/O from Sound Card\n");
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
     }
 
+    // Setup signal handlers for graceful shutdown
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
     printf("Initializing Modem\n");
     init_modem(&g_modem, mod_config, 1); // frames per burst is 1 for now
     
-    arq_init();
+    arq_init(&g_modem);
 
-    // we block here
+    ui_comm_set_logging(verbose);
+    if (ui_enabled)
+    {
+        if (ui_comm_init(ui_host, ui_tx_port, ui_rx_port) != 0)
+        {
+            fprintf(stderr, "[ui] Failed to initialize telemetry (%s:%u). Disabling UI output.\n",
+                    ui_host, ui_tx_port);
+            ui_enabled = false;
+        }
+    }
     broadcast_run(&g_modem);
 
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
     interfaces_init(base_tcp_port, broadcast_port);
 
-
     // we block somewhere here until shutdown
+    while (!shutdown_)
+    {
+        sleep(1);
+    }
+
+    printf("Shutting down...\n");
+    
+    // Set shutdown flag first
+    shutdown_ = true;
+    
+    // Shutdown subsystems
+    if (ui_comm_is_enabled())
+        ui_comm_shutdown();
+    broadcast_shutdown();
+    arq_shutdown();
+    
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         audioio_deinit(&radio_capture, &radio_playback);

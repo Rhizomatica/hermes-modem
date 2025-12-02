@@ -34,5 +34,15 @@
  */
 void broadcast_run(generic_modem_t *g_modem);
 
+/**
+ * Shutdown the broadcast subsystem and clean up threads.
+ */
+void broadcast_shutdown();
+
+/**
+ * Queue raw TCP/KISS bytes for broadcast processing.
+ */
+void broadcast_enqueue_tcp_data(uint8_t *data, size_t len);
+
 
 #endif // BROADCAST_H_

@@ -1,9 +1,45 @@
-*.pyc
+# Build artifacts
 *.o
 *.a
-modem/freedv/freedv_data_raw_rx
-modem/freedv/freedv_data_raw_tx
-modem/freedv/freedv_data_rx
-modem/freedv/freedv_data_tx
-modem/freedv/libfreedvdata.a
 mercury
+*.exe
+*.dll
+*.so
+
+# Test binaries
+utils/arq_test_client
+utils/loopback_test
+utils/broadcast_test
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+/tmp/
+*.tmp
+
+# Binary files that shouldn't be in git
+*.deb
+*.rpm
+*.tar.gz
+*.zip
+
+# FreeDV test binaries
+modem/freedv/freedv_data_*
+
+# Old/backup files
+*-old.*
+*~
+
+# Legacy interface binaries
+interface/*.o
+gui_interface/ui_communication

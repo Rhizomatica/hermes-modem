@@ -158,7 +158,7 @@ void *radio_playback_thread(void *device_ptr)
         ch_layout = STEREO;
 #endif
     ch_layout = STEREO;
-    
+
     while (!shutdown_)
     {
         ffssize n;
@@ -427,7 +427,7 @@ void list_soundcards(int audio_system)
         audio = NULL;
         return;
     }
-    
+
 #if defined(_WIN32)
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;

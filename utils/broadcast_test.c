@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netdb.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -31,11 +32,20 @@ int create_tcp_socket(const char *ip, int port)
     memset(&modem_addr, 0, sizeof(modem_addr));
     modem_addr.sin_family = AF_INET;
     modem_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip, &modem_addr.sin_addr) <= 0)
+    
+    // Try inet_pton first (for IP addresses)
+    int pton_result = inet_pton(AF_INET, ip, &modem_addr.sin_addr);
+    if (pton_result <= 0)
     {
-        perror("Invalid modem IP address");
-        close(tcp_socket);
-        return -1;
+        // If not an IP, try hostname resolution
+        struct hostent *host = gethostbyname(ip);
+        if (host == NULL)
+        {
+            fprintf(stderr, "Failed to resolve hostname/IP: %s\n", ip);
+            close(tcp_socket);
+            return -1;
+        }
+        memcpy(&modem_addr.sin_addr, host->h_addr_list[0], host->h_length);
     }
 
     if (connect(tcp_socket, (struct sockaddr *)&modem_addr, sizeof(modem_addr)) < 0)
@@ -73,7 +83,7 @@ void *receive_thread(void *socket_ptr)
                     {
                         printf("%c", (buffer[j]));
                     }
-                    
+
                     printf("\n> ");
                 }
             }
@@ -132,7 +142,7 @@ int main(int argc, char *argv[])
             printf("Connection closed. Exiting...\n");
             break;
         }
-        
+
         send_buffer[strcspn(send_buffer, "\n")] = '\0'; // Remove newline character
 
         int kiss_frame_size = kiss_write_frame((uint8_t *)send_buffer, strlen(send_buffer), (uint8_t *)write_buffer);

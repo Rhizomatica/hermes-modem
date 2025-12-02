@@ -16,6 +16,7 @@ Options:
  -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.
  -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 7004.
+ -U host[:tx[:rx]]          Enable UDP UI telemetry towards host. Defaults to 127.0.0.1:9700 (RX disabled). Use "off" to disable.
  -l                         Lists all modulator/coding modes.
  -z                         Lists all available sound cards.
  -v                         Verbose mode. Prints more information during execution.

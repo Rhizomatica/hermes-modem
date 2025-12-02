@@ -39,23 +39,26 @@ else
     endif
 endif
 
-.PHONY: all internal_deps clean
+.PHONY: all internal_deps clean arq_kiss_bench bench-tests
 
 CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
+CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Iinterface
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
 all: mercury
 
-mercury: internal_deps main.o 
+mercury: internal_deps main.o interface/ui_communication.o
 	$(CC) -o mercury  \
-		main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o modem/modem.o \
+		main.o interface/ui_communication.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
 		modem/framer.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \
 		common/crc6.o data_interfaces/tcp_interfaces.o data_interfaces/net.o $(LDFLAGS)
 
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c
+
+interface/ui_communication.o: interface/ui_communication.c interface/ui_communication.h
+	$(CC) $(CFLAGS) -c interface/ui_communication.c -o $@
 
 
 internal_deps:
@@ -75,3 +78,21 @@ clean:
 	$(MAKE) -C data_interfaces clean
 	$(MAKE) -C audioio clean
 	$(MAKE) -C common clean
+
+# --------------------------------------------------------------------
+# Stand-alone ARQ/KISS logic bench (no audio loopback required)
+# --------------------------------------------------------------------
+TEST_BENCH_SRCS = tests/arq_kiss_bench.c
+TEST_BENCH_OBJS = $(TEST_BENCH_SRCS:.c=.o)
+TEST_BENCH = tests/arq_kiss_bench
+
+tests/%.o: tests/%.c
+	$(CC) $(CFLAGS) -Itests -c $< -o $@
+
+$(TEST_BENCH): $(TEST_BENCH_OBJS) datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/kiss.o common/ring_buffer_posix.o common/os_interop.o common/crc6.o
+	$(CC) -o $@ $^ -pthread -lm
+
+arq_kiss_bench: $(TEST_BENCH)
+
+bench-tests: arq_kiss_bench
+	./$(TEST_BENCH)
