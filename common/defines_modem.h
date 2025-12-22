@@ -38,10 +38,10 @@
 #define SIGNAL_INPUT "/signal-radio2modem"
 #define SIGNAL_OUTPUT "/signal-modem2radio"
 
-#if defined(_WIN32)
-#define msleep(a) Sleep(a)
-#else
+#if defined(__linux__)
 #define msleep(a) usleep(a * 1000)
+#else
+#define msleep(a) Sleep(a)
 #endif
 
 

@@ -11,7 +11,23 @@
 
 
 // threading support
-#if defined(_WIN32)
+#if defined(__linux__)
+
+#include <pthread.h>
+#include <sys/resource.h>
+#include <sys/shm.h>
+#include <sys/mman.h>
+#include <sys/stat.h>        /* For mode constants */
+#include <unistd.h>
+
+#define MUTEX_LOCK(x)   pthread_mutex_lock(x)
+#define MUTEX_UNLOCK(x) pthread_mutex_unlock(x)
+#define COND_WAIT(x, y)  pthread_cond_wait(x, y)
+#define COND_TIMED_WAIT(x, y, z) pthread_cond_timedwait(x, y, z)
+#define COND_SIGNAL(x)  pthread_cond_signal(x)
+
+
+#else
 
 #include <winsock2.h>
 #include <windows.h>
@@ -64,21 +80,6 @@ int COND_SIGNAL(HANDLE *mqh_wait);
 }
 #endif
 
-
-#else
-
-#include <pthread.h>
-#include <sys/resource.h>
-#include <sys/shm.h>
-#include <sys/mman.h>
-#include <sys/stat.h>        /* For mode constants */
-#include <unistd.h>
-
-#define MUTEX_LOCK(x)   pthread_mutex_lock(x)
-#define MUTEX_UNLOCK(x) pthread_mutex_unlock(x)
-#define COND_WAIT(x, y)  pthread_cond_wait(x, y)
-#define COND_TIMED_WAIT(x, y, z) pthread_cond_timedwait(x, y, z)
-#define COND_SIGNAL(x)  pthread_cond_signal(x)
 
 #endif
 

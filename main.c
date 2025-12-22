@@ -78,14 +78,14 @@ int main(int argc, char *argv[])
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
     int mod_config = FREEDV_MODE_DATAC1;
-    
+
     input_dev[0] = 0;
     output_dev[0] = 0;
 
-    
+
     if (argc < 2)
     {
- manual:
+manual:
         printf("Usage modes: \n");
         printf("%s -s [modulation_config] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", argv[0]);
         printf("%s [-h -l -z]\n", argv[0]);
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
             goto manual;
         }
     }
-    
+
 
     if (list_modes)
     {
@@ -196,12 +196,12 @@ int main(int argc, char *argv[])
             printf("payload_bytes_per_modem_frame: %zu\n", payload_bytes_per_modem_frame);
             printf("n_tx_modem_samples: %d\n", freedv_get_n_tx_modem_samples(freedv));
             printf("freedv_get_n_max_modem_samples: %d\n", freedv_get_n_max_modem_samples(freedv));
-            
+
             if (freedv_modes[i] != FREEDV_MODE_FSK_LDPC && verbose) {
                 freedv_ofdm_print_info(freedv);
             }
             printf("\n");
-      
+
             freedv_close(freedv);
 
         }
@@ -308,7 +308,7 @@ int main(int argc, char *argv[])
     default:
         printf("Selected audio system not supported. Trying to continue.\n");
     }
-    
+
     if (list_sndcards)
     {
         list_soundcards(audio_system);
@@ -317,11 +317,11 @@ int main(int argc, char *argv[])
         if (output_dev)
             free(output_dev);
         return EXIT_SUCCESS;
-    }    
+    }
 
     generic_modem_t g_modem;
     pthread_t radio_capture, radio_playback;
-    
+
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         printf("Initializing I/O from Sound Card\n");
@@ -330,7 +330,7 @@ int main(int argc, char *argv[])
 
     printf("Initializing Modem\n");
     init_modem(&g_modem, mod_config, 1); // frames per burst is 1 for now
-    
+
     arq_init();
 
     // we block here

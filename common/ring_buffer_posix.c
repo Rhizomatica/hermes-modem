@@ -129,7 +129,7 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     char tmp[MAX_POSIX_SHM_NAME];
     int fd1, fd2;
 
-#if !defined(_WIN32)
+#if defined(__linux__)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
 #else
     cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
@@ -142,7 +142,7 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     cbuf->buffer = (uint8_t *) shm_map(fd1, size);
 
     // TODO: should we close it on Windows?
-#if !defined(_WIN32)
+#if defined(__linux__)
     close(fd1);
 #endif
 
@@ -153,7 +153,7 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     strcat(tmp, "-2");
     fd2 = shm_create_and_get_fd(tmp, sizeof(struct circular_buf_t_aux));
     cbuf->internal = (struct circular_buf_t_aux *) shm_map(fd2, sizeof(struct circular_buf_t_aux));
-#if !defined(_WIN32)
+#if defined(__linux__)
     close(fd2);
 #endif
 
@@ -161,7 +161,21 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
 
     cbuf->internal->max = size;
 
-#if defined(_WIN32)
+#if defined(__linux__)
+    pthread_mutexattr_t mutex_attr;
+    pthread_mutexattr_init(&mutex_attr);
+    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+
+    pthread_condattr_t cond_attr;
+    pthread_condattr_init(&cond_attr);
+    pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
+
+    pthread_mutex_init( &cbuf->internal->mutex, &mutex_attr);
+    pthread_cond_init( &cbuf->internal->cond, &cond_attr);
+
+    pthread_mutexattr_destroy(&mutex_attr);
+    pthread_condattr_destroy(&cond_attr);
+#else
     //    wchar_t nameBuffer[128];
     char nameBuffer[MAX_POSIX_SHM_NAME];
     size_t len;
@@ -177,34 +191,19 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     sprintf(nameBuffer, "Global\\HERMES_Mtx%s", tmp+1);
 
     cbuf->internal->mutex = CreateMutex(
-					NULL,              // default security attributes
-					FALSE,             // initially not owned
-					nameBuffer);       // named mutex
+                    NULL,              // default security attributes
+                    FALSE,             // initially not owned
+                    nameBuffer);       // named mutex
 
     sprintf(nameBuffer, "Global\\HERMES_Cond%s", tmp+1);
 
     cbuf->internal->cond = CreateEvent(
-				       NULL,
-				       FALSE,
-				       FALSE,
-				       nameBuffer
-				       );
+                        NULL,
+                        FALSE,
+                        FALSE,
+                        nameBuffer
+                        );
 
-#else
-
-    pthread_mutexattr_t mutex_attr;
-    pthread_mutexattr_init(&mutex_attr);
-    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
-
-    pthread_condattr_t cond_attr;
-    pthread_condattr_init(&cond_attr);
-    pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
-
-    pthread_mutex_init( &cbuf->internal->mutex, &mutex_attr);
-    pthread_cond_init( &cbuf->internal->cond, &cond_attr);
-
-    pthread_mutexattr_destroy(&mutex_attr);
-    pthread_condattr_destroy(&cond_attr);
 
 #endif
 
@@ -221,7 +220,7 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name)
     char tmp[MAX_POSIX_SHM_NAME];
     int fd1, fd2;
 
-#if !defined(_WIN32)
+#if defined(__linux__)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
 #else
     cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
@@ -259,7 +258,7 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name)
 void circular_buf_disconnect_shm(cbuf_handle_t cbuf, size_t size)
 {
     assert(cbuf && cbuf->internal && cbuf->buffer);
-#if !defined(_WIN32)
+#if defined(__linux__)
     shm_unmap(cbuf->buffer, size);
     shm_unmap(cbuf->internal, sizeof(struct circular_buf_t_aux));
 #endif
@@ -275,7 +274,7 @@ void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name)
     assert(cbuf && cbuf->internal && cbuf->buffer);
 
     // TODO: wire up the shutdown for windows stuff...
-#if !defined(_WIN32)
+#if defined(__linux__)
     char tmp[MAX_POSIX_SHM_NAME];
     shm_unmap(cbuf->buffer, size);
     shm_unmap(cbuf->internal, sizeof(struct circular_buf_t_aux));
@@ -475,7 +474,7 @@ size_t read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
     size_t size = 0;
     size_t len = 0;
 
- try_again_read:
+try_again_read:
     MUTEX_LOCK( &cbuf->internal->mutex );
 
     size = cbuf->internal->max;
@@ -528,7 +527,7 @@ int read_buffer_no_retreat_and_lock(cbuf_handle_t cbuf, uint8_t *data, size_t le
 
     int r = -1;
 
- try_again_read:
+try_again_read:
     MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
@@ -566,7 +565,7 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
 
     int r = -1;
 
- try_again_read:
+try_again_read:
     MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
@@ -643,38 +642,38 @@ cbuf_handle_t circular_buf_init(uint8_t* buffer, size_t size)
 {
     assert(buffer && size);
 
-#if defined(_WIN32)
-    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
-    assert(cbuf);
-    cbuf->internal = (struct circular_buf_t_aux *) malloc(sizeof(struct circular_buf_t_aux));
-    assert(cbuf->internal);
-#else
+#if defined(__linux__)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
     assert(cbuf);
     cbuf->internal = (struct circular_buf_t_aux *) memalign(SHMLBA, sizeof(struct circular_buf_t_aux));
+    assert(cbuf->internal);
+#else
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+    assert(cbuf);
+    cbuf->internal = (struct circular_buf_t_aux *) malloc(sizeof(struct circular_buf_t_aux));
     assert(cbuf->internal);
 #endif
 
     cbuf->buffer = buffer;
     cbuf->internal->max = size;
 
-#if defined(_WIN32)
+#if defined(__linux__)
+    pthread_mutex_init( &cbuf->internal->mutex, NULL );
+    pthread_cond_init( &cbuf->internal->cond, NULL );
+#else
     cbuf->internal->mutex = CreateMutex(
 					NULL,              // default security attributes
 					FALSE,             // initially not owned
 					NULL);       // named mutex
 
     cbuf->internal->cond = CreateEvent(
-				       NULL,
-				       FALSE,
-				       FALSE,
-				       NULL
-				       );
-#else
-    pthread_mutex_init( &cbuf->internal->mutex, NULL );
-    pthread_cond_init( &cbuf->internal->cond, NULL );
+                        NULL,
+                        FALSE,
+                        FALSE,
+                        NULL
+                        );
 #endif
-    
+
     circular_buf_reset(cbuf);
     assert(circular_buf_empty(cbuf));
 

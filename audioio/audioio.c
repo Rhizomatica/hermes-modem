@@ -158,7 +158,7 @@ void *radio_playback_thread(void *device_ptr)
         ch_layout = STEREO;
 #endif
     ch_layout = STEREO;
-    
+
     while (!shutdown_)
     {
         ffssize n;
@@ -427,7 +427,7 @@ void list_soundcards(int audio_system)
         audio = NULL;
         return;
     }
-    
+
 #if defined(_WIN32)
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
@@ -486,10 +486,10 @@ void list_soundcards(int audio_system)
                 }
 
             printf("device: name: '%s'  id: '%s'  default: %s\n"
-                   , audio->dev_info(d, FFAUDIO_DEV_NAME)
-                   , audio->dev_info(d, FFAUDIO_DEV_ID)
-                   , audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT)
-                );
+                , audio->dev_info(d, FFAUDIO_DEV_NAME)
+                , audio->dev_info(d, FFAUDIO_DEV_ID)
+                , audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT)
+            );
         }
 
         audio->dev_free(d);
@@ -527,14 +527,15 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 {
     audio_subsystem = audio_subsys;
 
-#if defined(_WIN32)
-    uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
-    uint8_t *buffer_play = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
-    capture_buffer = circular_buf_init(buffer_cap, SIGNAL_BUFFER_SIZE);
-    playback_buffer = circular_buf_init(buffer_play, SIGNAL_BUFFER_SIZE);
-#else
+#if defined(__linux__)
     capture_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
     playback_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
+#else
+    uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
+    uint8_t *buffer_play = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
+
+    capture_buffer = circular_buf_init(buffer_cap, SIGNAL_BUFFER_SIZE);
+    playback_buffer = circular_buf_init(buffer_play, SIGNAL_BUFFER_SIZE);
 #endif
 
     clear_buffer(capture_buffer);
@@ -551,17 +552,18 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
 
-#if defined(_WIN32)
-    free(capture_buffer->buffer);
-    circular_buf_free(capture_buffer);
-    free(playback_buffer->buffer);
-    circular_buf_free(playback_buffer);
-#else
+#if defined(__linux__)
     circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
     circular_buf_free_shm(capture_buffer);
 
     circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
     circular_buf_free_shm(playback_buffer);
+#else
+    free(capture_buffer->buffer);
+    circular_buf_free(capture_buffer);
+
+    free(playback_buffer->buffer);
+    circular_buf_free(playback_buffer);
 #endif
     return 0;
 }

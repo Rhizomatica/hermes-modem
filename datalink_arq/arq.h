@@ -21,7 +21,7 @@
 #ifndef ARQ_H_
 #define ARQ_H_
 
-#define CALLSIGN_MAX_SIZE 16 
+#define CALLSIGN_MAX_SIZE 16
 
 #define RX 0
 #define TX 1

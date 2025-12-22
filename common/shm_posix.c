@@ -30,7 +30,10 @@ int shm_open_and_get_fd(char *name)
         abort();
     }
 
-#if defined(_WIN32)    /* open the file then memory map */
+#if defined(__linux__)
+    // fprintf(stderr, "shm_open_and_get_fd() called with %s\n", name);
+    fd = shm_open(name, O_RDWR, 0644);
+#else    /* open the file then memory map */
     // create pathBuffer
     char pathBuffer[PATH_MAX];
     if(!get_temp_path(pathBuffer, sizeof(pathBuffer), name))
@@ -46,9 +49,6 @@ int shm_open_and_get_fd(char *name)
         fprintf(stderr, "Shared memory not created. Aborting.\n");
         abort();
     }
-#else
-    // fprintf(stderr, "shm_open_and_get_fd() called with %s\n", name);
-    fd = shm_open(name, O_RDWR, 0644);
 #endif
 
     return fd;
@@ -66,7 +66,25 @@ int shm_create_and_get_fd(char *name, size_t size)
         abort();
     }
 
-#if defined(_WIN32)
+#if defined(__linux__)
+    if (shm_open(name, O_RDWR, 0644) >= 0)
+    {
+        // fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
+        shm_unlink(name);
+    }
+
+    if((fd = shm_open(name, O_RDWR | O_CREAT, 0644)) == -1)
+    {
+        fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
+        abort();
+    }
+
+    if (ftruncate (fd, size) == -1)
+    {
+        fprintf(stderr, "ERROR: This should never happen! Error in ftruncate!\n");
+        abort();
+    }
+#else
     char pathBuffer[PATH_MAX];
     if(!get_temp_path(pathBuffer, sizeof(pathBuffer), name))
     {
@@ -100,24 +118,6 @@ int shm_create_and_get_fd(char *name, size_t size)
 		fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
 		abort();
 	}
-#else
-    if (shm_open(name, O_RDWR, 0644) >= 0)
-    {
-        // fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
-        shm_unlink(name);
-    }
-
-    if((fd = shm_open(name, O_RDWR | O_CREAT, 0644)) == -1)
-    {
-        fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
-        abort();
-    }
-
-    if (ftruncate (fd, size) == -1)
-    {
-        fprintf(stderr, "ERROR: This should never happen! Error in ftruncate!\n");
-        abort();
-    }
 #endif
 
     return fd;
@@ -127,7 +127,9 @@ int shm_create_and_get_fd(char *name, size_t size)
 // returns the pointer to the region, or (void *) -1 in case of error
 void *shm_map(int fd, size_t size)
 {
-#if defined(_WIN32)
+#if defined(__linux__)
+    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+#else
     HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
                                     PAGE_READWRITE, 0, 0, NULL);
     if (fmap == NULL)
@@ -139,15 +141,15 @@ void *shm_map(int fd, size_t size)
     void *data = (void *) MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
 
     return data;
-#else
-    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 #endif
 }
 
 // returns 0 on success, -1 on error
 int shm_unmap(void *addr, size_t size)
 {
-#if defined(WIN32)
+#if defined(__linux__)
+    return munmap(addr, size);
+#else
 
 #if 0  // TODO: we need to have access to these variables...
     if (fmap != NULL)
@@ -160,8 +162,6 @@ int shm_unmap(void *addr, size_t size)
     }
 #endif
     return 0;
-#else
-     return munmap(addr, size);
 #endif
 
 }

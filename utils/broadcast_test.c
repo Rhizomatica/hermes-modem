@@ -73,7 +73,7 @@ void *receive_thread(void *socket_ptr)
                     {
                         printf("%c", (buffer[j]));
                     }
-                    
+
                     printf("\n> ");
                 }
             }
@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
             printf("Connection closed. Exiting...\n");
             break;
         }
-        
+
         send_buffer[strcspn(send_buffer, "\n")] = '\0'; // Remove newline character
 
         int kiss_frame_size = kiss_write_frame((uint8_t *)send_buffer, strlen(send_buffer), (uint8_t *)write_buffer);

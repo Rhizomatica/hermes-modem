@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
@@ -55,7 +55,7 @@ int listen4connection(int port_type)
         newsockfd = accept(ctl_sockfd, (struct sockaddr *) &cli_addr, &clilen);
 
     if (port_type == DATA_TCP_PORT)
-        newsockfd = accept(data_sockfd, (struct sockaddr *) &cli_addr, &clilen);        
+        newsockfd = accept(data_sockfd, (struct sockaddr *) &cli_addr, &clilen);
 
     if (newsockfd < 0)
     {
@@ -68,7 +68,7 @@ int listen4connection(int port_type)
         cli_ctl_sockfd = newsockfd;
         status_ctl = NET_CONNECTED;
     }
-        
+
     if (port_type == DATA_TCP_PORT)
     {
         cli_data_sockfd = newsockfd;
@@ -88,19 +88,19 @@ int tcp_open(int portno, int port_type)
         return -1;
     }
 
-    int opt = 1;  
+    int opt = 1;
     if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
     {
         fprintf(stderr, "setsockopt(SO_REUSEADDR) failed\n");
         close(sockfd);
         return -1;
     }
-      
+
     memset((char *) &serv_addr, 0,  sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(portno);
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
+    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
     {
         fprintf(stderr, "ERROR on binding\n");
         return -1;
@@ -110,7 +110,7 @@ int tcp_open(int portno, int port_type)
 
     if (port_type == CTL_TCP_PORT)
     {
-        status_ctl = NET_LISTENING; 
+        status_ctl = NET_LISTENING;
         ctl_sockfd = sockfd;
     }
     if (port_type == DATA_TCP_PORT)
@@ -136,7 +136,7 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
             rx_size = count ? count : rx_size;
         n = recv(cli_ctl_sockfd, buffer, rx_size, MSG_NOSIGNAL);
 
-        if (n < 0) status_ctl = NET_RESTART;        
+        if (n < 0) status_ctl = NET_RESTART;
     }
     if (port_type == DATA_TCP_PORT && status_data == NET_CONNECTED)
     {
@@ -145,14 +145,14 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
             rx_size = count ? count : rx_size;
         n = recv(cli_data_sockfd, buffer, rx_size, MSG_NOSIGNAL);
 
-        if (n < 0) status_data = NET_RESTART;        
+        if (n < 0) status_data = NET_RESTART;
     }
-    
+
     pthread_mutex_unlock(&read_mutex[port_type]);
 
     if (n < 0)
         fprintf(stderr, "ERROR reading from socket\n");
-    
+
     return n;
 }
 
@@ -179,7 +179,7 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
     }
 
     pthread_mutex_unlock(&write_mutex[port_type]);
-    
+
     if (n != (ssize_t) tx_size)
         fprintf(stderr, "ERROR writing to socket\n");
 
@@ -201,6 +201,6 @@ int tcp_close(int port_type)
     }
     status_ctl = NET_NONE;
     status_data = NET_NONE;
-    
+
     return 0;
 }

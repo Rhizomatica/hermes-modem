@@ -40,9 +40,9 @@ int MUTEX_LOCK(HANDLE *mqh_lock)
         // The thread got ownership of an abandoned mutex
         // The database is in an indeterminate state
         case WAIT_ABANDONED:
-	  return ECANCELED ;
+	return ECANCELED ;
     default:
-		  return EINVAL;
+		return EINVAL;
     }
 }
 
@@ -68,17 +68,17 @@ int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* a
 	ReleaseMutex(mqh_lock);
 	dwWaitResult = WaitForSingleObject(mqh_wait, (DWORD) abstime->tv_sec);
 	switch(dwWaitResult) {
-	    case WAIT_OBJECT_0:
-	        break;
-	    case WAIT_TIMEOUT:
-	        return ETIMEDOUT;
-	    default:
-	        return EINVAL;
+		case WAIT_OBJECT_0:
+			break;
+		case WAIT_TIMEOUT:
+			return ETIMEDOUT;
+		default:
+			return EINVAL;
 	}
 
 	dwWaitResult = WaitForSingleObject(mqh_lock,(DWORD) abstime->tv_sec);
 	if(dwWaitResult == WAIT_OBJECT_0) {
-	    return 0;
+		return 0;
 	}
 
     if(dwWaitResult == WAIT_TIMEOUT) {
