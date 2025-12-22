@@ -58,26 +58,51 @@ cbuf_handle_t data_rx_buffer_broadcast;
 
 pthread_t tx_thread_tid, rx_thread_tid;
 
+/**
+ * Connect to a shared memory buffer with retry logic and shutdown checking.
+ * Return 0 on success, -1 on timeout or shutdown
+ */
+static int connect_shm_buffer(cbuf_handle_t *buffer, size_t buffer_size, const char *buffer_name)
+{
+    const int MAX_SHM_RETRY_ATTEMPTS = 300;
+    int retry_count = 0;
+
+    while (*buffer == NULL && !shutdown_)
+    {
+        *buffer = circular_buf_connect_shm(buffer_size, (char *)buffer_name);
+        if (*buffer == NULL)
+        {
+            if (retry_count == 0)
+            {
+                printf("Shared memory not created. Waiting for the radio daemon (%s)\n", buffer_name);
+            }
+            
+            retry_count++;
+            if (retry_count >= MAX_SHM_RETRY_ATTEMPTS)
+            {
+                fprintf(stderr, "[ERROR] Failed to connect to shared memory after %d attempts (%s)\n", 
+                        MAX_SHM_RETRY_ATTEMPTS, buffer_name);
+                return -1;
+            }
+            
+            sleep(1);
+        }
+    }
+    
+    if (shutdown_) // Checks if shutdown signal was received while waiting
+    {
+        fprintf(stderr, "[INFO] Shutdown requested while waiting for SHM (%s)\n", buffer_name);
+        return -1;
+    }
+    
+    return 0;
+}
+
 int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
 {
-// connect to shared memory buffers
-try_shm_connect1:
-    capture_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
-    if (capture_buffer == NULL)
-    {
-        printf("Shared memory not created. Waiting for the radio daemon\n");
-        sleep(1);
-        goto try_shm_connect1;
-    }
+    if (connect_shm_buffer(&capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT) < 0) return -1;
+    if (connect_shm_buffer(&playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT) < 0) return -1;
 
-try_shm_connect2:
-    playback_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT);
-    if (playback_buffer == NULL)
-    {
-        printf("Shared memory not created. Waiting for the radio daemon...\n");
-        sleep(1);
-        goto try_shm_connect2;
-    }
     printf("Connected to Shared Memory Radio I/O tx/rx buffers.\n");
 
     // buffers for the ARQ datalink
