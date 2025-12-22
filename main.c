@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 
 #ifdef __linux__
 #include <sched.h>
@@ -60,6 +61,13 @@ char *freedv_mode_names[] = { "DATAC1",
                               "FSK_LDPC" };
 
 bool shutdown_ = false; // global shutdown flag
+
+// Signal handler for graceful shutdown
+void signal_handler(int sig)
+{
+    printf("\nReceived signal %d, shutting down gracefully...\n", sig);
+    shutdown_ = true;
+}
 
 int main(int argc, char *argv[])
 {
@@ -337,9 +345,20 @@ manual:
         printf("Initializing I/O from Sound Card\n");
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
     }
-
-    printf("Initializing Modem\n");
-    init_modem(&g_modem, mod_config, 1, test_mode); // frames per burst is 1 for now
+    
+    // Setup signal handlers for graceful shutdown
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    
+    printf("Initializing Modem\n");  // frames per burst is 1 for now
+    if (init_modem(&g_modem, mod_config, 1, test_mode) != 0) {
+        fprintf(stderr, "Failed to initialize modem\n");
+        if (input_dev)
+            free(input_dev);
+        if (output_dev)
+            free(output_dev);
+        return EXIT_FAILURE;
+    }
     
     arq_init();
 

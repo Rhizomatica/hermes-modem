@@ -91,7 +91,7 @@ try_shm_connect2:
     buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
     data_tx_buffer_broadcast = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
     data_rx_buffer_broadcast = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
-
+    
     printf("Created data buffers for ARQ and BROADCAST datalink, tx/rx paths.\n");
 
     char codename[80] = "H_256_512_4";
@@ -99,9 +99,9 @@ try_shm_connect2:
 
     if (mode == FREEDV_MODE_FSK_LDPC)
         g_modem->freedv = freedv_open_advanced(mode, &adv);
-    else
+    else 
         g_modem->freedv = freedv_open(mode);
-
+    
     freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
     freedv_set_verbose(g_modem->freedv, 3);
