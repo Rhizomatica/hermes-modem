@@ -48,7 +48,7 @@ LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
 all: mercury
 
-mercury: internal_deps main.o 
+mercury: internal_deps main.o
 	$(CC) -o mercury  \
 		main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o modem/modem.o \
 		modem/framer.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \

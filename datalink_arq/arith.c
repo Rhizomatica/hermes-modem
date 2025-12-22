@@ -284,7 +284,7 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output) {
 finish:
     output[outpos] = '\0';
     return 0;
-    
+
 }
 #endif
 
@@ -298,7 +298,7 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output) {
     uint64_t total = cum_freq[NUM_SYMBOLS];
 
     // printf("br.bytepos %d br.bitpos %d\n", br.bytepos, br.bitpos);
-    
+
     for (int i = 0; i < CODE_BITS; i++)
         value = (value << 1) | br_read_bit(&br);
 
@@ -364,7 +364,7 @@ int main() {
 //    int enc_len2 = arithmetic_encode(msg2, encoded + enc_len1);
 //    printf("Encoded length 2: %d bytes\n", enc_len2);
 
-    
+
     init_model();
     char decoded[100];
     int dec_len1;

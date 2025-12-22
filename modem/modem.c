@@ -91,7 +91,7 @@ try_shm_connect2:
     buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
     data_tx_buffer_broadcast = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
     data_rx_buffer_broadcast = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
-    
+
     printf("Created data buffers for ARQ and BROADCAST datalink, tx/rx paths.\n");
 
     char codename[80] = "H_256_512_4";
@@ -99,9 +99,9 @@ try_shm_connect2:
 
     if (mode == FREEDV_MODE_FSK_LDPC)
         g_modem->freedv = freedv_open_advanced(mode, &adv);
-    else 
+    else
         g_modem->freedv = freedv_open(mode);
-    
+
     freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
     freedv_set_verbose(g_modem->freedv, 3);
@@ -220,7 +220,7 @@ int shutdown_modem(generic_modem_t *g_modem)
     // Wait for threads to finish
     pthread_join(tx_thread_tid, NULL);
     pthread_join(rx_thread_tid, NULL);
-    
+
     circular_buf_disconnect_shm(capture_buffer, SIGNAL_BUFFER_SIZE);
     circular_buf_disconnect_shm(playback_buffer, SIGNAL_BUFFER_SIZE);
     circular_buf_free_shm(capture_buffer);
@@ -234,8 +234,8 @@ int shutdown_modem(generic_modem_t *g_modem)
     circular_buf_free(data_rx_buffer_arq);
     circular_buf_free(data_tx_buffer_broadcast);
     circular_buf_free(data_rx_buffer_broadcast);
-    
-    freedv_close(g_modem->freedv);   
+
+    freedv_close(g_modem->freedv);
 
     return 0;
 }
@@ -523,7 +523,7 @@ void *rx_thread(void *g_modem)
                 printf("Unknown frame type received.\n");
                 break;
             }
-            
+
             printf("Received %zu bytes of data, packet type %d, bytes_per_modem_frame: %zu\n", nbytes_out, frame_type, bytes_per_modem_frame);
         }
     }

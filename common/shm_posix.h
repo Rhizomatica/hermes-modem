@@ -9,12 +9,12 @@
 
 #pragma once
 
-#if defined(_WIN32)
-#include <winsock2.h>
-#include <windows.h>
-#else
+#if defined(__linux__)
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#else
+#include <winsock2.h>
+#include <windows.h>
 #endif
 
 #include <stdbool.h>

@@ -61,7 +61,7 @@ void *server_worker_thread_ctl(void *port)
 {
     int tcp_base_port = *((int *) port);
     int socket;
-    
+
     while(!shutdown_)
     {
         int ret = tcp_open(tcp_base_port, CTL_TCP_PORT);
@@ -71,7 +71,7 @@ void *server_worker_thread_ctl(void *port)
             fprintf(stderr, "Could not open TCP port %d\n", tcp_base_port);
             shutdown_ = true;
         }
-        
+
         socket = listen4connection(CTL_TCP_PORT);
 
         if (socket < 0)
@@ -82,7 +82,7 @@ void *server_worker_thread_ctl(void *port)
         }
 
         fsm_dispatch(&arq_fsm, EV_CLIENT_CONNECT);
-        
+
         // TODO: pthread wait here?
         while (status_ctl == NET_CONNECTED)
             sleep(1);
@@ -92,12 +92,12 @@ void *server_worker_thread_ctl(void *port)
             status_data = NET_RESTART;
 
         fsm_dispatch(&arq_fsm, EV_CLIENT_DISCONNECT);
-        
+
         tcp_close(CTL_TCP_PORT);
     }
 
     return NULL;
-    
+
 }
 
 void *server_worker_thread_data(void *port)
@@ -114,7 +114,7 @@ void *server_worker_thread_data(void *port)
             fprintf(stderr, "Could not open TCP port %d\n", tcp_base_port+1);
             shutdown_ = true;
         }
-        
+
         socket = listen4connection(DATA_TCP_PORT);
 
         if (socket < 0)
@@ -130,7 +130,7 @@ void *server_worker_thread_data(void *port)
 
         tcp_close(DATA_TCP_PORT);
     }
-    
+
     return NULL;
 }
 
@@ -138,7 +138,7 @@ void *server_worker_thread_data(void *port)
 void *data_worker_thread_tx(void *conn)
 {
     uint8_t *buffer = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
-    
+
     while(!shutdown_)
     {
         if (status_data != NET_CONNECTED)
@@ -156,7 +156,7 @@ void *data_worker_thread_tx(void *conn)
     }
 
     free(buffer);
-    
+
     return NULL;
 }
 
@@ -206,7 +206,7 @@ void *control_worker_thread_tx(void *conn)
         sleep(1);
         counter++;
     }
-    
+
     return NULL;
 }
 
@@ -231,7 +231,7 @@ void *control_worker_thread_rx(void *conn)
         if (n < 0)
         {
             count = 0;
-            fprintf(stderr, "ERROR ctl socket reading\n");            
+            fprintf(stderr, "ERROR ctl socket reading\n");
             status_ctl = NET_RESTART;
             continue;
         }
@@ -254,16 +254,16 @@ void *control_worker_thread_rx(void *conn)
 
         count = 0;
 #ifdef DEBUG
-        fprintf(stderr,"Command received: %s\n", buffer);  
+        fprintf(stderr,"Command received: %s\n", buffer);
 #endif
-        
+
         // now we parse the commands
         if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
         {
             sscanf(buffer,"MYCALL %s", arq_conn.my_call_sign);
             goto send_ok;
         }
-        
+
         if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
         {
             sscanf(buffer,"LISTEN %s", temp);
@@ -285,8 +285,8 @@ void *control_worker_thread_rx(void *conn)
             if (temp[1] == 'N') // ON
                 arq_conn.encryption = false;
             if (temp[1] == 'F') // OFF
-               arq_conn.encryption = true;
-            
+                arq_conn.encryption = true;
+
             goto send_ok;
         }
 
@@ -304,7 +304,7 @@ void *control_worker_thread_rx(void *conn)
         }
 
         if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
-        {   
+        {
             fsm_dispatch(&arq_fsm, EV_LINK_DISCONNECT);
             goto send_ok;
         }
@@ -312,7 +312,7 @@ void *control_worker_thread_rx(void *conn)
         fprintf(stderr, "Unknown command\n");
         tcp_write(CTL_TCP_PORT, (uint8_t *) "WRONG\r", 6);
         continue;
-        
+
     send_ok:
         tcp_write(CTL_TCP_PORT, (uint8_t *) "OK\r", 3);
 
@@ -527,7 +527,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
     // state of the connection
     pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &arq_tcp_base_port);
     pthread_create(&tid[1], NULL, server_worker_thread_data, (void *) &arq_tcp_base_port);
-    
+
     // control channel threads
     pthread_create(&tid[2], NULL, control_worker_thread_rx, (void *) NULL);
     pthread_create(&tid[3], NULL, control_worker_thread_tx, (void *) NULL);
@@ -541,7 +541,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
     // Create TCP BROADCAST server thread
     pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port);
 
-    
+
     return EXIT_SUCCESS;
 }
 

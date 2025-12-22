@@ -48,7 +48,7 @@ fsm_handle arq_fsm;
 
 /* FSM States */
 void state_no_connected_client(int event)
-{   
+{
     printf("FSM State: no_connected_client\n");
 
     switch(event)
@@ -86,11 +86,11 @@ void state_link_connected(int event)
 void state_listen(int event)
 {
     printf("FSM State: listen\n");
-    
+
     switch(event)
     {
     case EV_START_LISTEN:
-        printf("EV_START_LISTEN ignored in state_listen() - already listening.\n");   
+        printf("EV_START_LISTEN ignored in state_listen() - already listening.\n");
         break;
     case EV_STOP_LISTEN:
         arq_conn.listen = false;
@@ -101,7 +101,7 @@ void state_listen(int event)
         arq_fsm.current = state_connecting_caller;
         break;
     case EV_LINK_DISCONNECT:
-        printf("EV_LINK_DISCONNECT ignored in state_listen() - not connected.\n");   
+        printf("EV_LINK_DISCONNECT ignored in state_listen() - not connected.\n");
         break;
     case EV_CLIENT_DISCONNECT:
         clear_connection_data();
@@ -121,7 +121,7 @@ void state_listen(int event)
 void state_idle(int event)
 {
     printf("FSM State: idle\n");
-    
+
     switch(event)
     {
     case EV_START_LISTEN:
@@ -130,14 +130,14 @@ void state_idle(int event)
         break;
     case EV_STOP_LISTEN:
         arq_conn.listen = false;
-        printf("EV_STOP_LISTEN ignored in state_idle() - already stopped.\n");   
+        printf("EV_STOP_LISTEN ignored in state_idle() - already stopped.\n");
         break;
     case EV_LINK_CALL_REMOTE:
         call_remote();
         arq_fsm.current = state_connecting_caller;
         break;
     case EV_LINK_DISCONNECT:
-        printf("EV_LINK_DISCONNECT ignored in state_idle() - not connected.\n");   
+        printf("EV_LINK_DISCONNECT ignored in state_idle() - not connected.\n");
         break;
     case EV_CLIENT_DISCONNECT:
         clear_connection_data();
@@ -146,14 +146,14 @@ void state_idle(int event)
     default:
         printf("Event: %d ignored from state_idle\n", event);
     }
-    
+
     return;
 }
 
 void state_connecting_caller(int event)
 {
     printf("FSM State: connecting_caller\n");
-    
+
     switch(event)
     {
     case EV_START_LISTEN:
@@ -163,7 +163,7 @@ void state_connecting_caller(int event)
         arq_conn.listen = false;
         break;
     case EV_LINK_CALL_REMOTE:
-        printf("EV_LINK_CALL_REMOTE ignored in state_connecting_caller() - already connecting.\n");           
+        printf("EV_LINK_CALL_REMOTE ignored in state_connecting_caller() - already connecting.\n");
         break;
     case EV_LINK_DISCONNECT:
         // TODO: kill the connection first? Do we need to do something?
@@ -187,7 +187,7 @@ void state_connecting_caller(int event)
 void state_connecting_callee(int event)
 {
     printf("FSM State: connecting_callee\n");
-    
+
     switch(event)
     {
         break;
@@ -195,7 +195,7 @@ void state_connecting_callee(int event)
         arq_conn.listen = false;
         break;
     case EV_LINK_CALL_REMOTE:
-        printf("EV_LINK_CALL_REMOTE ignored in state_connecting_caller() - already connecting.\n");           
+        printf("EV_LINK_CALL_REMOTE ignored in state_connecting_caller() - already connecting.\n");
         break;
     case EV_LINK_DISCONNECT:
         // TODO: kill the connection first? Do we need to do something?
@@ -233,7 +233,7 @@ bool check_crc(uint8_t *data)
         return true;
 
     return false;
-    
+
 }
 
 int check_for_incoming_connection(uint8_t *data)
@@ -288,7 +288,7 @@ int check_for_incoming_connection(uint8_t *data)
     else // corner case where only the destination address fits in the frame
     {
         strcpy(dst_callsign, callsigns);
-    }    
+    }
 
     if (!strncmp(dst_callsign, arq_conn.my_call_sign, strlen(dst_callsign)))
     {
@@ -300,7 +300,7 @@ int check_for_incoming_connection(uint8_t *data)
         fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHMENT_TIMEOUT);
         printf("Called call %s sign does not match my callsign %s. Doing nothing.\n", dst_callsign, arq_conn.my_call_sign);
     }
-    
+
     return 0;
 }
 
@@ -312,18 +312,18 @@ int check_for_connection_acceptance_caller(uint8_t *data)
     int frame_size = 0;
 
     uint8_t pack_type = (data[0] >> 6) & 0xff;
-    
+
     if (check_crc(data) == false)
     {
         printf("Bad crc for packet type %u.\n", pack_type);
         return -1;
     }
-    
+
     if (pack_type != PACKET_ARQ_CONTROL)
     {
         return 1;
     }
-    
+
     if (arithmetic_decode(data + HEADER_SIZE, frame_size - HEADER_SIZE, callsign) < 0)
     {
         printf("Truncated callsigns.\n");
@@ -385,7 +385,7 @@ void call_remote()
     int frame_size = 0;
 
     printf("Calling remote %s, frame_size: %d\n", arq_conn.dst_addr, frame_size);
-    
+
     memset(data, 0, frame_size);
     // 1 byte header, 4 bits packet type, 6 bits crc
     data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
@@ -397,7 +397,7 @@ void call_remote()
     int enc_len = arithmetic_encode(joint_callsigns, encoded_callsigns);
 
     printf("Encoded callsigns: %s, length: %d\n", joint_callsigns, enc_len);
-    
+
     if (enc_len > frame_size - HEADER_SIZE)
     {
         printf("Trucating joint destination + source callsigns. This is ok (%d bytes out of %d transmitted)\n", frame_size - HEADER_SIZE, enc_len);
@@ -408,7 +408,7 @@ void call_remote()
     data[0] |= (uint8_t) crc6_0X6F(1, (uint8_t *)data + HEADER_SIZE, frame_size - HEADER_SIZE);
 
     write_buffer(data_tx_buffer_arq, data, frame_size);
-    
+
     return;
 }
 
@@ -442,7 +442,7 @@ int arq_init()
 
     init_model(); // the arithmetic encoder init function
     fsm_init(&arq_fsm, state_no_connected_client);
-    
+
     // dsp threads
     pthread_create(&tid[0], NULL, dsp_thread_tx, (void *) NULL);
     pthread_create(&tid[1], NULL, dsp_thread_rx, (void *) NULL);
@@ -477,7 +477,7 @@ void *dsp_thread_tx(void *conn)
             continue;
         }
 
-            
+
         if(arq_fsm.current != state_idle && arq_fsm.current != state_listen)
         {
             read_buffer(data_tx_buffer_arq, data, frame_size);
@@ -487,20 +487,20 @@ void *dsp_thread_tx(void *conn)
             msleep(50);
             continue;
         }
-        
+
         for (int i = 0; i < frame_size; i++)
         {
             printf("%02x ", data[i]);
         }
 
-        
+
         ptt_on();
         msleep(10); // TODO: tune me!
 
         // our connection request
         if (arq_fsm.current == state_connecting_caller || arq_fsm.current == state_connecting_callee)
         {
-            
+
             // tx_transfer(...);
         }
 
@@ -510,7 +510,7 @@ void *dsp_thread_tx(void *conn)
 
             //tx_transfer();        }
         }
-        
+
         // TODO: signal when stream is finished playing via pthread_cond_wait() here
         while (size_buffer(playback_buffer) != 0)
         {
@@ -526,7 +526,7 @@ void *dsp_thread_tx(void *conn)
         fflush(stdout);
 
     }
-    
+
     return NULL;
 }
 

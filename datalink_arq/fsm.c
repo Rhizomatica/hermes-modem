@@ -40,7 +40,7 @@ const char *fsm_event_names[] = {
 void fsm_init(fsm_handle* fsm, fsm_state initial_state)
 {
     printf("Initializing FSM\n");
-    
+
     if (!fsm)
         return;
 
@@ -55,7 +55,7 @@ void fsm_dispatch(fsm_handle* fsm, int event)
         return;
 
     printf("Dispatching event %s\n", fsm_event_names[event]);
-    
+
     pthread_mutex_lock(&fsm->lock);
     if (fsm->current)
         fsm->current(event);  // Execute current state
@@ -70,7 +70,7 @@ void fsm_destroy(fsm_handle* fsm)
         return;
 
     printf("Destroying FSM\n");
-    
+
     pthread_mutex_destroy(&fsm->lock);
     fsm->current = NULL;
 }

@@ -26,12 +26,12 @@ struct circular_buf_t_aux {
     size_t max; //of the buffer
     bool full;
 
-#if defined(_WIN32)
-    HANDLE            mutex;  /* mutex lock */
-    HANDLE            cond;  /* and condition event */
-#else
+#if defined(__linux__)
     pthread_mutex_t   mutex;  /* mutex lock */
     pthread_cond_t    cond;  /* and condition variable */
+#else
+    HANDLE            mutex;  /* mutex lock */
+    HANDLE            cond;  /* and condition event */
 #endif
 };
 
@@ -53,7 +53,7 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name);
 
 // unmaps the shared memory (detaches from the shared memory space)
 void circular_buf_disconnect_shm(cbuf_handle_t cbuf, size_t size);
-    
+
 // unmaps and unlink (destroy) the shared memory (destroys the shared memory space)
 void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name);
 
