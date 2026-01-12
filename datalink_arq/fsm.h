@@ -65,5 +65,9 @@ typedef struct {
 void fsm_init(fsm_handle* fsm, fsm_state initial_state);
 void fsm_dispatch(fsm_handle* fsm, int event);
 void fsm_destroy(fsm_handle* fsm);
+// Return the current state handler (snapshot) in a thread-safe manner
+fsm_state fsm_get_current(fsm_handle* fsm);
+// Thread-safe setter for the current state
+void fsm_set_state(fsm_handle* fsm, fsm_state new_state);
 
 #endif // FSM_H

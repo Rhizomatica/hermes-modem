@@ -25,6 +25,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdatomic.h>
+#include <signal.h>
 
 #include "modem.h"
 #include "ring_buffer_posix.h"
@@ -34,7 +36,8 @@
 #include "fsk.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
-
+#include "net.h"
+#include "arq.h"
 #include "defines_modem.h"
 
 /* Here we read and write from the input and output buffers which are connected */
@@ -43,7 +46,7 @@
 /* The buffers can be connected to an external software (eg. sbitx_controller)  */
 /* or to the audioio subsystem which connects to a sound card. */
 
-extern bool shutdown_; // global shutdown flag
+extern volatile sig_atomic_t shutdown_; // global shutdown flag
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -55,8 +58,14 @@ cbuf_handle_t data_rx_buffer_arq;
 
 cbuf_handle_t data_tx_buffer_broadcast;
 cbuf_handle_t data_rx_buffer_broadcast;
+// Separate payload buffer for ARQ (payloads from TCP -> ARQ layer)
+cbuf_handle_t arq_payload_tx_buffer;
 
 pthread_t tx_thread_tid, rx_thread_tid;
+static pthread_mutex_t metrics_lock = PTHREAD_MUTEX_INITIALIZER;
+static long g_total_tx_bytes = 0;
+static long g_total_rx_bytes = 0;
+static int g_bits_per_second = 0;
 
 /**
  * Connect to a shared memory buffer with retry logic and shutdown checking.
@@ -67,7 +76,13 @@ static int connect_shm_buffer(cbuf_handle_t *buffer, size_t buffer_size, const c
     const int MAX_SHM_RETRY_ATTEMPTS = 300;
     int retry_count = 0;
 
-    while (*buffer == NULL && !shutdown_)
+    if (buffer == NULL)
+    {
+        fprintf(stderr, "[ERROR] connect_shm_buffer: NULL buffer pointer passed (%s)\n", buffer_name);
+        return -1;
+    }
+
+    while (!shutdown_ && *buffer == NULL)
     {
         *buffer = circular_buf_connect_shm(buffer_size, (char *)buffer_name);
         if (*buffer == NULL)
@@ -98,7 +113,7 @@ static int connect_shm_buffer(cbuf_handle_t *buffer, size_t buffer_size, const c
     return 0;
 }
 
-int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
+int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode)
 {
     if (connect_shm_buffer(&capture_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_INPUT) < 0) return -1;
     if (connect_shm_buffer(&playback_buffer, SIGNAL_BUFFER_SIZE, SIGNAL_OUTPUT) < 0) return -1;
@@ -110,6 +125,10 @@ int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
     uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
     data_tx_buffer_arq = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
     data_rx_buffer_arq = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
+
+    // separate payload buffer where upper layer (TCP) will write raw payloads
+    uint8_t *buffer_payload = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
+    arq_payload_tx_buffer = circular_buf_init(buffer_payload, DATA_TX_BUFFER_SIZE);
 
     // buffers for the broadcast datalink
     buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
@@ -132,9 +151,28 @@ int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
     freedv_set_verbose(g_modem->freedv, 3);
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);
 
+    int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
+    int nom_samples = freedv_get_n_nom_modem_samples(g_modem->freedv);
+    int bits_per_frame = freedv_get_bits_per_modem_frame(g_modem->freedv);
+    if (nom_samples > 0)
+        g_bits_per_second = (bits_per_frame * modem_sample_rate) / nom_samples;
+    else
+        g_bits_per_second = bits_per_frame;
+
     // Create TX and RX threads
     pthread_create(&tx_thread_tid, NULL, tx_thread, (void *)g_modem);
     pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
+    // test if testing is enable
+
+
+    if(test_mode == 1) // tx
+    {
+        run_tests_tx(g_modem);
+    }
+    if(test_mode == 2) // rx
+    {
+        run_tests_rx(g_modem);
+    }
 
     return 0;
 }
@@ -152,15 +190,60 @@ int shutdown_modem(generic_modem_t *g_modem)
 
     free(data_tx_buffer_arq->buffer);
     free(data_rx_buffer_arq->buffer);
+    free(arq_payload_tx_buffer->buffer);
     free(data_tx_buffer_broadcast->buffer);
     free(data_rx_buffer_broadcast->buffer);
     circular_buf_free(data_tx_buffer_arq);
     circular_buf_free(data_rx_buffer_arq);
+    circular_buf_free(arq_payload_tx_buffer);
     circular_buf_free(data_tx_buffer_broadcast);
     circular_buf_free(data_rx_buffer_broadcast);
 
     freedv_close(g_modem->freedv);
 
+    return 0;
+}
+
+int run_tests_tx(generic_modem_t *g_modem)
+{
+    size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    uint8_t buffer[frame_size];
+
+    static int counter = 0;
+
+    while(1)
+    {
+        for (int i = 0; i < frame_size; i++)
+        {
+            buffer[i] = 0; // data_byte is an integer
+        }
+	buffer[counter % frame_size] = 1;
+	counter++;
+
+	send_modulated_data(g_modem, buffer, 1);
+    }
+    return 0;
+}
+
+int run_tests_rx(generic_modem_t *g_modem)
+{
+    size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    uint8_t buffer[frame_size];
+
+    size_t bytes_out = 0;
+    int counter = 0;
+    
+    while(1)
+    {
+        receive_modulated_data(g_modem, buffer, &bytes_out);
+        printf("Frame Number = %d\n", counter);
+        for (int j = 0; j < bytes_out; j++)
+        {
+            putchar(buffer[j] + '0');
+        }
+        printf("\n");
+	counter++;
+    }
     return 0;
 }
 
@@ -192,7 +275,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         {
             mod_out_int32[j] = (int32_t)mod_out_short[j] << 16;
         }
-        write_buffer(playback_buffer, (uint8_t *) mod_out_short, sizeof(int32_t) * n_mod_out);
+        write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_mod_out);
         total_samples += n_mod_out;
     }
     /* send postamble */
@@ -221,6 +304,11 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     usleep(TAIL_TIME_US);
 
     ptt_off();
+
+    pthread_mutex_lock(&metrics_lock);
+    g_total_tx_bytes += (long)(frames_per_burst * bytes_per_modem_frame);
+    pthread_mutex_unlock(&metrics_lock);
+    // Publish UI status here
 
     return 0;
 }
@@ -252,6 +340,10 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
         float snr_est = 0.0;
         freedv_get_modem_stats(freedv, &sync, &snr_est);
         printf("Received %d frames, SNR: %.2f dB, sync: %d\n", frames_received, snr_est, sync);
+        pthread_mutex_lock(&metrics_lock);
+        g_total_rx_bytes += (long)(*nbytes_out);
+        pthread_mutex_unlock(&metrics_lock);
+        // Publish UI status here
     }
 
     return 0;

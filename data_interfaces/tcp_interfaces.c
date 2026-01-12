@@ -39,11 +39,13 @@
 #include "arq.h"
 #include "fsm.h"
 #include "defines_modem.h"
+#include "../datalink_broadcast/broadcast.h"
 
 static pthread_t tid[7];
 
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_rx_buffer_arq;
+extern cbuf_handle_t arq_payload_tx_buffer;
 
 extern cbuf_handle_t data_tx_buffer_broadcast;
 extern cbuf_handle_t data_rx_buffer_broadcast;
@@ -175,7 +177,8 @@ void *data_worker_thread_rx(void *conn)
 
         int n = tcp_read(DATA_TCP_PORT, buffer, TCP_BLOCK_SIZE);
 
-        write_buffer(data_tx_buffer_arq, buffer, n);
+        // Write raw payloads into ARQ payload buffer (separated from framed modem TX buffer)
+        write_buffer(arq_payload_tx_buffer, buffer, n);
     }
 
     free(buffer);
@@ -378,7 +381,7 @@ void *recv_thread(void *client_socket_ptr)
         ssize_t received = recv(client_socket, buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
         {
-            write_buffer(data_tx_buffer_broadcast, buffer, received);
+            broadcast_enqueue_tcp_data(buffer, (size_t)received);
         }
         else if (received == 0)
         {
@@ -404,6 +407,11 @@ void *tcp_server_thread(void *port_ptr)
     int tcp_socket, client_socket;
     struct sockaddr_in local_addr, client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
+
+    // Free the port pointer (was allocated in interfaces_init)
+    free(port_ptr);
+
+    printf("Broadcast TCP server thread started for port %d\n", tcp_port);
 
     // Open TCP socket
     tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -432,7 +440,7 @@ void *tcp_server_thread(void *port_ptr)
         return NULL;
     }
 
-    printf("Waiting for a client to connect...\n");
+    printf("Broadcast TCP server listening on port %d. Waiting for a client to connect...\n", tcp_port);
 
     while (!shutdown_)
     {
@@ -539,7 +547,12 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
 
     /*************** BROADCAST TCP ports **************/
     // Create TCP BROADCAST server thread
-    pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port);
+    // Allocate memory for port to pass to thread (thread will free it)
+    int *broadcast_port_ptr = (int *)malloc(sizeof(int));
+    *broadcast_port_ptr = broadcast_tcp_port;
+    printf("Starting broadcast TCP server on port %d...\n", broadcast_tcp_port);
+    pthread_create(&tid[6], NULL, tcp_server_thread, (void *)broadcast_port_ptr);
+    printf("Broadcast TCP server thread created.\n");
 
 
     return EXIT_SUCCESS;

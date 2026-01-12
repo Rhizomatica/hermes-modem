@@ -56,10 +56,33 @@ void fsm_dispatch(fsm_handle* fsm, int event)
 
     printf("Dispatching event %s\n", fsm_event_names[event]);
 
+    // Snapshot current handler under lock, then call without holding the lock
     pthread_mutex_lock(&fsm->lock);
-    if (fsm->current)
-        fsm->current(event);  // Execute current state
+    fsm_state handler = fsm->current;
+    pthread_mutex_unlock(&fsm->lock);
 
+    if (handler)
+        handler(event);
+}
+
+// Returns a snapshot of the current state handler (thread-safe)
+fsm_state fsm_get_current(fsm_handle* fsm)
+{
+    if (!fsm)
+        return NULL;
+    pthread_mutex_lock(&fsm->lock);
+    fsm_state cur = fsm->current;
+    pthread_mutex_unlock(&fsm->lock);
+    return cur;
+}
+
+// Change current state under lock (thread-safe)
+void fsm_set_state(fsm_handle* fsm, fsm_state new_state)
+{
+    if (!fsm)
+        return;
+    pthread_mutex_lock(&fsm->lock);
+    fsm->current = new_state;
     pthread_mutex_unlock(&fsm->lock);
 }
 

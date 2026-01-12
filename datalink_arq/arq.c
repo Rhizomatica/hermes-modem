@@ -19,401 +19,497 @@
  */
 
 #include <sys/time.h>
-
+#include <time.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <unistd.h>
 
 #include "arq.h"
 #include "fsm.h"
 #include "../audioio/audioio.h"
-#include "net.h"
-#include "defines_modem.h"
-#include "tcp_interfaces.h"
+#include "../data_interfaces/net.h"
+#include "../common/defines_modem.h"
+#include "../common/crc6.h"
+#include "../data_interfaces/tcp_interfaces.h"
+#include "../modem/framer.h"
+#include <pthread.h>
+#include <stdatomic.h>
+#include <signal.h>
+#include <sched.h>
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
-
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_rx_buffer_arq;
+extern cbuf_handle_t arq_payload_tx_buffer;
+extern volatile sig_atomic_t shutdown_;
 
-extern bool shutdown_;
-
-// ARQ definitions
+// ARQ connection state
 arq_info arq_conn;
-
-
+fsm_handle arq_fsm;
 static pthread_t tid[2];
 
+// Protects shared ARQ runtime state (arq_conn fields and tx_window)
+static pthread_mutex_t arq_state_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// our simple fsm struct
-fsm_handle arq_fsm;
+// Single-frame TX window: keep a copy of the last-sent DATA frame until ACKed
+typedef struct {
+    uint8_t frame[INT_BUFFER_SIZE];
+    size_t  frame_len;
+    uint8_t seq;
+    uint32_t last_tx_ms;
+    int     retry_count;
+    bool    valid;
+} tx_window_t;
 
-/* FSM States */
-void state_no_connected_client(int event)
+static tx_window_t tx_window = { .valid = false };
+
+// How many frames to process per DSP tick to bound work
+#define MAX_FRAMES_PER_TICK 4
+
+static const char *packet_type_to_str(uint8_t type)
 {
-    printf("FSM State: no_connected_client\n");
-
-    switch(event)
+    switch (type)
     {
-    case EV_CLIENT_CONNECT:
-        clear_connection_data();
-        arq_fsm.current = state_idle;
-        break;
-    default:
-        printf("Event: %d ignored in state_no_connected_client().\n", event);
+    case PACKET_ARQ_CONTROL: return "CONTROL";
+    case PACKET_ARQ_DATA:    return "DATA";
+    case PACKET_ARQ_ACK:     return "ACK";
+    case PACKET_ARQ_NACK:    return "NACK";
+    default:                 return "UNKNOWN";
     }
-    return;
 }
 
-void state_link_connected(int event)
+static const char *fsm_state_to_str(fsm_state state)
 {
-    printf("FSM State: link_connected\n");
-
-    switch(event)
-    {
-    case EV_CLIENT_DISCONNECT:
-        arq_fsm.current = state_no_connected_client;
-        break;
-
-    case EV_LINK_DISCONNECT:
-        arq_fsm.current = (arq_conn.listen == true)? state_listen : state_idle;
-        break;
-    default:
-        printf("Event: %d ignored in state_disconnected().\n", event);
-    }
-    return;
+    if (state == state_no_connected_client) return "no_client";
+    if (state == state_idle) return "idle";
+    if (state == state_listen) return "listen";
+    if (state == state_connecting_caller) return "connecting_caller";
+    if (state == state_connecting_callee) return "connecting_callee";
+    if (state == state_link_connected) return "link_connected";
+    return "unknown";
 }
 
-
-void state_listen(int event)
+static inline const char *current_state_name(void)
 {
-    printf("FSM State: listen\n");
-
-    switch(event)
-    {
-    case EV_START_LISTEN:
-        printf("EV_START_LISTEN ignored in state_listen() - already listening.\n");
-        break;
-    case EV_STOP_LISTEN:
-        arq_conn.listen = false;
-        arq_fsm.current = state_idle;
-        break;
-    case EV_LINK_CALL_REMOTE:
-        call_remote();
-        arq_fsm.current = state_connecting_caller;
-        break;
-    case EV_LINK_DISCONNECT:
-        printf("EV_LINK_DISCONNECT ignored in state_listen() - not connected.\n");
-        break;
-    case EV_CLIENT_DISCONNECT:
-        clear_connection_data();
-        arq_fsm.current = state_no_connected_client;
-        break;
-    case EV_LINK_INCOMING_CALL:
-        callee_accept_connection(); //packets created to anwser in case of incoming call with correct callsign
-        arq_fsm.current = state_connecting_callee;
-        break;
-    default:
-        printf("Event: %d ignored in state_listen().\n", event);
-    }
-
-    return;
+    fsm_state cur = fsm_get_current(&arq_fsm);
+    return fsm_state_to_str(cur);
 }
 
-void state_idle(int event)
+static void arq_enqueue_frame(const uint8_t *src, size_t len)
 {
-    printf("FSM State: idle\n");
-
-    switch(event)
-    {
-    case EV_START_LISTEN:
-        arq_conn.listen = true;
-        arq_fsm.current = state_listen;
-        break;
-    case EV_STOP_LISTEN:
-        arq_conn.listen = false;
-        printf("EV_STOP_LISTEN ignored in state_idle() - already stopped.\n");
-        break;
-    case EV_LINK_CALL_REMOTE:
-        call_remote();
-        arq_fsm.current = state_connecting_caller;
-        break;
-    case EV_LINK_DISCONNECT:
-        printf("EV_LINK_DISCONNECT ignored in state_idle() - not connected.\n");
-        break;
-    case EV_CLIENT_DISCONNECT:
-        clear_connection_data();
-        arq_fsm.current = state_no_connected_client;
-        break;
-    default:
-        printf("Event: %d ignored from state_idle\n", event);
-    }
-
-    return;
+    size_t frame_size = arq_conn.frame_size;
+    if (frame_size > INT_BUFFER_SIZE)
+        frame_size = INT_BUFFER_SIZE;
+    uint8_t padded[INT_BUFFER_SIZE];
+    memset(padded, 0, frame_size);
+    if (len > frame_size)
+        len = frame_size;
+    memcpy(padded, src, len);
+    uint8_t header = padded[0] & 0xC0;
+    uint8_t crc = (uint8_t)crc6_0X6F(1, padded + HEADER_SIZE, frame_size - HEADER_SIZE);
+    padded[0] = header | (crc & 0x3F);
+    write_buffer(data_tx_buffer_arq, padded, frame_size);
 }
 
-void state_connecting_caller(int event)
+// Get current timestamp in milliseconds
+uint64_t get_timestamp_ms()
 {
-    printf("FSM State: connecting_caller\n");
-
-    switch(event)
-    {
-    case EV_START_LISTEN:
-        arq_conn.listen = true;
-        break;
-    case EV_STOP_LISTEN:
-        arq_conn.listen = false;
-        break;
-    case EV_LINK_CALL_REMOTE:
-        printf("EV_LINK_CALL_REMOTE ignored in state_connecting_caller() - already connecting.\n");
-        break;
-    case EV_LINK_DISCONNECT:
-        // TODO: kill the connection first? Do we need to do something?
-        arq_fsm.current = (arq_conn.listen == true)? state_listen : state_idle;
-        break;
-    case EV_CLIENT_DISCONNECT:
-        clear_connection_data();
-        arq_fsm.current = state_no_connected_client;
-        break;
-    case EV_LINK_ESTABLISHED:
-        tnc_send_connected();
-        arq_fsm.current = state_link_connected;
-        break;
-    default:
-        printf("Event: %d ignored from state_idle\n", event);
-    }
-
-    return;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
 
-void state_connecting_callee(int event)
+// Check CRC6 of a frame
+bool check_crc(uint8_t *data, size_t frame_size)
 {
-    printf("FSM State: connecting_callee\n");
+    if (frame_size < HEADER_SIZE)
+        return false;
 
-    switch(event)
-    {
-        break;
-    case EV_STOP_LISTEN:
-        arq_conn.listen = false;
-        break;
-    case EV_LINK_CALL_REMOTE:
-        printf("EV_LINK_CALL_REMOTE ignored in state_connecting_caller() - already connecting.\n");
-        break;
-    case EV_LINK_DISCONNECT:
-        // TODO: kill the connection first? Do we need to do something?
-        arq_fsm.current = (arq_conn.listen == true)? state_idle : state_listen;
-        break;
-    case EV_CLIENT_DISCONNECT:
-        clear_connection_data();
-        arq_fsm.current = state_no_connected_client;
-        break;
-    case EV_LINK_ESTABLISHMENT_TIMEOUT:
-        // TODO: do some house cleeping here?
-        arq_fsm.current = (arq_conn.listen == true)? state_idle : state_listen;
-        break;
-    case EV_LINK_ESTABLISHED:
-        // TODO: do some house cleeping here?
-        tnc_send_connected();
-        arq_fsm.current = state_link_connected;
-        break;
-    default:
-        printf("Event: %d ignored from state_idle\n", event);
-    }
-
-    return;
-}
-
-bool check_crc(uint8_t *data)
-{
-    // TODO: put the correct frame size here
-    int frame_size = 0;
-
-    uint16_t crc = (uint16_t) (data[0] & 0x3f);
+    uint16_t crc = (uint16_t)(data[0] & 0x3f);
     uint16_t calculated_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
 
-    if (crc == calculated_crc)
-        return true;
-
-    return false;
-
+    return (crc == calculated_crc);
 }
 
-int check_for_incoming_connection(uint8_t *data)
+// Parse ARQ frame and extract components
+int parse_arq_frame(uint8_t *data, size_t data_len, uint8_t *packet_type, uint8_t *subtype,
+                    uint8_t *sequence, uint8_t **payload, size_t *payload_len)
+{
+    if (data_len < HEADER_SIZE)
+        return -1;
+
+    *packet_type = (data[0] >> 6) & 0x3;
+
+    if (!check_crc(data, data_len))
+        return -1;
+
+    *payload = data + HEADER_SIZE;
+    *payload_len = data_len - HEADER_SIZE;
+
+    // Extract sequence number and subtype for data/control packets
+    if (*packet_type == PACKET_ARQ_DATA || *packet_type == PACKET_ARQ_CONTROL)
+    {
+        if (*payload_len < 1)
+            return -1;
+        *sequence = (*payload)[0] & 0x7F; // 7-bit sequence number
+        if (*packet_type == PACKET_ARQ_CONTROL && *payload_len >= 2)
+        {
+            *subtype = (*payload)[1];
+        }
+    }
+    else if (*packet_type == PACKET_ARQ_ACK || *packet_type == PACKET_ARQ_NACK)
+    {
+        if (*payload_len < 1)
+            return -1;
+        *sequence = (*payload)[0] & 0x7F;
+    }
+
+    return 0;
+}
+
+// Create a control frame
+int create_control_frame(uint8_t *buffer, size_t buffer_size, uint8_t subtype, const char *callsign_data)
+{
+    if (buffer_size < HEADER_SIZE + 2)
+        return -1;
+
+    memset(buffer, 0, buffer_size);
+    buffer[0] = (PACKET_ARQ_CONTROL << 6) & 0xff;
+
+    uint8_t *encoded_callsign = malloc(arq_conn.payload_size);
+    if (!encoded_callsign) return -1;
+    // Compresses callsign_data to save space
+    int enc_len = arithmetic_encode(callsign_data, encoded_callsign);
+    if (enc_len < 0) {
+        free(encoded_callsign);
+        return -1; // Encoding failed
+    }
+
+    size_t available_payload = buffer_size - HEADER_SIZE - 2; // -2 for sequence and subtype
+    if (enc_len > (int)available_payload)
+    {
+        printf("[ARQ] control_frame truncated payload (%zu bytes requested, %d available)", available_payload, enc_len);
+        enc_len = available_payload;
+    }
+
+    // Sequence number (not used for control, set to 0)
+    buffer[HEADER_SIZE] = 0;
+    buffer[HEADER_SIZE + 1] = subtype;
+    memcpy(buffer + HEADER_SIZE + 2, encoded_callsign, enc_len);
+
+    size_t frame_size = HEADER_SIZE + 2 + enc_len;
+    buffer[0] |= (uint8_t)crc6_0X6F(1, buffer + HEADER_SIZE, frame_size - HEADER_SIZE);
+
+    printf("[ARQ] control_frame subtype=%u payload=%d bytes", subtype, (int)enc_len);
+    return (int)frame_size;
+}
+
+// Create a data frame
+int create_data_frame(uint8_t *buffer, size_t buffer_size, uint8_t *payload, size_t payload_len, uint8_t sequence)
+{
+    size_t frame_size = HEADER_SIZE + 1 + payload_len; // +1 for sequence number
+
+    if (buffer_size < frame_size)
+        return -1;
+
+    memset(buffer, 0, frame_size);
+    buffer[0] = (PACKET_ARQ_DATA << 6) & 0xff;
+    buffer[HEADER_SIZE] = sequence & 0x7F;
+    memcpy(buffer + HEADER_SIZE + 1, payload, payload_len);
+
+    buffer[0] |= (uint8_t)crc6_0X6F(1, buffer + HEADER_SIZE, frame_size - HEADER_SIZE);
+
+    return frame_size;
+}
+
+// Create an ACK frame
+int create_ack_frame(uint8_t *buffer, size_t buffer_size, uint8_t sequence)
+{
+    size_t frame_size = HEADER_SIZE + 1;
+
+    if (buffer_size < frame_size)
+        return -1;
+
+    memset(buffer, 0, frame_size);
+    buffer[0] = (PACKET_ARQ_ACK << 6) & 0xff;
+    buffer[HEADER_SIZE] = sequence & 0x7F;
+
+    buffer[0] |= (uint8_t)crc6_0X6F(1, buffer + HEADER_SIZE, frame_size - HEADER_SIZE);
+
+    return frame_size;
+}
+
+// Create a NACK frame
+int create_nack_frame(uint8_t *buffer, size_t buffer_size, uint8_t sequence)
+{
+    size_t frame_size = HEADER_SIZE + 1;
+
+    if (buffer_size < frame_size)
+        return -1;
+
+    memset(buffer, 0, frame_size);
+    buffer[0] = (PACKET_ARQ_NACK << 6) & 0xff;
+    buffer[HEADER_SIZE] = sequence & 0x7F;
+
+    buffer[0] |= (uint8_t)crc6_0X6F(1, buffer + HEADER_SIZE, frame_size - HEADER_SIZE);
+
+    return frame_size;
+}
+
+int check_for_incoming_connection(uint8_t *data, size_t data_len)
 {
     char callsigns[CALLSIGN_MAX_SIZE * 2];
     char dst_callsign[CALLSIGN_MAX_SIZE] = { 0 };
     char src_callsign[CALLSIGN_MAX_SIZE] = { 0 };
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    uint8_t packet_type, subtype, sequence;
+    uint8_t *payload;
+    size_t payload_len;
 
-    uint8_t pack_type = (data[0] >> 6) & 0xff;
-
-    if (check_crc(data) == false)
+    if (parse_arq_frame(data, data_len, &packet_type, &subtype, &sequence, &payload, &payload_len) < 0)
     {
-        printf("Bad crc for packet type %u.\n", pack_type);
+        printf("Failed to parse ARQ frame.\n");
         return -1;
     }
 
-    if (pack_type != PACKET_ARQ_CONTROL)
+    if (packet_type != PACKET_ARQ_CONTROL || subtype != CONTROL_CALL_REQUEST)
     {
-        return 1;
+        return 1; // Not a connection request
     }
 
-    if (arithmetic_decode(data + HEADER_SIZE, frame_size - HEADER_SIZE, callsigns) < 0)
+    if (arithmetic_decode(payload + 2, payload_len - 2, callsigns) < 0)
     {
-        printf("Truncated callsigns.\n");
+        printf("[ARQ] incoming connection truncated callsigns");
+        return -1;
     }
-    printf("Decoded callsigns: %s\n", callsigns);
+
+        printf("[ARQ] incoming connection decoded callsigns: %s", callsigns);
 
     char *needle;
-    if ( (needle = strstr(callsigns,"|")) )
+    if ((needle = strstr(callsigns, "|")))
     {
         int i = 0;
-        while (callsigns[i] != '|')
+        while (callsigns[i] != '|' && i < CALLSIGN_MAX_SIZE - 1)
         {
             dst_callsign[i] = callsigns[i];
             i++;
         }
-        i++;
         dst_callsign[i] = 0;
 
         i = 0;
         needle++;
-        while (callsigns[i] != 0)
+        while (needle[i] != 0 && i < CALLSIGN_MAX_SIZE - 1)
         {
             src_callsign[i] = needle[i];
             i++;
         }
         src_callsign[i] = 0;
     }
-    else // corner case where only the destination address fits in the frame
+    else
     {
-        strcpy(dst_callsign, callsigns);
+        strncpy(dst_callsign, callsigns, CALLSIGN_MAX_SIZE - 1);
+        dst_callsign[CALLSIGN_MAX_SIZE - 1] = 0;
     }
 
     if (!strncmp(dst_callsign, arq_conn.my_call_sign, strlen(dst_callsign)))
     {
+        strncpy(arq_conn.src_addr, src_callsign, CALLSIGN_MAX_SIZE - 1);
+        arq_conn.src_addr[CALLSIGN_MAX_SIZE - 1] = 0;
         fsm_dispatch(&arq_fsm, EV_LINK_INCOMING_CALL);
+        return 0;
     }
     else
     {
-        // TODO: or we just wait for timeout, or drop a EV_LINK_ESTABLISHMENT_FAILURE
-        fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHMENT_TIMEOUT);
-        printf("Called call %s sign does not match my callsign %s. Doing nothing.\n", dst_callsign, arq_conn.my_call_sign);
+        printf("[ARQ] incoming connection ignored: dst=%s my=%s", dst_callsign, arq_conn.my_call_sign);
+        return 1;
     }
-
-    return 0;
 }
 
-int check_for_connection_acceptance_caller(uint8_t *data)
+int check_for_connection_acceptance_caller(uint8_t *data, size_t data_len)
 {
     char callsign[CALLSIGN_MAX_SIZE];
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    uint8_t packet_type, subtype = 0, sequence;
+    uint8_t *payload;
+    size_t payload_len;
 
-    uint8_t pack_type = (data[0] >> 6) & 0xff;
-
-    if (check_crc(data) == false)
+    if (parse_arq_frame(data, data_len, &packet_type, &subtype, &sequence, &payload, &payload_len) < 0)
     {
-        printf("Bad crc for packet type %u.\n", pack_type);
+        printf("Failed to parse ARQ frame.\n");
         return -1;
     }
 
-    if (pack_type != PACKET_ARQ_CONTROL)
+    if (packet_type != PACKET_ARQ_CONTROL || subtype != CONTROL_CALL_RESPONSE)
     {
-        return 1;
+        return 1; // Not a connection response
     }
 
-    if (arithmetic_decode(data + HEADER_SIZE, frame_size - HEADER_SIZE, callsign) < 0)
+    if (arithmetic_decode(payload + 2, payload_len - 2, callsign) < 0)
     {
-        printf("Truncated callsigns.\n");
+        printf("Truncated callsign.\n");
+        return -1;
     }
-    printf("Decoded callsign: %s\n", callsign);
+
+    printf("[ARQ] connection response decoded callsign: %s", callsign);
 
     if (!strncmp(callsign, arq_conn.dst_addr, strlen(callsign)))
     {
         fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHED);
+        return 0;
     }
     else
     {
-        // TODO:
-        // fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHED_FAILURE);
-        printf("Responded callsign %s does not match called %s. Doing nothing.\n", callsign, arq_conn.dst_addr);
+        printf("[ARQ] connection response mismatch dst=%s expected=%s", callsign, arq_conn.dst_addr);
+        return 1;
     }
-    return 0;
 }
 
 void callee_accept_connection()
 {
-    // here we just send the callee callsign back
     uint8_t data[INT_BUFFER_SIZE];
     char callsign[CALLSIGN_MAX_SIZE];
-    uint8_t encoded_callsign[CALLSIGN_MAX_SIZE];
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
-
-    memset(data, 0, frame_size);
-    // 1 byte header, 4 bits packet type, 6 bits crc
-    data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
-
-    // encode the callsign
     sprintf(callsign, "%s", arq_conn.my_call_sign);
-    int enc_len = arithmetic_encode(callsign, encoded_callsign);
+    int frame_size = create_control_frame(data, sizeof(data), CONTROL_CALL_RESPONSE, callsign);
 
-    if (enc_len > frame_size - HEADER_SIZE)
+    if (frame_size > 0)
     {
-        printf("Trucating callsigns. This is ok (%d bytes out of %d transmitted)\n", frame_size - HEADER_SIZE, enc_len);
-        enc_len = frame_size - HEADER_SIZE;
+        arq_enqueue_frame(data, (size_t)frame_size);
+        printf("[ARQ] sent connection acceptance (callee)");
     }
-
-    memcpy(data + HEADER_SIZE, encoded_callsign, enc_len);
-
-    data[0] |= (uint8_t) crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
-
-    write_buffer(data_tx_buffer_arq, data, frame_size);
-
 }
 
 void call_remote()
 {
     uint8_t data[INT_BUFFER_SIZE];
     char joint_callsigns[CALLSIGN_MAX_SIZE * 2];
-    uint8_t encoded_callsigns[INT_BUFFER_SIZE];
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    printf("[ARQ] Calling remote dst=%s my=%s", arq_conn.dst_addr, arq_conn.my_call_sign);
 
-    printf("Calling remote %s, frame_size: %d\n", arq_conn.dst_addr, frame_size);
+    sprintf(joint_callsigns, "%s|%s", arq_conn.dst_addr, arq_conn.my_call_sign);
 
-    memset(data, 0, frame_size);
-    // 1 byte header, 4 bits packet type, 6 bits crc
-    data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
+    int frame_size = create_control_frame(data, sizeof(data), CONTROL_CALL_REQUEST, joint_callsigns);
 
-    // encode the destination callsign first, then the source, separated by "|"
-    sprintf(joint_callsigns,"%s|%s", arq_conn.dst_addr, arq_conn.src_addr);
-    printf("Joint callsigns: %s\n", joint_callsigns);
-
-    int enc_len = arithmetic_encode(joint_callsigns, encoded_callsigns);
-
-    printf("Encoded callsigns: %s, length: %d\n", joint_callsigns, enc_len);
-
-    if (enc_len > frame_size - HEADER_SIZE)
+    if (frame_size > 0)
     {
-        printf("Trucating joint destination + source callsigns. This is ok (%d bytes out of %d transmitted)\n", frame_size - HEADER_SIZE, enc_len);
-        enc_len = frame_size - HEADER_SIZE;
+        // Send multiple times for reliability during call establishment
+        for (int i = 0; i < arq_conn.call_burst_size; i++)
+        {
+            arq_enqueue_frame(data, (size_t)frame_size);
+        }
+        printf("[ARQ] queued connection request burst=%d frame_size=%d", arq_conn.call_burst_size, frame_size);
+        arq_conn.last_tx_time = get_timestamp_ms();
     }
-    memcpy(data + HEADER_SIZE, encoded_callsigns, enc_len);
-
-    data[0] |= (uint8_t) crc6_0X6F(1, (uint8_t *)data + HEADER_SIZE, frame_size - HEADER_SIZE);
-
-    write_buffer(data_tx_buffer_arq, data, frame_size);
-
-    return;
 }
 
-/* ---- END OF FSM Definitions ---- */
+// Process received ARQ frame
+int process_arq_frame(uint8_t *data, size_t data_len)
+{
+    uint8_t packet_type, subtype, sequence;
+    uint8_t *payload;
+    size_t payload_len;
 
+    if (parse_arq_frame(data, data_len, &packet_type, &subtype, &sequence, &payload, &payload_len) < 0)
+    {
+        return -1; // Invalid frame
+    }
+    fsm_state cur = fsm_get_current(&arq_fsm);
+
+    printf("[ARQ] rx frame type=%s sequence=%u subtype=%u state=%s", packet_type_to_str(packet_type), sequence, subtype, current_state_name());
+
+    switch (packet_type)
+    {
+    case PACKET_ARQ_CONTROL:
+        if (cur == state_listen)
+        {
+            check_for_incoming_connection(data, data_len);
+        }
+        else if (cur == state_connecting_caller)
+        {
+            check_for_connection_acceptance_caller(data, data_len);
+        }
+        break;
+
+    case PACKET_ARQ_DATA:
+        if (cur == state_link_connected)
+        {
+            // Check sequence number
+            if (sequence == arq_conn.rx_sequence)
+            {
+                // Correct sequence - send ACK and forward data
+                uint8_t ack_frame[INT_BUFFER_SIZE];
+                int ack_size = create_ack_frame(ack_frame, sizeof(ack_frame), sequence);
+                if (ack_size > 0)
+                {
+                    printf("[ARQ] sending ACK for seq=%u", sequence);
+                    write_buffer(data_tx_buffer_arq, ack_frame, (size_t)ack_size);
+                }
+
+                // Forward payload to TCP client (skip sequence byte)
+                if (payload_len > 1)
+                {
+                    write_buffer(data_rx_buffer_arq, payload + 1, payload_len - 1);
+                    printf("[ARQ] delivered DATA seq=%u payload=%zu bytes", sequence, payload_len - 1);
+                }
+
+                arq_conn.rx_sequence = (arq_conn.rx_sequence + 1) & 0x7F;
+            }
+            else
+            {
+                // Wrong sequence - send NACK
+                uint8_t nack_frame[INT_BUFFER_SIZE];
+                int nack_size = create_nack_frame(nack_frame, sizeof(nack_frame), arq_conn.rx_sequence);
+                if (nack_size > 0)
+                {
+                    printf("[ARQ] sending NACK expected=%u got=%u", arq_conn.rx_sequence, sequence);
+                    write_buffer(data_tx_buffer_arq, nack_frame, (size_t)nack_size);
+                }
+            }
+        }
+        break;
+
+    case PACKET_ARQ_ACK:
+        // ACK: if it matches tx_window, free it and advance sequence
+        pthread_mutex_lock(&arq_state_mutex);
+        if (tx_window.valid && sequence == tx_window.seq)
+        {
+            tx_window.valid = false;
+            arq_conn.waiting_for_ack = false;
+            arq_conn.tx_sequence = (arq_conn.tx_sequence + 1) & 0x7F;
+            arq_conn.retry_count = 0;
+            printf("[ARQ] received ACK seq=%u - freed tx_window", sequence);
+        }
+        pthread_mutex_unlock(&arq_state_mutex);
+        break;
+
+    case PACKET_ARQ_NACK:
+        // NACK: immediate retransmit the tx_window if present
+        pthread_mutex_lock(&arq_state_mutex);
+        if (tx_window.valid)
+        {
+            tx_window.retry_count++;
+            if (tx_window.retry_count <= MAX_RETRIES)
+            {
+                printf("[ARQ] received NACK for seq=%u, retransmit (retry=%d)", tx_window.seq, tx_window.retry_count);
+                arq_enqueue_frame(tx_window.frame, tx_window.frame_len);
+                tx_window.last_tx_ms = get_timestamp_ms();
+            }
+            else
+            {
+                printf("[ARQ] NACK exceeded retries for seq=%u, dropping", tx_window.seq);
+                tx_window.valid = false;
+                arq_conn.waiting_for_ack = false;
+            }
+        }
+        pthread_mutex_unlock(&arq_state_mutex);
+        break;
+    }
+
+    return 0;
+}
 
 void clear_connection_data()
 {
@@ -431,25 +527,47 @@ void reset_arq_info(arq_info *arq_conn_i)
     arq_conn_i->my_call_sign[0] = 0;
     arq_conn_i->src_addr[0] = 0;
     arq_conn_i->dst_addr[0] = 0;
+    arq_conn_i->tx_sequence = 0;
+    arq_conn_i->rx_sequence = 0;
+    arq_conn_i->last_acked_seq = 0;
+    arq_conn_i->waiting_for_ack = false;
+    arq_conn_i->retry_count = 0;
 }
 
-
-int arq_init()
+int arq_init(generic_modem_t *modem)
 {
+    if (!modem || !modem->freedv)
+    {
+        fprintf(stderr, "ARQ init: Invalid modem reference\n");
+        return EXIT_FAILURE;
+    }
+
+    arq_conn.modem = modem;
     arq_conn.call_burst_size = CALL_BURST_SIZE;
 
-    reset_arq_info(&arq_conn);
+    // Get frame size from modem
+    size_t bits_per_frame = freedv_get_bits_per_modem_frame(modem->freedv);
+    arq_conn.frame_size = bits_per_frame / 8;
+    arq_conn.payload_size = arq_conn.frame_size - HEADER_SIZE;
 
-    init_model(); // the arithmetic encoder init function
+    printf("[ARQ] initialized frame_size=%zu payload_size=%zu\n", arq_conn.frame_size, arq_conn.payload_size);
+
+    reset_arq_info(&arq_conn);
+    init_model(); // Initialize arithmetic encoder
     fsm_init(&arq_fsm, state_no_connected_client);
 
-    // dsp threads
-    pthread_create(&tid[0], NULL, dsp_thread_tx, (void *) NULL);
-    pthread_create(&tid[1], NULL, dsp_thread_rx, (void *) NULL);
+    // Create DSP threads
+    pthread_create(&tid[0], NULL, dsp_thread_tx, NULL);
+    pthread_create(&tid[1], NULL, dsp_thread_rx, NULL);
 
     return EXIT_SUCCESS;
 }
 
+void arq_set_frame_size(size_t frame_size)
+{
+    arq_conn.frame_size = frame_size;
+    arq_conn.payload_size = frame_size - HEADER_SIZE;
+}
 
 void arq_shutdown()
 {
@@ -457,74 +575,88 @@ void arq_shutdown()
     pthread_join(tid[1], NULL);
 }
 
-
 void *dsp_thread_tx(void *conn)
 {
-    static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
-    // TODO: put the correct frame size here
-    int frame_size = 0;
-    uint8_t data[INT_BUFFER_SIZE];
+    uint8_t payload[INT_BUFFER_SIZE];
 
-    // TODO: may be we need another function to queue the already prepared packets?
-    while(!shutdown_)
+    while (!shutdown_)
     {
-        // should we add a header already here, to know the size of each package? (size need to match frame_size
-        if ((int) size_buffer(data_tx_buffer_arq) < frame_size ||
-            arq_fsm.current == state_idle ||
-            arq_fsm.current == state_no_connected_client)
+        // Snapshot FSM state safely
+        fsm_state fsm_snapshot = fsm_get_current(&arq_fsm);
+
+        if (fsm_snapshot == state_link_connected)
         {
-            msleep(50);
-            continue;
+            // If we don't have a frame in the TX window, build one from payload buffer
+            pthread_mutex_lock(&arq_state_mutex);
+            if (!tx_window.valid)
+            {
+                size_t available = size_buffer(arq_payload_tx_buffer);
+                if (available >= arq_conn.payload_size)
+                {
+                    size_t to_read = arq_conn.payload_size;
+                    read_buffer(arq_payload_tx_buffer, payload, to_read);
+
+                    int arq_frame_size = create_data_frame(tx_window.frame, sizeof(tx_window.frame),
+                                                            payload, to_read,
+                                                            arq_conn.tx_sequence);
+                    if (arq_frame_size > 0)
+                    {
+                        tx_window.frame_len = (size_t)arq_frame_size;
+                        tx_window.seq = arq_conn.tx_sequence;
+                        tx_window.last_tx_ms = get_timestamp_ms();
+                        tx_window.retry_count = 0;
+                        tx_window.valid = true;
+
+                        // Enqueue framed data to modem TX buffer (separated)
+                        arq_enqueue_frame(tx_window.frame, tx_window.frame_len);
+                        arq_conn.waiting_for_ack = true;
+                        arq_conn.last_tx_time = tx_window.last_tx_ms;
+                        printf("[ARQ] queued DATA seq=%u payload=%zu\n", tx_window.seq, to_read);
+                    }
+                }
+            }
+            else
+            {
+                // Check retransmit timeout for the pending window
+                uint64_t now = get_timestamp_ms();
+                if ((now - tx_window.last_tx_ms) > ACK_TIMEOUT_MS)
+                {
+                    tx_window.retry_count++;
+                    if (tx_window.retry_count <= MAX_RETRIES)
+                    {
+                        printf("[ARQ] timeout retransmit seq=%u retry=%d\n", tx_window.seq, tx_window.retry_count);
+                        arq_enqueue_frame(tx_window.frame, tx_window.frame_len);
+                        tx_window.last_tx_ms = now;
+                    }
+                    else
+                    {
+                        printf("[ARQ] retransmit exhausted seq=%u, dropping\n", tx_window.seq);
+                        tx_window.valid = false;
+                        arq_conn.waiting_for_ack = false;
+                        arq_conn.retry_count = 0;
+                    }
+                }
+            }
+            pthread_mutex_unlock(&arq_state_mutex);
+        }
+        else if (fsm_snapshot == state_connecting_caller || fsm_snapshot == state_connecting_callee)
+        {
+            // Connection establishment frames are already queued by call_remote/callee_accept_connection
+            pthread_mutex_lock(&arq_state_mutex);
+            uint64_t elapsed = get_timestamp_ms() - arq_conn.last_tx_time;
+            pthread_mutex_unlock(&arq_state_mutex);
+            if (elapsed > CONNECTION_TIMEOUT_MS)
+            {
+                fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHMENT_TIMEOUT);
+            }
         }
 
+        // Bound work per tick and yield to scheduler (no blocking waits)
+        for (int i = 0; i < MAX_FRAMES_PER_TICK && !shutdown_; i++)
+            ;
 
-        if(arq_fsm.current != state_idle && arq_fsm.current != state_listen)
-        {
-            read_buffer(data_tx_buffer_arq, data, frame_size);
-        }
-        else
-        {
-            msleep(50);
-            continue;
-        }
-
-        for (int i = 0; i < frame_size; i++)
-        {
-            printf("%02x ", data[i]);
-        }
-
-
-        ptt_on();
-        msleep(10); // TODO: tune me!
-
-        // our connection request
-        if (arq_fsm.current == state_connecting_caller || arq_fsm.current == state_connecting_callee)
-        {
-
-            // tx_transfer(...);
-        }
-
-        if (arq_fsm.current == state_link_connected)
-        {
-            // here we have the data to transmit, so we call the tx_transfer function
-
-            //tx_transfer();        }
-        }
-
-        // TODO: signal when stream is finished playing via pthread_cond_wait() here
-        while (size_buffer(playback_buffer) != 0)
-        {
-            printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
-            fflush(stdout);
-            msleep(10);
-        }
-
-        msleep(40); // TODO: parametrize-me!
-        ptt_off();
-
-        printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
-        fflush(stdout);
-
+        sched_yield();
+        usleep(1000); // short pause to avoid busy spin while remaining non-blocking
     }
 
     return NULL;
@@ -532,12 +664,23 @@ void *dsp_thread_tx(void *conn)
 
 void *dsp_thread_rx(void *conn)
 {
-    static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
+    uint8_t data[INT_BUFFER_SIZE];
+    const size_t frame_size = arq_conn.frame_size;
 
-    while(!shutdown_)
+    while (!shutdown_)
     {
-        msleep(50);
+        // Process up to a bounded number of frames per tick to avoid long stalls
+        int processed = 0;
+        while (processed < MAX_FRAMES_PER_TICK && size_buffer(data_rx_buffer_arq) >= frame_size)
+        {
+            read_buffer(data_rx_buffer_arq, data, frame_size);
+            process_arq_frame(data, frame_size);
+            processed++;
+        }
 
+        // Yield to scheduler; do not block
+        sched_yield();
+        usleep(1000);
     }
 
     return NULL;
