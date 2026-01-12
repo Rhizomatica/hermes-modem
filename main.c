@@ -60,13 +60,13 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC14",
                               "FSK_LDPC" };
 
-bool shutdown_ = false; // global shutdown flag
+volatile sig_atomic_t shutdown_ = 0; // global shutdown flag
 
 // Signal handler for graceful shutdown
 void signal_handler(int sig)
 {
     printf("\nReceived signal %d, shutting down gracefully...\n", sig);
-    shutdown_ = true;
+    shutdown_ = 1;
 }
 
 int main(int argc, char *argv[])
@@ -337,6 +337,19 @@ manual:
         return EXIT_SUCCESS;
     }
 
+    int selected_mode = mod_config;
+    const size_t num_modes = sizeof(freedv_modes) / sizeof(freedv_modes[0]);
+    if (mod_config >= 0 && (size_t)mod_config < num_modes)
+    {
+        selected_mode = freedv_modes[mod_config];
+        printf("Selected FreeDV mode %s (%d)\n", freedv_mode_names[mod_config], selected_mode);
+    }
+    else
+    {
+        printf("Selected FreeDV mode constant %d\n", selected_mode);
+    }
+    mod_config = selected_mode;
+
     generic_modem_t g_modem;
     pthread_t radio_capture, radio_playback;
 
@@ -350,7 +363,7 @@ manual:
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     
-    printf("Initializing Modem\n");  // frames per burst is 1 for now
+    printf("Initializing Modem\n"); // frames per burst is 1 for now
     if (init_modem(&g_modem, mod_config, 1, test_mode) != 0) {
         fprintf(stderr, "Failed to initialize modem\n");
         if (input_dev)
@@ -359,17 +372,28 @@ manual:
             free(output_dev);
         return EXIT_FAILURE;
     }
-    
-    arq_init();
 
-    // we block here
+    arq_init(&g_modem);
+
     broadcast_run(&g_modem);
 
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
     interfaces_init(base_tcp_port, broadcast_port);
 
+    // block until shutdown
+    while (!shutdown_)
+    {
+        sleep(1);
+    }
 
-    // we block somewhere here until shutdown
+    // Set shutdown flag
+    shutdown_ = 1;
+    printf("Shutting down...\n");
+    
+    // Shutdown subsystems
+    broadcast_shutdown();
+    // arq_shutdown();
+    
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         audioio_deinit(&radio_capture, &radio_playback);

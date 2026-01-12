@@ -24,7 +24,7 @@ CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../modem/freedv -I../mode
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
-all: arq.o fsm.o arith.o
+all: arq.o fsm.o arith.o arq_fsm.o
 
 arq.o: arq.c
 	$(CC) $(CFLAGS) -c arq.c
@@ -34,6 +34,9 @@ fsm.o: fsm.c
 
 arith.o: arith.c
 	$(CC) $(CFLAGS) -c arith.c
+
+arq_fsm.o: arq_fsm.c
+	$(CC) $(CFLAGS) -c arq_fsm.c
 
 clean:
 	rm -f *.o

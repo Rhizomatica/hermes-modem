@@ -34,7 +34,8 @@
 // Returns packet type or negative if CRC error
 int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size);
 
-
+// Populate header with packet type + CRC6 over payload
+void write_frame_header(uint8_t *data, int packet_type, size_t frame_size);
 
 
 #endif // FRAMER_H

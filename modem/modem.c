@@ -25,6 +25,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdatomic.h>
+#include <signal.h>
 
 #include "modem.h"
 #include "ring_buffer_posix.h"
@@ -34,7 +36,8 @@
 #include "fsk.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
-
+#include "net.h"
+#include "arq.h"
 #include "defines_modem.h"
 
 /* Here we read and write from the input and output buffers which are connected */
@@ -43,7 +46,7 @@
 /* The buffers can be connected to an external software (eg. sbitx_controller)  */
 /* or to the audioio subsystem which connects to a sound card. */
 
-extern bool shutdown_; // global shutdown flag
+extern volatile sig_atomic_t shutdown_; // global shutdown flag
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -55,6 +58,8 @@ cbuf_handle_t data_rx_buffer_arq;
 
 cbuf_handle_t data_tx_buffer_broadcast;
 cbuf_handle_t data_rx_buffer_broadcast;
+// Separate payload buffer for ARQ (payloads from TCP -> ARQ layer)
+cbuf_handle_t arq_payload_tx_buffer;
 
 pthread_t tx_thread_tid, rx_thread_tid;
 
@@ -85,6 +90,10 @@ try_shm_connect2:
     uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
     data_tx_buffer_arq = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
     data_rx_buffer_arq = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
+
+    // separate payload buffer where upper layer (TCP) will write raw payloads
+    uint8_t *buffer_payload = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
+    arq_payload_tx_buffer = circular_buf_init(buffer_payload, DATA_TX_BUFFER_SIZE);
 
     // buffers for the broadcast datalink
     buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
@@ -228,10 +237,12 @@ int shutdown_modem(generic_modem_t *g_modem)
 
     free(data_tx_buffer_arq->buffer);
     free(data_rx_buffer_arq->buffer);
+    free(arq_payload_tx_buffer->buffer);
     free(data_tx_buffer_broadcast->buffer);
     free(data_rx_buffer_broadcast->buffer);
     circular_buf_free(data_tx_buffer_arq);
     circular_buf_free(data_rx_buffer_arq);
+    circular_buf_free(arq_payload_tx_buffer);
     circular_buf_free(data_tx_buffer_broadcast);
     circular_buf_free(data_rx_buffer_broadcast);
 
