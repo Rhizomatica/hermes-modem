@@ -157,6 +157,8 @@ int run_tests_rx(generic_modem_t *g_modem)
     while(1)
     {
         receive_modulated_data(g_modem, buffer, &bytes_out);
+        if (bytes_out == 0)
+            continue;
         printf("Frame Number = %d\n", counter);
         for (int j = 0; j < bytes_out; j++)
         {
@@ -221,7 +223,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         {
             mod_out_int32[j] = (int32_t)mod_out_short[j] << 16;
         }
-        write_buffer(playback_buffer, (uint8_t *) mod_out_short, sizeof(int32_t) * n_mod_out);
+        write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_mod_out);
         total_samples += n_mod_out;
     }
     /* send postamble */
