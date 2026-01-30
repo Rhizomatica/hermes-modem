@@ -82,6 +82,7 @@ int main(int argc, char *argv[])
     input_dev[0] = 0;
     output_dev[0] = 0;
 
+    int test_mode = 0;
     
     if (argc < 2)
     {
@@ -100,16 +101,24 @@ int main(int argc, char *argv[])
         printf(" -l                         Lists all modulator/coding modes.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -v                         Verbose mode. Prints more information during execution.\n");
+        printf(" -t                         Test TX mode.\n");
+        printf(" -r                         Test RX mode.\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
 
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:li:o:x:p:b:zv")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:li:o:x:p:b:zvtr")) != -1)
     {
         switch (opt)
         {
+	case 't':
+            test_mode = 1;
+            break;
+	case 'r':
+            test_mode = 2;
+            break;
         case 'i':
             if (optarg)
                 strncpy(input_dev, optarg, MAX_PATH-1);
@@ -329,7 +338,7 @@ int main(int argc, char *argv[])
     }
 
     printf("Initializing Modem\n");
-    init_modem(&g_modem, mod_config, 1); // frames per burst is 1 for now
+    init_modem(&g_modem, mod_config, 1, test_mode); // frames per burst is 1 for now
     
     arq_init();
 

@@ -58,7 +58,7 @@ cbuf_handle_t data_rx_buffer_broadcast;
 
 pthread_t tx_thread_tid, rx_thread_tid;
 
-int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst)
+int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode)
 {
 // connect to shared memory buffers
 try_shm_connect1:
@@ -110,7 +110,61 @@ try_shm_connect2:
     // Create TX and RX threads
     pthread_create(&tx_thread_tid, NULL, tx_thread, (void *)g_modem);
     pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
+
+    // test if testing is enable
+    if(test_mode == 1) // tx
+    {
+        run_tests_tx(g_modem);
+    }
+    if(test_mode == 2) // rx
+    {
+        run_tests_rx(g_modem);
+    }
+
+    return 0;
+}
+
+int run_tests_tx(generic_modem_t *g_modem)
+{
+    size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    uint8_t buffer[frame_size];
+
+    static int counter = 0;
+
+    while(1)
+    {
+        for (int i = 0; i < frame_size; i++)
+        {
+            buffer[i] = 0; // data_byte is an integer
+        }
+	buffer[counter % frame_size] = 1;
+	counter++;
+
+	send_modulated_data(g_modem, buffer, 1);
+    }
+    return 0;
+}
+
+
+int run_tests_rx(generic_modem_t *g_modem)
+{
+    size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    uint8_t buffer[frame_size];
+
+    size_t bytes_out = 0;
+    int counter = 0;
     
+    while(1)
+    {
+        receive_modulated_data(g_modem, buffer, &bytes_out);
+        printf("Frame Number = %d\n", counter);
+        for (int j = 0; j < bytes_out; j++)
+        {
+            putchar(buffer[j] + '0');
+        }
+        printf("\n");
+	counter++;
+    }
     return 0;
 }
 
