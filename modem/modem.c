@@ -141,6 +141,13 @@ int run_tests_tx(generic_modem_t *g_modem)
 	counter++;
 
 	send_modulated_data(g_modem, buffer, 1);
+
+        // lets not forget to discard the input buffer... as we are just transmitting
+        size_t rx_discard = size_buffer(capture_buffer);
+        if (rx_discard > 0)
+        {
+            clear_buffer(capture_buffer);
+        }
     }
     return 0;
 }
