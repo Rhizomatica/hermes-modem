@@ -112,14 +112,20 @@ void *radio_playback_thread(void *device_ptr)
     ffuint frame_size;
     ffuint msec_bytes;
 
-    // input is int32_t
-    uint32_t *input_buffer = (uint32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
+    // input is int32_t (8kHz samples from playback_buffer)
+    int32_t *input_buffer = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
 
-    // output is int32_t
-    int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
+    // upsampled buffer (48kHz mono)
+    int32_t *buffer_upsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 6);
+
+    // output is int32_t stereo (48kHz)
+    int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2 * 6); // a big enough buffer
 
     ffuint total_written = 0;
     int ch_layout = STEREO;
+
+    // Resampling ratio: 8kHz -> 48kHz = 1:6
+    const int resample_ratio = 6;
 
     if ( audio->init(&aconf) != 0)
     {
@@ -159,19 +165,22 @@ void *radio_playback_thread(void *device_ptr)
 #endif
     ch_layout = STEREO;
     
+    // period_bytes at 8kHz (input rate) - adjust for the lower sample rate
+    uint32_t period_bytes_8k = period_bytes / resample_ratio;
+
     while (!shutdown_)
     {
         ffssize n;
         size_t buffer_size = size_buffer(playback_buffer);
-        if (buffer_size >= period_bytes)
+        if (buffer_size >= period_bytes_8k)
         {
-            read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes);
-            n = period_bytes;
+            read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes_8k);
+            n = period_bytes_8k;
         }
         else
         {
             // we just play zeros if there is nothing to play
-            memset(input_buffer, 0, period_bytes);
+            memset(input_buffer, 0, period_bytes_8k);
             if (buffer_size > 0)
                 read_buffer(playback_buffer, (uint8_t *) input_buffer, buffer_size);
             n = buffer_size;
@@ -179,32 +188,46 @@ void *radio_playback_thread(void *device_ptr)
 
         total_written = 0;
 
-        int samples_read = n / sizeof(int32_t);
+        int samples_read_8k = n / sizeof(int32_t);
 
-        for (int i = 0; i < samples_read; i++)
+        // Upsample from 8kHz to 48kHz using linear interpolation
+        int samples_upsampled = samples_read_8k * resample_ratio;
+        for (int i = 0; i < samples_read_8k; i++)
+        {
+            int32_t current = input_buffer[i];
+            int32_t next = (i + 1 < samples_read_8k) ? input_buffer[i + 1] : current;
+
+            for (int j = 0; j < resample_ratio; j++)
+            {
+                // Linear interpolation between current and next sample
+                buffer_upsampled[i * resample_ratio + j] = current + (next - current) * j / resample_ratio;
+            }
+        }
+
+        // Convert upsampled mono to stereo
+        for (int i = 0; i < samples_upsampled; i++)
         {
             int idx = i * cfg->channels;
             if (ch_layout == LEFT)
             {
-                buffer_output_stereo[idx] = input_buffer[i];
+                buffer_output_stereo[idx] = buffer_upsampled[i];
                 buffer_output_stereo[idx + 1] = 0;
             }
 
             if (ch_layout == RIGHT)
             {
                 buffer_output_stereo[idx] = 0;
-                buffer_output_stereo[idx + 1] = input_buffer[i];
+                buffer_output_stereo[idx + 1] = buffer_upsampled[i];
             }
-
 
             if (ch_layout == STEREO)
             {
-                buffer_output_stereo[idx] = input_buffer[i];
-                buffer_output_stereo[idx + 1] = buffer_output_stereo[idx];
+                buffer_output_stereo[idx] = buffer_upsampled[i];
+                buffer_output_stereo[idx + 1] = buffer_upsampled[i];
             }
         }
 
-        n = samples_read * frame_size;
+        n = samples_upsampled * frame_size;
 
         while (n >= frame_size)
         {
@@ -251,6 +274,7 @@ cleanup_play:
 finish_play:
 
     free(input_buffer);
+    free(buffer_upsampled);
     free(buffer_output_stereo);
 
     printf("radio_playback_thread exit\n");
@@ -309,6 +333,10 @@ void *radio_capture_thread(void *device_ptr)
     int ch_layout = STEREO;
 
     int32_t *buffer_output = NULL;
+    int32_t *buffer_downsampled = NULL;
+
+    // Resampling ratio: 48kHz -> 8kHz = 6:1
+    const int resample_ratio = 6;
 
     if ( audio->init(&aconf) != 0)
     {
@@ -340,6 +368,7 @@ void *radio_capture_thread(void *device_ptr)
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
     buffer_output = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2);
+    buffer_downsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
 
 #if 0 // TODO: parametrize this
     if (radio_type == RADIO_SBITX)
@@ -385,8 +414,15 @@ void *radio_capture_thread(void *device_ptr)
             }
         }
 
-        if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(int32_t))
-            write_buffer(capture_buffer, (uint8_t *)buffer_output, frames_to_write * sizeof(int32_t));
+        // Downsample from 48kHz to 8kHz (take every 6th sample)
+        int downsampled_frames = frames_to_write / resample_ratio;
+        for (int i = 0; i < downsampled_frames; i++)
+        {
+            buffer_downsampled[i] = buffer_output[i * resample_ratio];
+        }
+
+        if (circular_buf_free_size(capture_buffer) >= downsampled_frames * sizeof(int32_t))
+            write_buffer(capture_buffer, (uint8_t *)buffer_downsampled, downsampled_frames * sizeof(int32_t));
         else
             printf("Buffer full in capture buffer!\n");
     }
@@ -400,6 +436,7 @@ void *radio_capture_thread(void *device_ptr)
         printf("ffaudio.clear: %s", audio->error(b));
 
     free(buffer_output);
+    free(buffer_downsampled);
 
 cleanup_cap:
 
