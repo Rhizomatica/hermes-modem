@@ -107,10 +107,6 @@ try_shm_connect2:
     freedv_set_verbose(g_modem->freedv, 3);
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);
 
-    // Create TX and RX threads
-    pthread_create(&tx_thread_tid, NULL, tx_thread, (void *)g_modem);
-    pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
-
     // test if testing is enable
     if(test_mode == 1) // tx
     {
@@ -120,6 +116,10 @@ try_shm_connect2:
     {
         run_tests_rx(g_modem);
     }
+
+    // Create TX and RX threads
+    pthread_create(&tx_thread_tid, NULL, tx_thread, (void *)g_modem);
+    pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
 
     return 0;
 }
@@ -346,8 +346,6 @@ void *rx_thread(void *g_modem)
     uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame * frames_per_burst);
     size_t nbytes_out = 0;
 
-
-    
     if (!data)
     {
         fprintf(stderr, "Failed to allocate memory for RX data.\n");

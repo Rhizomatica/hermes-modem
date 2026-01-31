@@ -347,7 +347,7 @@ void *radio_capture_thread(void *device_ptr)
     if (radio_type == RADIO_STOCKHF)
         ch_layout = STEREO;
 #endif
-    ch_layout = STEREO;
+    ch_layout = LEFT;
 
     while (!shutdown_)
     {
