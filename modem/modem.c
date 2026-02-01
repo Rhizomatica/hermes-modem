@@ -246,66 +246,93 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     size_t payload_bytes = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC16 */
     size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
-    int16_t mod_out_short[n_mod_out];
-    int32_t mod_out_int32[n_mod_out];
     uint8_t frame_with_crc[bytes_per_modem_frame];
+
+    /* Inter-burst silence */
+    int inter_burst_delay_ms = 200;
+    int samples_silence = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
+
+    /* Calculate max buffer size needed:
+     * preamble + (frames * n_mod_out) + postamble + silence */
+    int max_preamble = freedv_get_n_tx_modem_samples(freedv) * 2;  /* conservative estimate */
+    int max_postamble = max_preamble;
+    size_t max_samples = max_preamble + (frames_per_burst * n_mod_out) + max_postamble + samples_silence;
+
+    /* Allocate temporary buffer for all modulated audio */
+    int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
+    int16_t *mod_out_short = (int16_t *)malloc(n_mod_out * sizeof(int16_t));
+
+    if (!tx_buffer || !mod_out_short)
+    {
+        printf("ERROR: Failed to allocate TX buffer\n");
+        if (tx_buffer) free(tx_buffer);
+        if (mod_out_short) free(mod_out_short);
+        return -1;
+    }
+
     int total_samples = 0;
-    
-    /* send preamble */
+
+
+    /* === STEP 1: Generate all modulated audio into temp buffer === */
+
+    /* Generate preamble */
     int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
-    // converting from s16le to s32le
     for (int i = 0; i < n_preamble; i++)
     {
-        mod_out_int32[i] = (int32_t)mod_out_short[i] << 16;
+        tx_buffer[total_samples++] = (int32_t)mod_out_short[i] << 16;
     }
-    write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_preamble);
-    total_samples += n_preamble;
 
-    /* modulate and send data frame(s) */
+    /* Generate data frame(s) */
     for (int i = 0; i < frames_per_burst; i++)
     {
-        /* Copy payload and add CRC16 in last 2 bytes (required by raw data API) */
+        /* Copy payload and add CRC16 in last 2 bytes */
         memcpy(frame_with_crc, &bytes_in[payload_bytes * i], payload_bytes);
         uint16_t crc16 = freedv_gen_crc16(frame_with_crc, payload_bytes);
         frame_with_crc[bytes_per_modem_frame - 2] = crc16 >> 8;
         frame_with_crc[bytes_per_modem_frame - 1] = crc16 & 0xff;
 
         freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
-        // converting from s16le to s32le
-        for (int j = 0; j < n_mod_out; j++)
+        for (size_t j = 0; j < n_mod_out; j++)
         {
-            mod_out_int32[j] = (int32_t)mod_out_short[j] << 16;
+            tx_buffer[total_samples++] = (int32_t)mod_out_short[j] << 16;
         }
-        write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_mod_out);
-        total_samples += n_mod_out;
     }
-    /* send postamble */
+
+    /* Generate postamble */
     int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
-    // converting from s16le to s32le
     for (int i = 0; i < n_postamble; i++)
     {
-        mod_out_int32[i] = (int32_t)mod_out_short[i] << 16;
+        tx_buffer[total_samples++] = (int32_t)mod_out_short[i] << 16;
     }
-    write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_postamble);
-    total_samples += n_postamble;
-    
-    /* create some silence between bursts */
-    int inter_burst_delay_ms = 200;
-    int samples_delay = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
-    int32_t silence[samples_delay];
-    memset(silence, 0, samples_delay * sizeof(int32_t));
-    write_buffer(playback_buffer, (uint8_t *) silence, sizeof(int32_t) * samples_delay);
-    total_samples += samples_delay;
+
+    /* Add silence at end */
+    for (int i = 0; i < samples_silence; i++)
+    {
+        tx_buffer[total_samples++] = 0;
+    }
+
+
+    /* === STEP 2: Key transmitter and send pre-generated audio === */
 
     ptt_on();
     
-    usleep(total_samples * 1000000 / FREEDV_FS_8000); // wait for the samples to be played
+    /* Wait for radio relay to switch (10ms for your radio) */
+    usleep(10000);
 
-    // give some more tail time just to be in the safe side
+    /* Write entire pre-generated buffer to playback */
+    write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
+
+    /* Wait for all samples to be played out */
+    usleep(total_samples * 1000000 / FREEDV_FS_8000);
+
+    /* Give some tail time before turning off PTT */
     usleep(TAIL_TIME_US);
 
     ptt_off();
-    
+
+    free(tx_buffer);
+    free(mod_out_short);
+
     return 0;
 }
 
