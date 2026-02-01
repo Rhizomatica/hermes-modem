@@ -136,20 +136,20 @@ try_shm_connect2:
 int run_tests_tx(generic_modem_t *g_modem)
 {
     size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
-    uint8_t buffer[frame_size];
+    uint8_t *buffer = (uint8_t *)malloc(frame_size);
 
-    static int counter = 0;
+    int counter = 0;
 
     while(1)
     {
-        for (int i = 0; i < frame_size; i++)
+        for (size_t i = 0; i < frame_size; i++)
         {
-            buffer[i] = 0; // data_byte is an integer
+            buffer[i] = 0;
         }
-	buffer[counter % frame_size] = 1;
-	counter++;
+        buffer[counter % frame_size] = 1;
+        counter++;
 
-	send_modulated_data(g_modem, buffer, 1);
+        send_modulated_data(g_modem, buffer, 1);
 
         // lets not forget to discard the input buffer... as we are just transmitting
         size_t rx_discard = size_buffer(capture_buffer);
@@ -158,6 +158,8 @@ int run_tests_tx(generic_modem_t *g_modem)
             clear_buffer(capture_buffer);
         }
     }
+
+    free(buffer);
     return 0;
 }
 
@@ -165,7 +167,7 @@ int run_tests_tx(generic_modem_t *g_modem)
 int run_tests_rx(generic_modem_t *g_modem)
 {
     size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
-    uint8_t buffer[frame_size];
+    uint8_t *buffer = (uint8_t *)malloc(frame_size);
 
     size_t bytes_out = 0;
     int counter = 0;
@@ -175,14 +177,21 @@ int run_tests_rx(generic_modem_t *g_modem)
         receive_modulated_data(g_modem, buffer, &bytes_out);
         if (bytes_out == 0)
             continue;
-        printf("Frame Number = %d\n", counter);
-        for (int j = 0; j < bytes_out; j++)
+
+        counter++;
+        int sync = 0;
+        float snr_est = 0.0;
+        freedv_get_modem_stats(g_modem->freedv, &sync, &snr_est);
+        printf("Received %d frames, SNR: %.2f dB, sync: %d\n", counter, snr_est, sync);
+
+        for (size_t j = 0; j < bytes_out; j++)
         {
             putchar(buffer[j] + '0');
         }
         printf("\n");
-	counter++;
     }
+
+    free(buffer);
     return 0;
 }
 
@@ -278,12 +287,32 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
 
     static int frames_received = 0;
     static int debug_counter = 0;
-    int input_size = freedv_get_n_max_modem_samples(freedv);
+    static int16_t *demod_in = NULL;
+    static int32_t *buffer_in = NULL;
+    static int buffer_size = 0;
 
-    int16_t demod_in[input_size];
-    int32_t buffer_in[input_size];
+    int input_size = freedv_get_n_max_modem_samples(freedv);
+    
+    // Allocate buffers on first call or if size changed
+    if (buffer_size < input_size)
+    {
+        if (demod_in) free(demod_in);
+        if (buffer_in) free(buffer_in);
+        demod_in = (int16_t *)malloc(input_size * sizeof(int16_t));
+        buffer_in = (int32_t *)malloc(input_size * sizeof(int32_t));
+        buffer_size = input_size;
+    }
     
     size_t nin = freedv_nin(freedv);
+
+    // Safety check: nin should not be 0 or larger than buffer
+    if (nin == 0 || nin > (size_t)input_size)
+    {
+        printf("[DEBUG RX] WARNING: nin=%zu (input_size=%d), skipping\n", nin, input_size);
+        *nbytes_out = 0;
+        return 0;
+    }
+
     read_buffer(capture_buffer, (uint8_t *) buffer_in, sizeof(int32_t) * nin);
     
     // Debug: print signal level every ~1 second (8000 samples/sec)
