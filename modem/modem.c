@@ -135,18 +135,28 @@ try_shm_connect2:
 
 int run_tests_tx(generic_modem_t *g_modem)
 {
-    size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
-    uint8_t *buffer = (uint8_t *)malloc(frame_size);
+    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    size_t payload_size = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC by send_modulated_data */
+    uint8_t *buffer = (uint8_t *)malloc(payload_size);
+
+    if (!buffer)
+    {
+        printf("ERROR: Failed to allocate TX test buffer\n");
+        return -1;
+    }
+
+    printf("TX test: bytes_per_modem_frame=%zu, payload_size=%zu\n",
+           bytes_per_modem_frame, payload_size);
 
     int counter = 0;
 
     while(1)
     {
-        for (size_t i = 0; i < frame_size; i++)
+        for (size_t i = 0; i < payload_size; i++)
         {
             buffer[i] = 0;
         }
-        buffer[counter % frame_size] = 1;
+        buffer[counter % payload_size] = 1;
         counter++;
 
         send_modulated_data(g_modem, buffer, 1);
@@ -166,12 +176,22 @@ int run_tests_tx(generic_modem_t *g_modem)
 
 int run_tests_rx(generic_modem_t *g_modem)
 {
-    size_t frame_size = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
-    uint8_t *buffer = (uint8_t *)malloc(frame_size);
+    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    size_t payload_size = bytes_per_modem_frame - 2;  /* RX returns frame with CRC, payload is 2 bytes less */
+    uint8_t *buffer = (uint8_t *)malloc(bytes_per_modem_frame);
+
+    if (!buffer)
+    {
+        printf("ERROR: Failed to allocate RX test buffer\n");
+        return -1;
+    }
+
+    printf("RX test: bytes_per_modem_frame=%zu, payload_size=%zu\n",
+           bytes_per_modem_frame, payload_size);
 
     size_t bytes_out = 0;
     int counter = 0;
-    
+
     while(1)
     {
         receive_modulated_data(g_modem, buffer, &bytes_out);
@@ -179,10 +199,14 @@ int run_tests_rx(generic_modem_t *g_modem)
             continue;
 
         counter++;
-        printf("Raw Frame:\n");
-        for (size_t j = 0; j < bytes_out; j++)
+        /* bytes_out includes CRC, actual payload is bytes_out - 2 */
+        size_t payload_len = (bytes_out >= 2) ? bytes_out - 2 : bytes_out;
+
+        printf("Frame %d (%zu payload bytes):\n", counter, payload_len);
+        for (size_t j = 0; j < payload_len; j++)
         {
-            putchar(buffer[j] + '0');
+            printf("%02x ", buffer[j]);
+            if ((j + 1) % 16 == 0) printf("\n");
         }
         printf("\n");
     }
@@ -220,9 +244,11 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 {
     struct freedv *freedv = g_modem->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
+    size_t payload_bytes = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC16 */
     size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
     int16_t mod_out_short[n_mod_out];
     int32_t mod_out_int32[n_mod_out];
+    uint8_t frame_with_crc[bytes_per_modem_frame];
     int total_samples = 0;
     
     /* send preamble */
@@ -235,10 +261,16 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     write_buffer(playback_buffer, (uint8_t *) mod_out_int32, sizeof(int32_t) * n_preamble);
     total_samples += n_preamble;
 
-    /* modulate and send a data frame */
+    /* modulate and send data frame(s) */
     for (int i = 0; i < frames_per_burst; i++)
     {
-        freedv_rawdatatx(freedv, mod_out_short, &bytes_in[bytes_per_modem_frame * i]);
+        /* Copy payload and add CRC16 in last 2 bytes (required by raw data API) */
+        memcpy(frame_with_crc, &bytes_in[payload_bytes * i], payload_bytes);
+        uint16_t crc16 = freedv_gen_crc16(frame_with_crc, payload_bytes);
+        frame_with_crc[bytes_per_modem_frame - 2] = crc16 >> 8;
+        frame_with_crc[bytes_per_modem_frame - 1] = crc16 & 0xff;
+
+        freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
         // converting from s16le to s32le
         for (int j = 0; j < n_mod_out; j++)
         {
