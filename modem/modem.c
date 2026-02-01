@@ -308,7 +308,8 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     // Safety check: nin should not be 0 or larger than buffer
     if (nin == 0 || nin > (size_t)input_size)
     {
-        printf("[DEBUG RX] WARNING: nin=%zu (input_size=%d), skipping\n", nin, input_size);
+        // printf("[DEBUG RX] WARNING: nin=%zu (input_size=%d), skipping\n", nin, input_size);
+        usleep(100000); // sleep 100ms to ask for more data
         *nbytes_out = 0;
         return 0;
     }
