@@ -379,6 +379,7 @@ void *radio_capture_thread(void *device_ptr)
     ch_layout = LEFT;
 
     static int debug_sample_count = 0;
+    static int resample_remainder = 0;  // Track fractional samples for accurate resampling
     
     while (!shutdown_)
     {
@@ -410,36 +411,40 @@ void *radio_capture_thread(void *device_ptr)
                 if (left < min_val) min_val = left;
             }
             printf("[DEBUG CAPTURE] frames_read: %d, downsampled: %d, signal range (L): [%d, %d]\n",
-                   frames_read, frames_read / resample_ratio, min_val, max_val);
+                   frames_read, (frames_read + resample_remainder) / resample_ratio, min_val, max_val);
             debug_sample_count = 0;
         }
 
+        // Downsample from 48kHz to 8kHz with decimation
+        // resample_remainder tracks position in decimation cycle (0 to resample_ratio-1)
+        // When remainder is 0, we take a sample; otherwise skip
+        int downsampled_frames = 0;
         for (int i = 0; i < frames_to_write; i++)
         {
+            int32_t sample;
             if (ch_layout == LEFT)
             {
-                buffer_output[i] = buffer[i*2];
+                sample = buffer[i*2];
+            }
+            else if (ch_layout == RIGHT)
+            {
+                sample = buffer[i*2 + 1];
+            }
+            else // STEREO
+            {
+                sample = (buffer[i*2] + buffer[i*2 + 1]) / 2;
             }
 
-            if (ch_layout == RIGHT)
+            // Take every 6th sample (when remainder == 0)
+            if (resample_remainder == 0)
             {
-                buffer_output[i] = buffer[i*2 + 1];
+                buffer_downsampled[downsampled_frames++] = sample;
             }
 
-            if (ch_layout == STEREO)
-            {
-                buffer_output[i] = (buffer[i*2] + buffer[i*2 + 1]) / 2;
-            }
+            resample_remainder = (resample_remainder + 1) % resample_ratio;
         }
 
-        // Downsample from 48kHz to 8kHz (take every 6th sample)
-        int downsampled_frames = frames_to_write / resample_ratio;
-        for (int i = 0; i < downsampled_frames; i++)
-        {
-            buffer_downsampled[i] = buffer_output[i * resample_ratio];
-        }
-
-        if (circular_buf_free_size(capture_buffer) >= downsampled_frames * sizeof(int32_t))
+        if (circular_buf_free_size(capture_buffer) >= (size_t)(downsampled_frames * sizeof(int32_t)))
             write_buffer(capture_buffer, (uint8_t *)buffer_downsampled, downsampled_frames * sizeof(int32_t));
         else
             printf("Buffer full in capture buffer!\n");
