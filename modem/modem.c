@@ -341,13 +341,38 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     // ALWAYS call freedv_rawdatarx - even when nin==0, it processes internal buffers
     *nbytes_out = freedv_rawdatarx(freedv, bytes_out, demod_in);
 
+    // Check modem state and RX status
+    int sync = 0;
+    float snr_est = 0.0;
+    freedv_get_modem_stats(freedv, &sync, &snr_est);
+    int rx_status = freedv_get_rx_status(freedv);
+
+    // Debug: show RX status flags
+    // FREEDV_RX_SYNC = 0x1, FREEDV_RX_BITS = 0x2, FREEDV_RX_BIT_ERRORS = 0x4
+    static int sync_count = 0;
+    static int last_rx_status = 0;
+
+    if (rx_status != last_rx_status || (sync && sync_count % 50 == 0))
+    {
+        printf("[DEBUG RX STATUS] rx_status=0x%x (SYNC=%d BITS=%d BIT_ERRORS=%d) sync=%d snr=%.1f nbytes=%zu\n",
+               rx_status,
+               (rx_status & 0x1) ? 1 : 0,   // FREEDV_RX_SYNC
+               (rx_status & 0x2) ? 1 : 0,   // FREEDV_RX_BITS
+               (rx_status & 0x4) ? 1 : 0,   // FREEDV_RX_BIT_ERRORS
+               sync, snr_est, *nbytes_out);
+        last_rx_status = rx_status;
+    }
+
+    if (sync)
+        sync_count++;
+    else
+        sync_count = 0;
+
     if (*nbytes_out > 0)
     {
         frames_received++;
-        int sync = 0;
-        float snr_est = 0.0;
-        freedv_get_modem_stats(freedv, &sync, &snr_est);
-        printf("Received %d frames, SNR: %.2f dB, sync: %d\n", frames_received, snr_est, sync);
+        printf(">>> DECODED FRAME %d: %zu bytes, SNR: %.2f dB\n",
+               frames_received, *nbytes_out, snr_est);
     }
 
     return 0;
