@@ -105,7 +105,16 @@ try_shm_connect2:
     freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
     freedv_set_verbose(g_modem->freedv, 3);
+    
+    int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);
+    printf("Modem expects sample rate: %d Hz\n", modem_sample_rate);
+    
+    if (modem_sample_rate != 8000)
+    {
+        printf("WARNING: Modem sample rate is %d Hz, but audio I/O is configured for 8kHz!\n", modem_sample_rate);
+        printf("         You need to adjust the resampling in audioio.c or use a different mode.\n");
+    }
 
     // test if testing is enable
     if(test_mode == 1) // tx
@@ -268,6 +277,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     struct freedv *freedv = g_modem->freedv;
 
     static int frames_received = 0;
+    static int debug_counter = 0;
     int input_size = freedv_get_n_max_modem_samples(freedv);
 
     int16_t demod_in[input_size];
@@ -275,6 +285,23 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     
     size_t nin = freedv_nin(freedv);
     read_buffer(capture_buffer, (uint8_t *) buffer_in, sizeof(int32_t) * nin);
+    
+    // Debug: print signal level every ~1 second (8000 samples/sec)
+    debug_counter += nin;
+    if (debug_counter >= 8000)
+    {
+        int32_t max_val = 0;
+        int32_t min_val = 0;
+        for (size_t i = 0; i < nin; i++)
+        {
+            if (buffer_in[i] > max_val) max_val = buffer_in[i];
+            if (buffer_in[i] < min_val) min_val = buffer_in[i];
+        }
+        printf("[DEBUG RX] buffer size: %zu, nin: %zu, signal range: [%d, %d]\n", 
+               size_buffer(capture_buffer), nin, min_val, max_val);
+        debug_counter = 0;
+    }
+    
     // converting from s32le to s16le
     for (size_t i = 0; i < nin; i++)
     {

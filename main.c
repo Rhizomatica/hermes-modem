@@ -205,6 +205,7 @@ int main(int argc, char *argv[])
             printf("payload_bytes_per_modem_frame: %zu\n", payload_bytes_per_modem_frame);
             printf("n_tx_modem_samples: %d\n", freedv_get_n_tx_modem_samples(freedv));
             printf("freedv_get_n_max_modem_samples: %d\n", freedv_get_n_max_modem_samples(freedv));
+            printf("modem_sample_rate: %d Hz\n", freedv_get_modem_sample_rate(freedv));
             
             if (freedv_modes[i] != FREEDV_MODE_FSK_LDPC && verbose) {
                 freedv_ofdm_print_info(freedv);

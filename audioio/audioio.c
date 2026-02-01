@@ -378,6 +378,8 @@ void *radio_capture_thread(void *device_ptr)
 #endif
     ch_layout = LEFT;
 
+    static int debug_sample_count = 0;
+    
     while (!shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
@@ -395,6 +397,22 @@ void *radio_capture_thread(void *device_ptr)
 
         int frames_read = r / frame_size;
         int frames_to_write = frames_read;
+        
+        // Debug: print capture info every ~1 second (48000 samples/sec at input)
+        debug_sample_count += frames_read;
+        if (debug_sample_count >= 48000)
+        {
+            int32_t max_val = 0, min_val = 0;
+            for (int i = 0; i < frames_read && i < 100; i++)
+            {
+                int32_t left = buffer[i*2];
+                if (left > max_val) max_val = left;
+                if (left < min_val) min_val = left;
+            }
+            printf("[DEBUG CAPTURE] frames_read: %d, downsampled: %d, signal range (L): [%d, %d]\n",
+                   frames_read, frames_read / resample_ratio, min_val, max_val);
+            debug_sample_count = 0;
+        }
 
         for (int i = 0; i < frames_to_write; i++)
         {
