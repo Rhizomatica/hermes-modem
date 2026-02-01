@@ -179,11 +179,7 @@ int run_tests_rx(generic_modem_t *g_modem)
             continue;
 
         counter++;
-        int sync = 0;
-        float snr_est = 0.0;
-        freedv_get_modem_stats(g_modem->freedv, &sync, &snr_est);
-        printf("Received %d frames, SNR: %.2f dB, sync: %d\n", counter, snr_est, sync);
-
+        printf("Raw Frame:\n");
         for (size_t j = 0; j < bytes_out; j++)
         {
             putchar(buffer[j] + '0');
@@ -302,42 +298,47 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
         buffer_in = (int32_t *)malloc(input_size * sizeof(int32_t));
         buffer_size = input_size;
     }
-    
+
     size_t nin = freedv_nin(freedv);
 
-    // Safety check: nin should not be 0 or larger than buffer
-    if (nin == 0 || nin > (size_t)input_size)
+    // Safety check: nin should not be larger than buffer
+    if (nin > (size_t)input_size)
     {
-        // printf("[DEBUG RX] WARNING: nin=%zu (input_size=%d), skipping\n", nin, input_size);
-        usleep(100000); // sleep 100ms to ask for more data
+        printf("[DEBUG RX] ERROR: nin=%zu exceeds input_size=%d\n", nin, input_size);
         *nbytes_out = 0;
-        return 0;
+        return -1;
     }
 
-    read_buffer(capture_buffer, (uint8_t *) buffer_in, sizeof(int32_t) * nin);
-    
-    // Debug: print signal level every ~1 second (8000 samples/sec)
-    debug_counter += nin;
-    if (debug_counter >= 8000)
+    // Read samples only when nin > 0
+    // When nin == 0, FreeDV has buffered enough samples and will process internally
+    if (nin > 0)
     {
-        int32_t max_val = 0;
-        int32_t min_val = 0;
+        read_buffer(capture_buffer, (uint8_t *) buffer_in, sizeof(int32_t) * nin);
+
+        // Debug: print signal level every ~1 second (8000 samples/sec)
+        debug_counter += nin;
+        if (debug_counter >= 8000)
+        {
+            int32_t max_val = 0;
+            int32_t min_val = 0;
+            for (size_t i = 0; i < nin; i++)
+            {
+                if (buffer_in[i] > max_val) max_val = buffer_in[i];
+                if (buffer_in[i] < min_val) min_val = buffer_in[i];
+            }
+            printf("[DEBUG RX] buffer size: %zu, nin: %zu, signal range: [%d, %d]\n",
+                   size_buffer(capture_buffer), nin, min_val, max_val);
+            debug_counter = 0;
+        }
+
+        // converting from s32le to s16le
         for (size_t i = 0; i < nin; i++)
         {
-            if (buffer_in[i] > max_val) max_val = buffer_in[i];
-            if (buffer_in[i] < min_val) min_val = buffer_in[i];
+            demod_in[i] = (int16_t)(buffer_in[i] >> 16);
         }
-        printf("[DEBUG RX] buffer size: %zu, nin: %zu, signal range: [%d, %d]\n", 
-               size_buffer(capture_buffer), nin, min_val, max_val);
-        debug_counter = 0;
     }
-    
-    // converting from s32le to s16le
-    for (size_t i = 0; i < nin; i++)
-    {
-        demod_in[i] = (int16_t)(buffer_in[i] >> 16);
-    }
-    
+
+    // ALWAYS call freedv_rawdatarx - even when nin==0, it processes internal buffers
     *nbytes_out = freedv_rawdatarx(freedv, bytes_out, demod_in);
 
     if (*nbytes_out > 0)
