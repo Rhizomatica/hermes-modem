@@ -1,7 +1,5 @@
 # Compiler and flags
-CC = gcc
-CFLAGS = -Wall -Wextra -O2
-LDFLAGS = -pthread
+CFLAGS += -Wextra
 
 # Source and output files
 SRC = broadcast_test.c kiss.c

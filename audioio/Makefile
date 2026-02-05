@@ -20,7 +20,6 @@
 #
 
 AR=ar
-CC=gcc
 
 ifeq ($(OS),Windows_NT)
        OBJS += ffaudio/ffaudio/wasapi.o
@@ -40,7 +39,7 @@ else
 endif
 
 
-CFLAGS = -Wall -Wno-unused -O2 -g -I./ffbase/ -I./ffaudio/ -I../common -pthread
+CFLAGS += -Wno-unused -g -I./ffbase/ -I./ffaudio/ -I../common
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 

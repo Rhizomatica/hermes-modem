@@ -19,8 +19,7 @@
 # Boston, MA 02110-1301, USA.
 #
 
-CC=gcc
-CFLAGS=-Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE=1 -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../data_interfaces
+CFLAGS += -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../data_interfaces
 all: broadcast.o kiss.o
 
 kiss.o: kiss.c

@@ -42,7 +42,9 @@ endif
 .PHONY: all internal_deps clean
 
 CC = gcc
+export CC
 CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
+export CFLAGS
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
