@@ -1,5 +1,7 @@
 # HERMES modem
 
+## Introduction
+
 This is the Rhizomatica's HERMES (High-Frequency Emergency and Rural Multimedia Exchange System) modem. Currently based
 on David Rowe's FreeDV modem, while support for other modems, as Mercury, will come next.
 
@@ -21,3 +23,16 @@ Options:
  -v                         Verbose mode. Prints more information during execution.
  -h                         Prints this help.
 ```
+
+## Compilation
+
+Edit config.mk with your C compiler and appropriate flags (defaults should be fine for most) and type:
+
+```
+make
+```
+
+## Authors
+
+- Rafael Diniz (Rhizomatica)
+- David Rowe
