@@ -39,10 +39,11 @@ else
     endif
 endif
 
+include config.mk
+
 .PHONY: all internal_deps clean
 
-CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 

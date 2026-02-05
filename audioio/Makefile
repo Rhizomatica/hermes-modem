@@ -19,8 +19,7 @@
 # Boston, MA 02110-1301, USA.
 #
 
-AR=ar
-CC=gcc
+include ../config.mk
 
 ifeq ($(OS),Windows_NT)
        OBJS += ffaudio/ffaudio/wasapi.o
@@ -40,7 +39,7 @@ else
 endif
 
 
-CFLAGS = -Wall -Wno-unused -O2 -g -I./ffbase/ -I./ffaudio/ -I../common -pthread
+CFLAGS = $(COMMON_CFLAGS) -Wno-unused -I./ffbase/ -I./ffaudio/ -I../common
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 

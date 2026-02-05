@@ -1,5 +1,6 @@
-CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../src
+include ../config.mk
+
+CFLAGS = $(COMMON_CFLAGS)
 
 all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o
 

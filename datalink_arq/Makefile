@@ -19,8 +19,9 @@
 # Boston, MA 02110-1301, USA.
 #
 
-CC = gcc
-CFLAGS = -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE -I../modem/freedv -I../modem -I../datalink_broadcast -I.. -I../audioio/ffaudio -I../common -I../data_interfaces
+include ../config.mk
+
+CFLAGS = $(COMMON_CFLAGS) -I../modem/freedv -I../modem -I../datalink_broadcast -I.. -I../audioio/ffaudio -I../common -I../data_interfaces
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 

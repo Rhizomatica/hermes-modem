@@ -1,5 +1,6 @@
-CFLAGS=-DGIT_HASH=\"hermes\" -D_GNU_SOURCE=1 -I. -Wall -Wno-strict-overflow -std=gnu11 -fPIC -g -O2
-CC=gcc
+include ../../config.mk
+
+CFLAGS = $(COMMON_CFLAGS) -DGIT_HASH=\"hermes\" -Wno-strict-overflow -fPIC -g -I.
 
 LIBNAME = libfreedvdata.a
 

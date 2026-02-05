@@ -1,6 +1,7 @@
 # Compiler and flags
-CC = gcc
-CFLAGS = -Wall -Wextra -O2
+include ../config.mk
+
+CFLAGS = $(COMMON_CFLAGS) -Wextra
 LDFLAGS = -pthread
 
 # Source and output files
