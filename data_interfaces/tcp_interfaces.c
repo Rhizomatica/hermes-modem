@@ -457,11 +457,15 @@ void *recv_thread(void *client_socket_ptr)
         {
             printf("Client disconnected.\n");
             break;
-        }
-        else if (received < 0)
+
+        int len = kiss_read(rx_byte, kiss_payload);
+
+        if (len > 0)
         {
-            perror("Error receiving TCP data");
-            break;
+            frame[0] = PACKET_TYPE_BROADCAST_DATA;
+            memcpy(&frame[1], kiss_payload, len);
+
+            write_buffer(data_tx_buffer_broadcast, frame, len + 1);
         }
     }
 
