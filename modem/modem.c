@@ -58,8 +58,13 @@ cbuf_handle_t data_rx_buffer_broadcast;
 
 pthread_t tx_thread_tid, rx_thread_tid;
 
+static generic_modem_t *global_modem = NULL;
+
 int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode)
 {
+    // store global pointer so others can query modem parameters
+    global_modem = g_modem;
+
 // connect to shared memory buffers
 try_shm_connect1:
     capture_buffer = circular_buf_connect_shm(SIGNAL_BUFFER_SIZE, SIGNAL_INPUT);
@@ -137,6 +142,11 @@ try_shm_connect2:
     pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
 
     return 0;
+}
+
+generic_modem_t *get_global_modem(void)
+{
+    return global_modem;
 }
 
 int run_tests_tx(generic_modem_t *g_modem)

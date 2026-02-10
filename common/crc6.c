@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include "crc6.h"
+#include <stddef.h>
 
 /**
  * Functions and types for CRC checks.
@@ -63,6 +64,13 @@ static const uint8_t crc6_table[256] = {
 uint16_t crc6_0X6F(uint16_t crc, const uint8_t *data, int data_len)
 {
     uint8_t tbl_idx;
+
+    /* Guard against invalid lengths or NULL data to avoid large/negative
+     * loop counts (which can lead to segmentation faults when callers
+     * pass frame sizes that are zero or uninitialized). Return the
+     * current crc value masked to 6 bits in that case. */
+    if (data_len <= 0 || data == NULL)
+        return crc & 0x3f;
 
     while (data_len--)
     {

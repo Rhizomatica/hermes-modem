@@ -39,6 +39,8 @@ typedef struct generic_modem {
 
 int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode);
 
+generic_modem_t *get_global_modem(void);
+
 int run_tests_tx(generic_modem_t *g_modem);
 
 int run_tests_rx(generic_modem_t *g_modem);

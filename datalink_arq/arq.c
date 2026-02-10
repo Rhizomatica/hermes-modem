@@ -27,6 +27,9 @@
 #include "net.h"
 #include "defines_modem.h"
 #include "tcp_interfaces.h"
+#include "../modem/modem.h"
+
+#define FIXED_FRAME_SIZE 512
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -223,13 +226,20 @@ void state_connecting_callee(int event)
 
 bool check_crc(uint8_t *data)
 {
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    int frame_size = FIXED_FRAME_SIZE;
 
-    uint16_t crc = (uint16_t) (data[0] & 0x3f);
-    uint16_t calculated_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    uint16_t rx_crc = data[0] & 0x3f;
+    uint16_t calc_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
 
-    if (crc == calculated_crc)
+    fprintf(stderr,
+        "[RX] frame_size=%d rx_crc=%u calc_crc=%u packet_type=%u\n",
+        frame_size,
+        rx_crc,
+        calc_crc,
+        (data[0] >> 6) & 0x3
+    );
+
+    if (rx_crc == calc_crc)
         return true;
 
     return false;
@@ -242,8 +252,7 @@ int check_for_incoming_connection(uint8_t *data)
     char dst_callsign[CALLSIGN_MAX_SIZE] = { 0 };
     char src_callsign[CALLSIGN_MAX_SIZE] = { 0 };
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    int frame_size = FIXED_FRAME_SIZE;
 
     uint8_t pack_type = (data[0] >> 6) & 0xff;
 
@@ -308,8 +317,7 @@ int check_for_connection_acceptance_caller(uint8_t *data)
 {
     char callsign[CALLSIGN_MAX_SIZE];
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    int frame_size = FIXED_FRAME_SIZE;
 
     uint8_t pack_type = (data[0] >> 6) & 0xff;
     
@@ -350,9 +358,9 @@ void callee_accept_connection()
     char callsign[CALLSIGN_MAX_SIZE];
     uint8_t encoded_callsign[CALLSIGN_MAX_SIZE];
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    int frame_size = FIXED_FRAME_SIZE;
 
+    /* REAL padding: zero-initialize entire frame before building */
     memset(data, 0, frame_size);
     // 1 byte header, 4 bits packet type, 6 bits crc
     data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
@@ -371,6 +379,11 @@ void callee_accept_connection()
 
     data[0] |= (uint8_t) crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
 
+    fprintf(stderr,
+        "[ARQ TX CALLEE] bytes being sent to modem = %d (payload = %d + header = 1)\n",
+        frame_size, frame_size - 1
+    );
+
     write_buffer(data_tx_buffer_arq, data, frame_size);
 
 }
@@ -381,11 +394,11 @@ void call_remote()
     char joint_callsigns[CALLSIGN_MAX_SIZE * 2];
     uint8_t encoded_callsigns[INT_BUFFER_SIZE];
 
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    int frame_size = FIXED_FRAME_SIZE;
 
     printf("Calling remote %s, frame_size: %d\n", arq_conn.dst_addr, frame_size);
     
+    /* REAL padding: zero-initialize entire frame before building */
     memset(data, 0, frame_size);
     // 1 byte header, 4 bits packet type, 6 bits crc
     data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
@@ -405,7 +418,18 @@ void call_remote()
     }
     memcpy(data + HEADER_SIZE, encoded_callsigns, enc_len);
 
-    data[0] |= (uint8_t) crc6_0X6F(1, (uint8_t *)data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    uint16_t tx_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    data[0] |= (uint8_t) tx_crc;
+
+    fprintf(stderr,
+        "[ARQ TX CALLER] TX-CRC6=0x%02x, payload_len=%d, frame_size=%d\n",
+        tx_crc, enc_len, frame_size
+    );
+
+    fprintf(stderr,
+        "[ARQ TX CALLER] bytes being sent to modem = %d (payload = %d + header = 1)\n",
+        frame_size, frame_size - 1
+    );
 
     write_buffer(data_tx_buffer_arq, data, frame_size);
     
@@ -461,8 +485,7 @@ void arq_shutdown()
 void *dsp_thread_tx(void *conn)
 {
     static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
-    // TODO: put the correct frame size here
-    int frame_size = 0;
+    int frame_size = FIXED_FRAME_SIZE;
     uint8_t data[INT_BUFFER_SIZE];
 
     // TODO: may be we need another function to queue the already prepared packets?
@@ -487,28 +510,28 @@ void *dsp_thread_tx(void *conn)
             msleep(50);
             continue;
         }
-        
+        printf("[ARQ TX] Full frame: ");
         for (int i = 0; i < frame_size; i++)
         {
             printf("%02x ", data[i]);
         }
+        printf("\n");
+        fflush(stdout);
 
-        
-        ptt_on();
         msleep(10); // TODO: tune me!
 
         // our connection request
         if (arq_fsm.current == state_connecting_caller || arq_fsm.current == state_connecting_callee)
         {
-            
-            // tx_transfer(...);
+            generic_modem_t *modem = get_global_modem();
+            send_modulated_data(modem, data, 1);
         }
 
         if (arq_fsm.current == state_link_connected)
         {
             // here we have the data to transmit, so we call the tx_transfer function
-
-            //tx_transfer();        }
+            generic_modem_t *modem = get_global_modem();
+            send_modulated_data(modem, data, 1);
         }
         
         // TODO: signal when stream is finished playing via pthread_cond_wait() here
@@ -520,7 +543,6 @@ void *dsp_thread_tx(void *conn)
         }
 
         msleep(40); // TODO: parametrize-me!
-        ptt_off();
 
         printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
         fflush(stdout);

@@ -270,12 +270,20 @@ void *control_worker_thread_rx(void *conn)
 
         if (n <= 0)
         {
+            // TODO: Correct behavior when n == 0
             count = 0;
             if (n < 0)
                 fprintf(stderr, "ERROR ctl socket reading\n");
             else
                 fprintf(stderr, "Control client disconnected\n");
             status_ctl = NET_RESTART;
+            continue;
+        }
+
+        if (count >= TCP_BLOCK_SIZE)
+        {
+            fprintf(stderr, "ERROR in command parsing, count = %d\n", count);
+            count = 0;
             continue;
         }
 
@@ -287,13 +295,6 @@ void *control_worker_thread_rx(void *conn)
 
         // we found the '\r'
         buffer[count] = 0;
-
-        if (count >= TCP_BLOCK_SIZE)
-        {
-            count = 0;
-            fprintf(stderr, "ERROR in command parsing\n");
-            continue;
-        }
 
         count = 0;
 #ifdef DEBUG
