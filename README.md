@@ -34,5 +34,5 @@ make
 
 ## Authors
 
-- Rafael Diniz (Rhizomatica)
-- David Rowe
+- Rafael Diniz (Rhizomatica, ARQ, Broadcast, TCP interface, etc)
+- David Rowe (FreeDV - physical layer)
