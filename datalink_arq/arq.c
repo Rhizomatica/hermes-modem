@@ -486,71 +486,10 @@ void arq_shutdown()
 
 void *dsp_thread_tx(void *conn)
 {
-    static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
-    int frame_size = FIXED_FRAME_SIZE;
-    uint8_t data[INT_BUFFER_SIZE];
-
-    // TODO: may be we need another function to queue the already prepared packets?
     while(!shutdown_)
     {
-        // should we add a header already here, to know the size of each package? (size need to match frame_size
-        if ((int) size_buffer(data_tx_buffer_arq) < frame_size ||
-            arq_fsm.current == state_idle ||
-            arq_fsm.current == state_no_connected_client)
-        {
-            msleep(50);
-            continue;
-        }
-
-            
-        if(arq_fsm.current != state_idle && arq_fsm.current != state_listen)
-        {
-            read_buffer(data_tx_buffer_arq, data, frame_size);
-        }
-        else
-        {
-            msleep(50);
-            continue;
-        }
-        printf("[ARQ TX] Full frame: ");
-        for (int i = 0; i < frame_size; i++)
-        {
-            printf("%02x ", data[i]);
-        }
-        printf("\n");
-        fflush(stdout);
-
-        msleep(10); // TODO: tune me!
-
-        // our connection request
-        if (arq_fsm.current == state_connecting_caller || arq_fsm.current == state_connecting_callee)
-        {
-            generic_modem_t *modem = get_global_modem();
-            send_modulated_data(modem, data, 1);
-        }
-
-        if (arq_fsm.current == state_link_connected)
-        {
-            // here we have the data to transmit, so we call the tx_transfer function
-            generic_modem_t *modem = get_global_modem();
-            send_modulated_data(modem, data, 1);
-        }
-        
-        // TODO: signal when stream is finished playing via pthread_cond_wait() here
-        while (size_buffer(playback_buffer) != 0)
-        {
-            printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
-            fflush(stdout);
-            msleep(10);
-        }
-
-        msleep(40); // TODO: parametrize-me!
-
-        printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
-        fflush(stdout);
-
+        msleep(100);
     }
-    
     return NULL;
 }
 
