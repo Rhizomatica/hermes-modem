@@ -117,6 +117,8 @@ try_shm_connect2:
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
+    // TODO: Introduce global verbosity, currently hardcoded
+    // TODO: Correct mapping to freedv_mode_names, mode 10 should be DATAC1, currently mode 10 mapped to EV_START_LISTEN
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);
     printf("Modem expects sample rate: %d Hz\n", modem_sample_rate);
     printf("Modem payload bytes per frame: %zu\n", payload_bytes_per_modem_frame);
