@@ -229,7 +229,7 @@ bool check_crc(uint8_t *data)
     int frame_size = FIXED_FRAME_SIZE;
 
     uint16_t rx_crc = data[0] & 0x3f;
-    uint16_t calc_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    uint16_t calc_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE - 2);
 
     fprintf(stderr,
         "[RX] frame_size=%d rx_crc=%u calc_crc=%u packet_type=%u\n",
@@ -377,7 +377,7 @@ void callee_accept_connection()
 
     memcpy(data + HEADER_SIZE, encoded_callsign, enc_len);
 
-    data[0] |= (uint8_t) crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    data[0] |= (uint8_t) crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE - 2);
 
     fprintf(stderr,
         "[ARQ TX CALLEE] bytes being sent to modem = %d (payload = %d + header = 1)\n",
@@ -400,8 +400,6 @@ void call_remote()
     
     /* REAL padding: zero-initialize entire frame before building */
     memset(data, 0, frame_size);
-    // 1 byte header, 4 bits packet type, 6 bits crc
-    data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
 
     // encode the destination callsign first, then the source, separated by "|"
     sprintf(joint_callsigns,"%s|%s", arq_conn.dst_addr, arq_conn.src_addr);
@@ -418,7 +416,11 @@ void call_remote()
     }
     memcpy(data + HEADER_SIZE, encoded_callsigns, enc_len);
 
-    uint16_t tx_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    data[0] = (PACKET_ARQ_DATA << 6) & 0xff;
+    // CRC6 is computed over the payload excluding the final 2 bytes reserved for CRC16.
+    data[0] |= crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE - 2);
+
+    uint16_t tx_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE - 2);
     data[0] |= (uint8_t) tx_crc;
 
     fprintf(stderr,
@@ -428,7 +430,7 @@ void call_remote()
 
     fprintf(stderr,
         "[ARQ TX CALLER] bytes being sent to modem = %d (payload = %d + header = 1)\n",
-        frame_size, frame_size - 1
+        frame_size, frame_size - HEADER_SIZE
     );
 
     write_buffer(data_tx_buffer_arq, data, frame_size);
