@@ -1376,7 +1376,7 @@ static int ofdm_sync_search_burst(struct OFDM *ofdm) {
   ofdm->timing_mx = timing_mx;
   ofdm->timing_valid = timing_valid;
 
-  if (ofdm->verbose > 1) {
+  if (ofdm->verbose > 2) {
     fprintf(stderr,
             "  ct_est: %4d nin: %4d mx: %3.2f foff_est: % 5.1f timing_valid: "
             "%d %4s\n",
@@ -1433,7 +1433,7 @@ static int ofdm_sync_search_stream(struct OFDM *ofdm) {
 
   PROFILE_SAMPLE_AND_LOG2(freq_start, "  freq");
 
-  if (ofdm->verbose > 1) {
+  if (ofdm->verbose > 2) {
     fprintf(
         stderr,
         "    ct_est: %4d foff_est: %4.1f timing_valid: %d timing_mx: %5.4f\n",
