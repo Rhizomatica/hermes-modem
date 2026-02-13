@@ -1,26 +1,29 @@
 # Compiler and flags
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -Wextra
+CFLAGS = $(COMMON_CFLAGS) -Wextra -I../common
 LDFLAGS = -pthread
 
-# Source and output files
-SRC = broadcast_test.c kiss.c
-OUT = broadcast_test
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx
 
 # Default target
 all: $(OUT)
 
-# Build the executable
-$(OUT): $(SRC)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT) $(SRC)
+broadcast_test: broadcast_test.c kiss.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+
+broadcast_diag_tx: broadcast_diag_tx.c kiss.c ../common/crc6.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+
+broadcast_diag_rx: broadcast_diag_rx.c kiss.c ../common/crc6.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
 # Clean up build artifacts
 clean:
 	rm -f $(OUT)
 
 # Run the program
-run: $(OUT)
-	./$(OUT) 127.0.0.1 8300
+run: broadcast_test
+	./broadcast_test 127.0.0.1 8300
 
 .PHONY: all clean run
