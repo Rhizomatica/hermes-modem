@@ -43,6 +43,8 @@
 #include "kiss.h"
 
 static pthread_t tid[7];
+static int arq_tcp_base_port_cfg = 0;
+static int broadcast_tcp_port_cfg = 0;
 
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_rx_buffer_arq;
@@ -193,6 +195,12 @@ void *data_worker_thread_rx(void *conn)
         }
 
         int n = tcp_read(DATA_TCP_PORT, buffer, TCP_BLOCK_SIZE);
+        if (n <= 0)
+        {
+            if (n == 0)
+                status_data = NET_RESTART;
+            continue;
+        }
 
         write_buffer(data_tx_buffer_arq, buffer, n);
     }
@@ -448,6 +456,7 @@ void *tcp_server_thread(void *port_ptr)
 {
     int tcp_port = *((int *)port_ptr);
     int tcp_socket, client_socket;
+    int opt = 1;
     struct sockaddr_in local_addr, client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
 
@@ -456,6 +465,13 @@ void *tcp_server_thread(void *port_ptr)
     if (tcp_socket < 0)
     {
         perror("Failed to create TCP socket");
+        return NULL;
+    }
+
+    if (setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    {
+        perror("Failed to set SO_REUSEADDR on broadcast TCP socket");
+        close(tcp_socket);
         return NULL;
     }
 
@@ -565,6 +581,8 @@ void tnc_send_disconnected()
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
 {
+    arq_tcp_base_port_cfg = arq_tcp_base_port;
+    broadcast_tcp_port_cfg = broadcast_tcp_port;
 
     /*************** ARQ TCP ports *******************/
     status_ctl = NET_NONE;
@@ -572,8 +590,8 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
 
     // here is the thread that runs the accept(), each per port, and mantains the
     // state of the connection
-    pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &arq_tcp_base_port);
-    pthread_create(&tid[1], NULL, server_worker_thread_data, (void *) &arq_tcp_base_port);
+    pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &arq_tcp_base_port_cfg);
+    pthread_create(&tid[1], NULL, server_worker_thread_data, (void *) &arq_tcp_base_port_cfg);
     
     // control channel threads
     pthread_create(&tid[2], NULL, control_worker_thread_rx, (void *) NULL);
@@ -586,7 +604,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
 
     /*************** BROADCAST TCP ports **************/
     // Create TCP BROADCAST server thread
-    pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port);
+    pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port_cfg);
 
     
     return EXIT_SUCCESS;
