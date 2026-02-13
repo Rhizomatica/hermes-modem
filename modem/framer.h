@@ -29,6 +29,7 @@
 #define PACKET_TYPE_BROADCAST_DATA 0x03
 
 #define HEADER_SIZE 1 // Size of the Hermes header
+#define BROADCAST_CONFIG_PACKET_SIZE 9 // hermes-broadcast RaptorQ config packet
 
 // Parse the frame header, validate CRC
 // Returns packet type or negative if CRC error

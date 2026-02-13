@@ -33,8 +33,15 @@ int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size)
 
     uint16_t crc6_local = data_frame[0] & 0x3f;
     uint16_t crc6_calc = 0;
+    uint32_t crc_len = frame_size - HEADER_SIZE;
 
-    crc6_calc = crc6_0X6F(1, data_frame + HEADER_SIZE, frame_size - HEADER_SIZE);
+    if (packet_type == PACKET_TYPE_BROADCAST_CONTROL &&
+        frame_size >= BROADCAST_CONFIG_PACKET_SIZE)
+    {
+        crc_len = BROADCAST_CONFIG_PACKET_SIZE - HEADER_SIZE;
+    }
+
+    crc6_calc = crc6_0X6F(1, data_frame + HEADER_SIZE, crc_len);
 
     if (crc6_local != crc6_calc)
     {
@@ -49,8 +56,14 @@ int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size)
 // for the header in the beginning of the buffer
 void write_frame_header(uint8_t *data, int packet_type, size_t frame_size)
 {
+    size_t crc_len = frame_size - HEADER_SIZE;
+    if (packet_type == PACKET_TYPE_BROADCAST_CONTROL &&
+        frame_size >= BROADCAST_CONFIG_PACKET_SIZE)
+    {
+        crc_len = BROADCAST_CONFIG_PACKET_SIZE - HEADER_SIZE;
+    }
+
     // set payload packet type
     data[0] = (packet_type << 6) & 0xff;
-    data[0] |= crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    data[0] |= crc6_0X6F(1, data + HEADER_SIZE, crc_len);
 }
-
