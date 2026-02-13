@@ -39,6 +39,8 @@
 #include "arq.h"
 #include "fsm.h"
 #include "defines_modem.h"
+#include "modem.h"
+#include "kiss.h"
 
 static pthread_t tid[7];
 
@@ -55,6 +57,23 @@ extern fsm_handle arq_fsm;
 
 // For now, we turn on verbosity for debugging purposes
 #define DEBUG
+
+static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
+{
+    size_t total_sent = 0;
+
+    while (total_sent < len)
+    {
+        ssize_t sent = send(socket_fd, buffer + total_sent, len - total_sent, 0);
+        if (sent <= 0)
+        {
+            return -1;
+        }
+        total_sent += (size_t)sent;
+    }
+
+    return (ssize_t)total_sent;
+}
 
 /********** ARQ TCP ports INTERFACES **********/
 void *server_worker_thread_ctl(void *port)
@@ -328,44 +347,57 @@ void *control_worker_thread_rx(void *conn)
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
+    size_t frame_size = modem_get_payload_bytes_per_frame();
+    uint8_t *frame_buffer = NULL;
+    uint8_t *kiss_buffer = NULL;
 
-    if (!buffer)
+    if (frame_size == 0 || frame_size > MAX_PAYLOAD)
+    {
+        fprintf(stderr, "Invalid broadcast frame size: %zu\n", frame_size);
+        return NULL;
+    }
+
+    frame_buffer = (uint8_t *)malloc(frame_size);
+    kiss_buffer = (uint8_t *)malloc((frame_size * 2) + 3);
+
+    if (!frame_buffer || !kiss_buffer)
     {
         fprintf(stderr, "Failed to allocate memory for send buffer.\n");
+        free(frame_buffer);
+        free(kiss_buffer);
         return NULL;
     }
 
     while (!shutdown_)
     {
-        size_t n = read_buffer_all(data_rx_buffer_broadcast, buffer);
-        if (n > 0)
+        if (read_buffer(data_rx_buffer_broadcast, frame_buffer, frame_size) < 0)
+            break;
+
+        int kiss_len = kiss_write_frame(frame_buffer, (int)frame_size, kiss_buffer);
+        if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
-            ssize_t sent = send(client_socket, buffer, n, 0);
-            if (sent < 0)
-            {
-                perror("Error sending TCP data");
-                break;
-            }
-            if (sent < n)
-            {
-                fprintf(stderr, "Partial send: sent %zd bytes out of %zu\n", sent, n);
-            }
-            else
-            {
-                printf("Sent %zu bytes to client.\n", n);
-            }
+            perror("Error sending KISS broadcast frame");
+            break;
         }
     }
 
-    free(buffer);
+    free(frame_buffer);
+    free(kiss_buffer);
     return NULL;
 }
 
 void *recv_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
+    size_t frame_size = modem_get_payload_bytes_per_frame();
     uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
+    uint8_t decoded_frame[MAX_PAYLOAD];
+
+    if (frame_size == 0 || frame_size > MAX_PAYLOAD)
+    {
+        fprintf(stderr, "Invalid broadcast frame size: %zu\n", frame_size);
+        return NULL;
+    }
 
     if (!buffer)
     {
@@ -378,7 +410,21 @@ void *recv_thread(void *client_socket_ptr)
         ssize_t received = recv(client_socket, buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
         {
-            write_buffer(data_tx_buffer_broadcast, buffer, received);
+            for (ssize_t i = 0; i < received; i++)
+            {
+                int frame_len = kiss_read(buffer[i], decoded_frame);
+                if (frame_len <= 0)
+                    continue;
+
+                if ((size_t)frame_len != frame_size)
+                {
+                    fprintf(stderr, "Discarding broadcast frame with unexpected size %d (expected %zu)\n",
+                            frame_len, frame_size);
+                    continue;
+                }
+
+                write_buffer(data_tx_buffer_broadcast, decoded_frame, frame_size);
+            }
         }
         else if (received == 0)
         {
@@ -455,6 +501,7 @@ void *tcp_server_thread(void *port_ptr)
 
         // Wait for threads to finish
         pthread_join(recv_tid, NULL);
+        pthread_cancel(send_tid);
         pthread_join(send_tid, NULL);
 
         close(client_socket);

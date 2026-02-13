@@ -22,6 +22,7 @@
 #ifndef MODEM_H
 #define MODEM_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -31,6 +32,8 @@
 
 typedef struct generic_modem {
     struct freedv *freedv;
+    int mode;
+    size_t payload_bytes_per_modem_frame;
     void *future_extension; // Placeholder for future extensions
 } generic_modem_t;
 
@@ -41,6 +44,8 @@ int run_tests_tx(generic_modem_t *g_modem);
 int run_tests_rx(generic_modem_t *g_modem);
 
 int shutdown_modem(generic_modem_t *g_modem);
+
+size_t modem_get_payload_bytes_per_frame(void);
 
 // always send the frame size in bytes_in
 int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst);
