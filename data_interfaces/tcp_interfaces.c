@@ -253,12 +253,22 @@ void *control_worker_thread_rx(void *conn)
             continue;
         }
 
-        int n = tcp_read(CTL_TCP_PORT, (uint8_t *)buffer + count, 1);
-
-        if (n < 0)
+        if (count >= TCP_BLOCK_SIZE)
         {
             count = 0;
-            fprintf(stderr, "ERROR ctl socket reading\n");            
+            fprintf(stderr, "ERROR in command parsing: line too long\n");
+            continue;
+        }
+
+        int n = tcp_read(CTL_TCP_PORT, (uint8_t *)buffer + count, 1);
+
+        if (n <= 0)
+        {
+            count = 0;
+            if (n < 0)
+                fprintf(stderr, "ERROR ctl socket reading\n");
+            else
+                fprintf(stderr, "Control client disconnected\n");
             status_ctl = NET_RESTART;
             continue;
         }
