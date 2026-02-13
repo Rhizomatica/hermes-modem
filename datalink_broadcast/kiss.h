@@ -20,6 +20,20 @@ extern "C" {
 #define TFEND 0xDC
 #define TFESC 0xDD
 
+
+
+//                 VARA KISS Frame types
+
+//    192  0  |... AX25 Frame (standard)          ...... |  192    
+//    192  1  |... AX25 Frame (7 chrs Call Signs) ... |  192        
+//    192  2  |... Unformatted frame              ........ |  192
+
+
+// If you send callsigns origin and destination in the frames it's better to use KISS Type 1
+// and follow the AX25 structure instead of KISS Type2, as the frame is specially compressed
+// and the final size it is greater than unformatted KISS.       by Ros <-
+
+
 #define CMD_UNKNOWN 0xFE
 #define CMD_AX25 0x00 //  AX25 Frame (standard) in VARA
 #define CMD_AX25CALLSIGN 0x01 // AX25 Frame (7 chrs Call Signs) in VARA
