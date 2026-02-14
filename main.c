@@ -61,6 +61,27 @@ char *freedv_mode_names[] = { "DATAC1",
 
 bool shutdown_ = false; // global shutdown flag
 
+static void print_usage(const char *prog)
+{
+    printf("Usage modes: \n");
+    printf("%s -s [modulation_config] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", prog);
+    printf("%s [-h -l -z]\n", prog);
+    printf("\nOptions:\n");
+    printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
+    printf(" -s [modulation_config]     Sets modulation configuration for broadcasting. Modes: 0 to 6. Use \"-l\" for listing all available modulations. Default is 0 (DATAC1)\n");
+    printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
+    printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
+    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
+    printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
+    printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
+    printf(" -l                         Lists all modulator/coding modes.\n");
+    printf(" -z                         Lists all available sound cards.\n");
+    printf(" -v                         Verbose mode. Prints more information during execution.\n");
+    printf(" -t                         Test TX mode.\n");
+    printf(" -r                         Test RX mode.\n");
+    printf(" -h                         Prints this help.\n");
+}
+
 int main(int argc, char *argv[])
 {
 #if defined(__linux__)
@@ -83,29 +104,6 @@ int main(int argc, char *argv[])
     output_dev[0] = 0;
 
     int test_mode = 0;
-    
-    if (argc < 2)
-    {
- manual:
-        printf("Usage modes: \n");
-        printf("%s -s [modulation_config] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", argv[0]);
-        printf("%s [-h -l -z]\n", argv[0]);
-        printf("\nOptions:\n");
-        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Use -1 to disable CPU selection, which is the default.\n");
-        printf(" -s [modulation_config]     Sets modulation configuration for broadcasting. Modes: 0 to 6. Use \"-l\" for listing all available modulations. Default is 0 (DATAC1)\n");
-        printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
-        printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-        printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
-        printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
-        printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
-        printf(" -l                         Lists all modulator/coding modes.\n");
-        printf(" -z                         Lists all available sound cards.\n");
-        printf(" -v                         Verbose mode. Prints more information during execution.\n");
-        printf(" -t                         Test TX mode.\n");
-        printf(" -r                         Test RX mode.\n");
-        printf(" -h                         Prints this help.\n");
-        return EXIT_FAILURE;
-    }
 
 
     int opt;
@@ -172,9 +170,11 @@ int main(int argc, char *argv[])
             verbose = 1;
             break;
         case 'h':
-
+            print_usage(argv[0]);
+            return EXIT_SUCCESS;
         default:
-            goto manual;
+            print_usage(argv[0]);
+            return EXIT_FAILURE;
         }
     }
     
@@ -343,11 +343,10 @@ int main(int argc, char *argv[])
     
     arq_init();
 
-    // we block here
     broadcast_run(&g_modem);
 
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
-    interfaces_init(base_tcp_port, broadcast_port);
+    interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame);
 
 
     // we block somewhere here until shutdown

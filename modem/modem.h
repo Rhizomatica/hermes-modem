@@ -22,6 +22,7 @@
 #ifndef MODEM_H
 #define MODEM_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -31,6 +32,8 @@
 
 typedef struct generic_modem {
     struct freedv *freedv;
+    int mode;
+    size_t payload_bytes_per_modem_frame;
     void *future_extension; // Placeholder for future extensions
 } generic_modem_t;
 

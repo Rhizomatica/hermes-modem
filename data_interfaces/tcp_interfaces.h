@@ -21,12 +21,14 @@
 #ifndef TCP_INTERFACES_H_
 #define TCP_INTERFACES_H_
 
+#include <stddef.h>
+
 #define DEFAULT_ARQ_PORT 8300
 #define DEFAULT_BROADCAST_PORT 8100
 
 #define TCP_BLOCK_SIZE 128
 
-int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port);
+int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size);
 void interfaces_shutdown();
 
 // ARQ TCP/IP server threads

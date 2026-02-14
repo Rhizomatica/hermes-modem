@@ -105,10 +105,16 @@ try_shm_connect2:
     freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
     freedv_set_verbose(g_modem->freedv, 3);
+
+    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
+    g_modem->mode = mode;
+    g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);
     printf("Modem expects sample rate: %d Hz\n", modem_sample_rate);
+    printf("Modem payload bytes per frame: %zu\n", payload_bytes_per_modem_frame);
     
     if (modem_sample_rate != 8000)
     {
@@ -446,8 +452,9 @@ void *tx_thread(void *g_modem)
 {
     struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
+    size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
     int frames_per_burst = freedv_get_frames_per_burst(freedv);
-    uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame * frames_per_burst);
+    uint8_t *data = (uint8_t *)malloc(payload_bytes_per_modem_frame * frames_per_burst);
 
     if (!data)
     {
@@ -457,26 +464,26 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        if (size_buffer(data_tx_buffer_arq) >= bytes_per_modem_frame * frames_per_burst)
+        if (size_buffer(data_tx_buffer_arq) >= payload_bytes_per_modem_frame * frames_per_burst)
         {
             for (int i = 0; i < frames_per_burst; i++)
             {
-                read_buffer(data_tx_buffer_arq, data + (bytes_per_modem_frame * i), bytes_per_modem_frame);
+                read_buffer(data_tx_buffer_arq, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
             send_modulated_data(g_modem, data, frames_per_burst);
         }
 
-        if (size_buffer(data_tx_buffer_broadcast) >= bytes_per_modem_frame * frames_per_burst)
+        if (size_buffer(data_tx_buffer_broadcast) >= payload_bytes_per_modem_frame * frames_per_burst)
         {
             for (int i = 0; i < frames_per_burst; i++)
             {
-                read_buffer(data_tx_buffer_broadcast, data + (bytes_per_modem_frame * i), bytes_per_modem_frame);
+                read_buffer(data_tx_buffer_broadcast, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
             send_modulated_data(g_modem, data, frames_per_burst);
         }
 
-        if (size_buffer(data_tx_buffer_arq) < bytes_per_modem_frame * frames_per_burst &&
-            size_buffer(data_tx_buffer_broadcast) < bytes_per_modem_frame * frames_per_burst)
+        if (size_buffer(data_tx_buffer_arq) < payload_bytes_per_modem_frame * frames_per_burst &&
+            size_buffer(data_tx_buffer_broadcast) < payload_bytes_per_modem_frame * frames_per_burst)
         {
             usleep(100000); // sleep for 100ms if there is no data to send
         }
@@ -507,24 +514,28 @@ void *rx_thread(void *g_modem)
         receive_modulated_data(g_modem, data, &nbytes_out);
         if (nbytes_out > 0)
         {
-            int frame_type = parse_frame_header(data, nbytes_out);
+            size_t payload_nbytes = (nbytes_out >= 2) ? nbytes_out - 2 : 0;
+            if (payload_nbytes == 0)
+                continue;
+
+            int frame_type = parse_frame_header(data, payload_nbytes);
 
             switch (frame_type)
             {
             case PACKET_TYPE_ARQ_CONTROL:
             case PACKET_TYPE_ARQ_DATA:
-                write_buffer(data_rx_buffer_arq, data, nbytes_out);
+                write_buffer(data_rx_buffer_arq, data, payload_nbytes);
                 break;
             case PACKET_TYPE_BROADCAST_CONTROL:
             case PACKET_TYPE_BROADCAST_DATA:
-                write_buffer(data_rx_buffer_broadcast, data, nbytes_out);
+                write_buffer(data_rx_buffer_broadcast, data, payload_nbytes);
                 break;
             default:
                 printf("Unknown frame type received.\n");
                 break;
             }
             
-            printf("Received %zu bytes of data, packet type %d, bytes_per_modem_frame: %zu\n", nbytes_out, frame_type, bytes_per_modem_frame);
+            printf("Received %zu payload bytes, packet type %d, bytes_per_modem_frame: %zu\n", payload_nbytes, frame_type, bytes_per_modem_frame);
         }
     }
 
