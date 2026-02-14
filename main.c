@@ -67,7 +67,7 @@ static void print_usage(const char *prog)
     printf("%s -s [modulation_config] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
-    printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Use -1 to disable CPU selection, which is the default.\n");
+    printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
     printf(" -s [modulation_config]     Sets modulation configuration for broadcasting. Modes: 0 to 6. Use \"-l\" for listing all available modulations. Default is 0 (DATAC1)\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
