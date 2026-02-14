@@ -48,6 +48,12 @@ typedef enum {
     ARQ_ROLE_CALLEE = 2
 } arq_role_t;
 
+typedef enum {
+    ARQ_TURN_NONE = 0,
+    ARQ_TURN_ISS = 1,
+    ARQ_TURN_IRS = 2
+} arq_turn_t;
+
 typedef struct {
     bool initialized;
     arq_role_t role;
@@ -110,6 +116,17 @@ typedef struct {
     bool payload_start_pending;
     int payload_mode;
     int control_mode;
+    arq_turn_t turn_role;
+    bool peer_backlog_nonzero;
+    bool pending_flow_hint;
+    bool flow_hint_value;
+    int last_flow_hint_sent;
+    bool pending_turn_req;
+    bool turn_req_in_flight;
+    int turn_req_retries_left;
+    time_t turn_req_deadline;
+    bool pending_turn_ack;
+    bool turn_promote_after_ack;
     bool pending_mode_req;
     bool pending_mode_ack;
     uint8_t pending_mode;
@@ -132,7 +149,10 @@ enum {
     ARQ_SUBTYPE_KEEPALIVE = 6,
     ARQ_SUBTYPE_KEEPALIVE_ACK = 7,
     ARQ_SUBTYPE_MODE_REQ = 8,
-    ARQ_SUBTYPE_MODE_ACK = 9
+    ARQ_SUBTYPE_MODE_ACK = 9,
+    ARQ_SUBTYPE_TURN_REQ = 10,
+    ARQ_SUBTYPE_TURN_ACK = 11,
+    ARQ_SUBTYPE_FLOW_HINT = 12
 };
 
 #define ARQ_PROTO_VERSION 2
@@ -165,6 +185,7 @@ enum {
 #define ARQ_KEEPALIVE_INTERVAL_S 10
 #define ARQ_KEEPALIVE_MISS_LIMIT 5
 #define ARQ_SNR_HYST_DB 1.0f
+#define ARQ_TURN_REQ_RETRIES 2
 #define ARQ_MODE_REQ_RETRIES 2
 #define ARQ_MODE_SWITCH_HYST_COUNT 3
 #define ARQ_BACKLOG_MIN_DATAC3 120
@@ -175,6 +196,9 @@ static void state_idle(int event);
 static void state_listen(int event);
 static void state_calling_wait_accept(int event);
 static void state_connected(int event);
+static void state_connected_iss(int event);
+static void state_connected_irs(int event);
+static void state_turn_negotiating(int event);
 static void state_disconnecting(int event);
 
 static inline void arq_lock(void)
@@ -206,6 +230,14 @@ static inline bool connect_meta_is_accept(uint8_t meta)
 static fsm_state idle_or_listen_state_locked(void)
 {
     return arq_conn.listen ? state_listen : state_idle;
+}
+
+static bool is_connected_state_locked(void)
+{
+    return arq_fsm.current == state_connected ||
+           arq_fsm.current == state_connected_iss ||
+           arq_fsm.current == state_connected_irs ||
+           arq_fsm.current == state_turn_negotiating;
 }
 
 static int mode_slot_len_s(int mode)
@@ -246,6 +278,39 @@ static const char *mode_name(int mode)
     default:
         return "OTHER";
     }
+}
+
+static void update_connected_state_from_turn_locked(void)
+{
+    if (arq_fsm.current == state_disconnecting)
+        return;
+
+    if (arq_ctx.turn_role == ARQ_TURN_ISS)
+        arq_fsm.current = state_connected_iss;
+    else
+        arq_fsm.current = state_connected_irs;
+}
+
+static void become_iss_locked(const char *reason)
+{
+    arq_ctx.turn_role = ARQ_TURN_ISS;
+    arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
+    arq_ctx.payload_start_pending = true;
+    arq_ctx.mode_req_in_flight = false;
+    arq_ctx.pending_mode_req = false;
+    arq_ctx.pending_mode_ack = false;
+    update_connected_state_from_turn_locked();
+    fprintf(stderr, "ARQ turn -> ISS (%s)\n", reason ? reason : "role change");
+}
+
+static void become_irs_locked(const char *reason)
+{
+    arq_ctx.turn_role = ARQ_TURN_IRS;
+    arq_ctx.waiting_ack = false;
+    arq_ctx.outstanding_frame_len = 0;
+    arq_ctx.outstanding_app_len = 0;
+    update_connected_state_from_turn_locked();
+    fprintf(stderr, "ARQ turn -> IRS (%s)\n", reason ? reason : "role change");
 }
 
 static int payload_mode_from_snr(float snr)
@@ -327,7 +392,9 @@ static void update_payload_mode_locked(void)
         return;
     if (arq_ctx.mode_req_in_flight || arq_ctx.pending_mode_req || arq_ctx.pending_mode_ack)
         return;
-    if (arq_fsm.current != state_connected)
+    if (!is_connected_state_locked())
+        return;
+    if (arq_ctx.turn_role != ARQ_TURN_ISS)
         return;
     if (!is_payload_mode(arq_ctx.payload_mode))
         return;
@@ -356,6 +423,18 @@ static void update_payload_mode_locked(void)
     arq_ctx.mode_candidate_hits = 0;
     fprintf(stderr, "ARQ mode req -> %s (snr=%.1f backlog=%zu)\n",
             mode_name(desired), arq_ctx.snr_ema, arq_ctx.app_tx_len);
+}
+
+static void schedule_flow_hint_locked(void)
+{
+    bool backlog_nonzero = arq_ctx.app_tx_len > 0;
+
+    if (arq_ctx.last_flow_hint_sent >= 0 &&
+        ((arq_ctx.last_flow_hint_sent != 0) == backlog_nonzero))
+        return;
+
+    arq_ctx.pending_flow_hint = true;
+    arq_ctx.flow_hint_value = backlog_nonzero;
 }
 
 static int max_gear_for_frame_size(size_t frame_size)
@@ -719,6 +798,30 @@ static int send_mode_change_locked(uint8_t subtype, uint8_t mode)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+static int send_turn_control_locked(uint8_t subtype, uint8_t value)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    uint8_t payload[1];
+    size_t frame_size = control_frame_size_locked();
+
+    if (subtype != ARQ_SUBTYPE_TURN_REQ &&
+        subtype != ARQ_SUBTYPE_TURN_ACK &&
+        subtype != ARQ_SUBTYPE_FLOW_HINT)
+        return -1;
+
+    payload[0] = value;
+    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL,
+                           subtype,
+                           0,
+                           0,
+                           payload,
+                           1,
+                           frame,
+                           frame_size) < 0)
+        return -1;
+    return queue_frame_locked(frame, frame_size, true);
+}
+
 static void reset_runtime_locked(bool clear_peer_addresses)
 {
     clear_buffer(data_tx_buffer_arq);
@@ -767,6 +870,17 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.payload_start_pending = false;
     arq_ctx.payload_mode = 0;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
+    arq_ctx.turn_role = ARQ_TURN_NONE;
+    arq_ctx.peer_backlog_nonzero = (arq_ctx.role == ARQ_ROLE_CALLEE);
+    arq_ctx.pending_flow_hint = false;
+    arq_ctx.flow_hint_value = false;
+    arq_ctx.last_flow_hint_sent = -1;
+    arq_ctx.pending_turn_req = false;
+    arq_ctx.turn_req_in_flight = false;
+    arq_ctx.turn_req_retries_left = 0;
+    arq_ctx.turn_req_deadline = 0;
+    arq_ctx.pending_turn_ack = false;
+    arq_ctx.turn_promote_after_ack = false;
     arq_ctx.pending_mode_req = false;
     arq_ctx.pending_mode_ack = false;
     arq_ctx.pending_mode = 0;
@@ -849,8 +963,20 @@ static void enter_connected_locked(void)
     arq_ctx.mode_req_deadline = 0;
     arq_ctx.mode_candidate_mode = 0;
     arq_ctx.mode_candidate_hits = 0;
+    arq_ctx.pending_turn_req = false;
+    arq_ctx.turn_req_in_flight = false;
+    arq_ctx.turn_req_retries_left = 0;
+    arq_ctx.turn_req_deadline = 0;
+    arq_ctx.pending_turn_ack = false;
+    arq_ctx.turn_promote_after_ack = false;
+    arq_ctx.pending_flow_hint = false;
+    arq_ctx.last_flow_hint_sent = -1;
+    arq_ctx.peer_backlog_nonzero = false;
+    arq_ctx.turn_role = (arq_ctx.role == ARQ_ROLE_CALLER) ? ARQ_TURN_ISS : ARQ_TURN_IRS;
     arq_ctx.gear = initial_gear_locked();
-    arq_fsm.current = state_connected;
+    update_connected_state_from_turn_locked();
+    if (arq_ctx.turn_role == ARQ_TURN_ISS)
+        schedule_flow_hint_locked();
     tnc_send_connected();
 }
 
@@ -868,6 +994,7 @@ static void start_outgoing_call_locked(void)
     arq_ctx.outstanding_app_len = 0;
     arq_ctx.call_retries_left = arq_ctx.max_call_retries + 1;
     arq_ctx.pending_call = true;
+    arq_ctx.turn_role = ARQ_TURN_NONE;
     arq_ctx.pending_accept = false;
     arq_ctx.pending_ack = false;
     arq_ctx.pending_disconnect = false;
@@ -892,7 +1019,9 @@ static void queue_next_data_frame_locked(void)
     uint8_t frame[INT_BUFFER_SIZE];
     size_t chunk;
 
-    if (arq_fsm.current != state_connected)
+    if (!is_connected_state_locked())
+        return;
+    if (arq_ctx.turn_role != ARQ_TURN_ISS)
         return;
     if (arq_ctx.waiting_ack)
         return;
@@ -978,7 +1107,7 @@ static bool do_slot_tx_locked(time_t now)
         send_accept_locked();
         arq_ctx.pending_accept = false;
         arq_ctx.accept_retries_left = 0;
-        if (arq_fsm.current != state_connected)
+        if (!is_connected_state_locked())
             enter_connected_locked();
         schedule_next_tx_locked(now, false);
         return true;
@@ -1002,17 +1131,74 @@ static bool do_slot_tx_locked(time_t now)
         return true;
     }
 
+    if (arq_ctx.pending_flow_hint)
+    {
+        if (send_turn_control_locked(ARQ_SUBTYPE_FLOW_HINT, arq_ctx.flow_hint_value ? 1 : 0) == 0)
+        {
+            arq_ctx.last_flow_hint_sent = arq_ctx.flow_hint_value ? 1 : 0;
+            arq_ctx.pending_flow_hint = false;
+            schedule_next_tx_locked(now, false);
+            return true;
+        }
+    }
+
+    if (arq_ctx.pending_turn_ack)
+    {
+        uint8_t has_data = arq_ctx.app_tx_len > 0 ? 1 : 0;
+        if (send_turn_control_locked(ARQ_SUBTYPE_TURN_ACK, has_data) == 0)
+        {
+            arq_ctx.pending_turn_ack = false;
+            if (arq_ctx.turn_promote_after_ack && has_data)
+                become_iss_locked("turn ack");
+            arq_ctx.turn_promote_after_ack = false;
+            update_connected_state_from_turn_locked();
+            schedule_next_tx_locked(now, false);
+            return true;
+        }
+    }
+
+    if (arq_ctx.pending_turn_req && !arq_ctx.turn_req_in_flight)
+    {
+        if (send_turn_control_locked(ARQ_SUBTYPE_TURN_REQ, 1) == 0)
+        {
+            arq_ctx.pending_turn_req = false;
+            arq_ctx.turn_req_in_flight = true;
+            arq_ctx.turn_req_retries_left = ARQ_TURN_REQ_RETRIES;
+            arq_ctx.turn_req_deadline = now + arq_ctx.ack_timeout_s;
+            arq_fsm.current = state_turn_negotiating;
+            schedule_next_tx_locked(now, false);
+            return true;
+        }
+    }
+
+    if (arq_ctx.turn_req_in_flight && now >= arq_ctx.turn_req_deadline)
+    {
+        if (arq_ctx.turn_req_retries_left > 0 &&
+            send_turn_control_locked(ARQ_SUBTYPE_TURN_REQ, 1) == 0)
+        {
+            arq_ctx.turn_req_retries_left--;
+            arq_ctx.turn_req_deadline = now + arq_ctx.ack_timeout_s;
+            schedule_next_tx_locked(now, true);
+            return true;
+        }
+        arq_ctx.turn_req_in_flight = false;
+        update_connected_state_from_turn_locked();
+    }
+
     if (arq_ctx.pending_mode_ack)
     {
         if (send_mode_change_locked(ARQ_SUBTYPE_MODE_ACK, arq_ctx.pending_mode) == 0)
         {
+            apply_payload_mode_locked(arq_ctx.pending_mode, "mode ack tx");
             arq_ctx.pending_mode_ack = false;
             schedule_next_tx_locked(now, false);
             return true;
         }
     }
 
-    if (arq_ctx.pending_mode_req && !arq_ctx.mode_req_in_flight)
+    if (arq_ctx.turn_role == ARQ_TURN_ISS &&
+        arq_ctx.pending_mode_req &&
+        !arq_ctx.mode_req_in_flight)
     {
         if (send_mode_change_locked(ARQ_SUBTYPE_MODE_REQ, arq_ctx.pending_mode) == 0)
         {
@@ -1051,9 +1237,11 @@ static bool do_slot_tx_locked(time_t now)
         return true;
     }
 
-    if (arq_fsm.current == state_connected)
+    if (is_connected_state_locked())
     {
-        if (arq_ctx.waiting_ack && now >= arq_ctx.ack_deadline)
+        if (arq_ctx.turn_role == ARQ_TURN_ISS &&
+            arq_ctx.waiting_ack &&
+            now >= arq_ctx.ack_deadline)
         {
             if (arq_ctx.data_retries_left > 0 && arq_ctx.outstanding_frame_len == arq_conn.frame_size)
             {
@@ -1069,7 +1257,9 @@ static bool do_slot_tx_locked(time_t now)
             return true;
         }
 
-        if (!arq_ctx.waiting_ack && arq_ctx.app_tx_len > 0)
+        if (arq_ctx.turn_role == ARQ_TURN_ISS &&
+            !arq_ctx.waiting_ack &&
+            arq_ctx.app_tx_len > 0)
         {
             queue_next_data_frame_locked();
             if (arq_ctx.waiting_ack)
@@ -1077,6 +1267,18 @@ static bool do_slot_tx_locked(time_t now)
                 schedule_next_tx_locked(now, false);
                 return true;
             }
+        }
+
+        if (arq_ctx.turn_role == ARQ_TURN_ISS &&
+            !arq_ctx.waiting_ack &&
+            arq_ctx.app_tx_len == 0 &&
+            arq_ctx.peer_backlog_nonzero &&
+            !arq_ctx.pending_turn_req &&
+            !arq_ctx.turn_req_in_flight &&
+            !arq_ctx.pending_mode_req &&
+            !arq_ctx.mode_req_in_flight)
+        {
+            arq_ctx.pending_turn_req = true;
         }
     }
 
@@ -1170,7 +1372,7 @@ static void state_calling_wait_accept(int event)
     }
 }
 
-static void state_connected(int event)
+static void state_connected_common(int event)
 {
     switch (event)
     {
@@ -1189,6 +1391,26 @@ static void state_connected(int event)
     default:
         break;
     }
+}
+
+static void state_connected(int event)
+{
+    state_connected_common(event);
+}
+
+static void state_connected_iss(int event)
+{
+    state_connected_common(event);
+}
+
+static void state_connected_irs(int event)
+{
+    state_connected_common(event);
+}
+
+static void state_turn_negotiating(int event)
+{
+    state_connected_common(event);
 }
 
 static void state_disconnecting(int event)
@@ -1260,7 +1482,7 @@ bool arq_is_link_connected(void)
     bool connected;
 
     arq_lock();
-    connected = arq_ctx.initialized && (arq_fsm.current == state_connected);
+    connected = arq_ctx.initialized && is_connected_state_locked();
     arq_unlock();
     return connected;
 }
@@ -1292,7 +1514,7 @@ void arq_tick_1hz(void)
         return;
     }
 
-    if (arq_fsm.current == state_connected)
+    if (is_connected_state_locked())
     {
         time_t last_link_activity = arq_ctx.last_keepalive_tx;
         if (arq_ctx.last_keepalive_rx > last_link_activity)
@@ -1338,7 +1560,7 @@ int arq_queue_data(const uint8_t *data, size_t len)
         return 0;
 
     arq_lock();
-    if (!arq_ctx.initialized || arq_fsm.current != state_connected)
+    if (!arq_ctx.initialized || !is_connected_state_locked())
     {
         arq_unlock();
         return 0;
@@ -1355,6 +1577,7 @@ int arq_queue_data(const uint8_t *data, size_t len)
 
     memcpy(arq_ctx.app_tx_queue + arq_ctx.app_tx_len, data, len);
     arq_ctx.app_tx_len += len;
+    schedule_flow_hint_locked();
     arq_unlock();
     return (int)len;
 }
@@ -1416,35 +1639,54 @@ int arq_get_preferred_rx_mode(void)
 
     arq_lock();
     mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
-    if (arq_ctx.initialized &&
-        (arq_fsm.current == state_connected || arq_fsm.current == state_listen))
+    if (!arq_ctx.initialized)
+    {
+        arq_unlock();
+        return mode;
+    }
+
+    bool control_phase =
+        arq_fsm.current == state_listen ||
+        arq_fsm.current == state_calling_wait_accept ||
+        arq_fsm.current == state_turn_negotiating ||
+        arq_ctx.pending_call ||
+        arq_ctx.pending_accept ||
+        arq_ctx.pending_ack ||
+        arq_ctx.pending_keepalive ||
+        arq_ctx.pending_keepalive_ack ||
+        arq_ctx.pending_mode_req ||
+        arq_ctx.pending_mode_ack ||
+        arq_ctx.mode_req_in_flight ||
+        arq_ctx.pending_turn_req ||
+        arq_ctx.turn_req_in_flight ||
+        arq_ctx.pending_turn_ack ||
+        arq_ctx.pending_flow_hint;
+
+    if (is_connected_state_locked())
+    {
+        if (control_phase)
+        {
+            mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+        }
+        else if (arq_ctx.turn_role == ARQ_TURN_ISS)
+        {
+            if (!arq_ctx.waiting_ack && arq_ctx.app_tx_len > 0)
+                mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+            else
+                mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+        }
+        else if (arq_ctx.turn_role == ARQ_TURN_IRS && arq_ctx.peer_backlog_nonzero)
+        {
+            mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        }
+        else
+        {
+            mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+        }
+    }
+    else if (control_phase)
     {
         mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
-    }
-    if (arq_ctx.initialized && arq_fsm.current == state_calling_wait_accept)
-    {
-        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
-    }
-    else if (arq_ctx.initialized && arq_ctx.pending_accept)
-    {
-        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
-    }
-    else if (arq_ctx.initialized &&
-             arq_fsm.current == state_connected &&
-             !arq_ctx.disconnect_in_progress &&
-             !arq_ctx.pending_disconnect &&
-             !arq_ctx.pending_accept &&
-             !arq_ctx.pending_ack &&
-             !arq_ctx.pending_mode_req &&
-             !arq_ctx.pending_mode_ack &&
-             !arq_ctx.mode_req_in_flight &&
-             !arq_ctx.pending_keepalive &&
-             !arq_ctx.pending_keepalive_ack &&
-             !arq_ctx.keepalive_waiting &&
-             !arq_ctx.waiting_ack &&
-             arq_ctx.app_tx_len == 0)
-    {
-        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
     }
     arq_unlock();
     return mode;
@@ -1456,34 +1698,41 @@ int arq_get_preferred_tx_mode(void)
 
     arq_lock();
     mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
-    if (arq_ctx.initialized && arq_fsm.current == state_connected)
+    if (!arq_ctx.initialized)
+    {
+        arq_unlock();
+        return mode;
+    }
+
+    bool must_control_tx =
+        arq_fsm.current == state_listen ||
+        arq_fsm.current == state_calling_wait_accept ||
+        arq_fsm.current == state_turn_negotiating ||
+        arq_ctx.pending_call ||
+        arq_ctx.pending_accept ||
+        arq_ctx.pending_ack ||
+        arq_ctx.pending_keepalive ||
+        arq_ctx.pending_keepalive_ack ||
+        arq_ctx.pending_mode_req ||
+        arq_ctx.pending_mode_ack ||
+        arq_ctx.mode_req_in_flight ||
+        arq_ctx.pending_turn_req ||
+        arq_ctx.turn_req_in_flight ||
+        arq_ctx.pending_turn_ack ||
+        arq_ctx.pending_flow_hint;
+
+    if (is_connected_state_locked())
+    {
+        if (arq_ctx.turn_role == ARQ_TURN_ISS &&
+            !must_control_tx &&
+            (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0))
+            mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        else
+            mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+    }
+    else if (must_control_tx)
     {
         mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
-    }
-    if (arq_ctx.initialized &&
-        arq_fsm.current == state_calling_wait_accept &&
-        arq_ctx.pending_call)
-    {
-        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
-    }
-    else if (arq_ctx.initialized && arq_ctx.pending_accept)
-    {
-        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
-    }
-    else if (arq_ctx.initialized &&
-             arq_fsm.current == state_connected &&
-             !arq_ctx.disconnect_in_progress &&
-             !arq_ctx.pending_disconnect &&
-             !arq_ctx.pending_accept &&
-             !arq_ctx.pending_ack &&
-             !arq_ctx.pending_mode_req &&
-             !arq_ctx.pending_mode_ack &&
-             !arq_ctx.mode_req_in_flight &&
-             !arq_ctx.pending_keepalive &&
-             !arq_ctx.pending_keepalive_ack &&
-             (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0))
-    {
-        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
     }
     arq_unlock();
     return mode;
@@ -1523,7 +1772,7 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
         if (arq_conn.my_call_sign[0] == 0 || strcasecmp(dst, arq_conn.my_call_sign) != 0)
             return;
-        if (arq_fsm.current != state_listen && arq_fsm.current != state_connected)
+        if (arq_fsm.current != state_listen && !is_connected_state_locked())
             return;
 
         strncpy(arq_conn.src_addr, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1);
@@ -1562,7 +1811,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         return;
 
     case ARQ_SUBTYPE_ACK:
-        if (arq_fsm.current != state_connected || !arq_ctx.waiting_ack)
+        if (!is_connected_state_locked() || !arq_ctx.waiting_ack)
             return;
         if (session_id != arq_ctx.session_id)
             return;
@@ -1583,31 +1832,35 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.outstanding_frame_len = 0;
         mark_link_activity_locked(now);
         mark_success_locked();
+        schedule_flow_hint_locked();
         update_payload_mode_locked();
         return;
 
     case ARQ_SUBTYPE_MODE_REQ:
-        if (arq_fsm.current != state_connected)
+        if (!is_connected_state_locked())
             return;
         if (session_id != arq_ctx.session_id)
+            return;
+        if (arq_ctx.turn_role != ARQ_TURN_IRS)
             return;
         if (payload_len < 1 || !is_payload_mode(payload[0]))
             return;
         arq_ctx.pending_mode = payload[0];
         arq_ctx.pending_mode_ack = true;
         arq_ctx.mode_req_in_flight = false;
-        apply_payload_mode_locked(payload[0], "peer req");
         mark_link_activity_locked(now);
         return;
 
     case ARQ_SUBTYPE_MODE_ACK:
-        if (arq_fsm.current != state_connected)
+        if (!is_connected_state_locked())
             return;
         if (session_id != arq_ctx.session_id)
             return;
         if (!arq_ctx.mode_req_in_flight)
             return;
         if (payload_len < 1 || !is_payload_mode(payload[0]))
+            return;
+        if (payload[0] != arq_ctx.mode_req_mode)
             return;
         arq_ctx.mode_req_in_flight = false;
         arq_ctx.mode_req_retries_left = 0;
@@ -1616,17 +1869,59 @@ static void handle_control_frame_locked(uint8_t subtype,
         mark_link_activity_locked(now);
         return;
 
+    case ARQ_SUBTYPE_TURN_REQ:
+        if (!is_connected_state_locked())
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        if (arq_ctx.turn_role == ARQ_TURN_IRS)
+        {
+            arq_ctx.peer_backlog_nonzero = false;
+            arq_ctx.pending_turn_ack = true;
+            arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
+            arq_fsm.current = state_turn_negotiating;
+        }
+        mark_link_activity_locked(now);
+        return;
+
+    case ARQ_SUBTYPE_TURN_ACK:
+        if (!is_connected_state_locked())
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        if (!arq_ctx.turn_req_in_flight)
+            return;
+        arq_ctx.turn_req_in_flight = false;
+        arq_ctx.turn_req_retries_left = 0;
+        arq_ctx.peer_backlog_nonzero = payload_len > 0 && payload[0] != 0;
+        if (arq_ctx.peer_backlog_nonzero)
+            become_irs_locked("turn ack");
+        else
+            update_connected_state_from_turn_locked();
+        mark_link_activity_locked(now);
+        return;
+
+    case ARQ_SUBTYPE_FLOW_HINT:
+        if (!is_connected_state_locked())
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        if (payload_len > 0)
+            arq_ctx.peer_backlog_nonzero = payload[0] != 0;
+        mark_link_activity_locked(now);
+        return;
+
     case ARQ_SUBTYPE_DISCONNECT:
         if (session_id != arq_ctx.session_id)
             return;
-        if (arq_fsm.current == state_connected ||
+        if (is_connected_state_locked() ||
             arq_fsm.current == state_calling_wait_accept ||
             arq_fsm.current == state_disconnecting)
             finalize_disconnect_locked();
         return;
 
     case ARQ_SUBTYPE_KEEPALIVE:
-        if (arq_fsm.current != state_connected)
+        if (!is_connected_state_locked())
             return;
         if (session_id != arq_ctx.session_id)
             return;
@@ -1637,7 +1932,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         return;
 
     case ARQ_SUBTYPE_KEEPALIVE_ACK:
-        if (arq_fsm.current != state_connected)
+        if (!is_connected_state_locked())
             return;
         if (session_id != arq_ctx.session_id)
             return;
@@ -1656,7 +1951,7 @@ static void handle_data_frame_locked(uint8_t session_id,
 {
     time_t now = time(NULL);
 
-    if (arq_fsm.current != state_connected)
+    if (!is_connected_state_locked())
         return;
     if (session_id != arq_ctx.session_id)
         return;
@@ -1664,6 +1959,7 @@ static void handle_data_frame_locked(uint8_t session_id,
     if (seq == arq_ctx.rx_expected_seq)
     {
         mark_link_activity_locked(now);
+        arq_ctx.peer_backlog_nonzero = true;
         write_buffer(data_rx_buffer_arq, (uint8_t *)payload, payload_len);
         arq_ctx.rx_expected_seq++;
         if (arq_ctx.payload_start_pending)
@@ -1673,6 +1969,7 @@ static void handle_data_frame_locked(uint8_t session_id,
         if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
             arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
         mark_success_locked();
+        schedule_flow_hint_locked();
         update_payload_mode_locked();
         return;
     }
@@ -1680,6 +1977,7 @@ static void handle_data_frame_locked(uint8_t session_id,
     if ((uint8_t)(arq_ctx.rx_expected_seq - 1) == seq)
     {
         mark_link_activity_locked(now);
+        arq_ctx.peer_backlog_nonzero = true;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
@@ -1721,7 +2019,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
         if (dst[0] != 0 &&
             arq_conn.my_call_sign[0] != 0 &&
             strncasecmp(arq_conn.my_call_sign, dst, strnlen(dst, CALLSIGN_MAX_SIZE - 1)) == 0 &&
-            (arq_fsm.current == state_listen || arq_fsm.current == state_connected))
+            (arq_fsm.current == state_listen || is_connected_state_locked()))
         {
             strncpy(arq_conn.src_addr, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1);
             arq_conn.src_addr[CALLSIGN_MAX_SIZE - 1] = 0;
@@ -1740,6 +2038,12 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
             arq_ctx.outstanding_app_len = 0;
             arq_ctx.pending_accept = true;
             arq_ctx.accept_retries_left = 1;
+            arq_ctx.turn_role = ARQ_TURN_NONE;
+            arq_ctx.pending_turn_req = false;
+            arq_ctx.turn_req_in_flight = false;
+            arq_ctx.pending_turn_ack = false;
+            arq_ctx.turn_promote_after_ack = false;
+            arq_ctx.peer_backlog_nonzero = false;
             arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
             arq_ctx.remote_busy_until = now + ARQ_CHANNEL_GUARD_S;
         }

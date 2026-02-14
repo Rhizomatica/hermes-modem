@@ -62,6 +62,19 @@ pthread_t tx_thread_tid, rx_thread_tid;
 static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t modem_freedv_epoch = 1;
 
+typedef struct {
+    struct freedv *datac1;
+    struct freedv *datac3;
+    struct freedv *datac4;
+    struct freedv *datac13;
+    size_t payload_datac1;
+    size_t payload_datac3;
+    size_t payload_datac4;
+    size_t payload_datac13;
+} modem_mode_pool_t;
+
+static modem_mode_pool_t modem_mode_pool = {0};
+
 static bool arq_ready_for_mode_policy(void)
 {
     return arq_fsm.current != NULL && arq_conn.frame_size > 0;
@@ -100,6 +113,75 @@ static struct freedv *open_freedv_mode_locked(int mode)
     return freedv_open(mode);
 }
 
+static void clear_mode_pool_locked(void)
+{
+    if (modem_mode_pool.datac1) freedv_close(modem_mode_pool.datac1);
+    if (modem_mode_pool.datac3) freedv_close(modem_mode_pool.datac3);
+    if (modem_mode_pool.datac4) freedv_close(modem_mode_pool.datac4);
+    if (modem_mode_pool.datac13) freedv_close(modem_mode_pool.datac13);
+    memset(&modem_mode_pool, 0, sizeof(modem_mode_pool));
+}
+
+static int pool_open_mode_locked(struct freedv **slot, size_t *payload_slot, int mode, int frames_per_burst)
+{
+    struct freedv *f = open_freedv_mode_locked(mode);
+    if (!f)
+        return -1;
+    freedv_set_frames_per_burst(f, frames_per_burst);
+    freedv_set_verbose(f, 0);
+    *slot = f;
+    *payload_slot = (freedv_get_bits_per_modem_frame(f) / 8) - 2;
+    return 0;
+}
+
+static int init_mode_pool_locked(int frames_per_burst)
+{
+    clear_mode_pool_locked();
+    if (pool_open_mode_locked(&modem_mode_pool.datac13, &modem_mode_pool.payload_datac13, FREEDV_MODE_DATAC13, frames_per_burst) < 0)
+        goto fail;
+    if (pool_open_mode_locked(&modem_mode_pool.datac4, &modem_mode_pool.payload_datac4, FREEDV_MODE_DATAC4, frames_per_burst) < 0)
+        goto fail;
+    if (pool_open_mode_locked(&modem_mode_pool.datac3, &modem_mode_pool.payload_datac3, FREEDV_MODE_DATAC3, frames_per_burst) < 0)
+        goto fail;
+    if (pool_open_mode_locked(&modem_mode_pool.datac1, &modem_mode_pool.payload_datac1, FREEDV_MODE_DATAC1, frames_per_burst) < 0)
+        goto fail;
+    return 0;
+fail:
+    clear_mode_pool_locked();
+    return -1;
+}
+
+static struct freedv *pooled_freedv_for_mode_locked(int mode, size_t *payload_bytes)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac1;
+        return modem_mode_pool.datac1;
+    case FREEDV_MODE_DATAC3:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac3;
+        return modem_mode_pool.datac3;
+    case FREEDV_MODE_DATAC4:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac4;
+        return modem_mode_pool.datac4;
+    case FREEDV_MODE_DATAC13:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac13;
+        return modem_mode_pool.datac13;
+    default:
+        if (payload_bytes) *payload_bytes = 0;
+        return NULL;
+    }
+}
+
+static bool is_pooled_freedv_locked(struct freedv *f)
+{
+    return f &&
+           (f == modem_mode_pool.datac1 ||
+            f == modem_mode_pool.datac3 ||
+            f == modem_mode_pool.datac4 ||
+            f == modem_mode_pool.datac13);
+}
+
 static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
 {
     uint32_t bits_per_modem_frame = (uint32_t)freedv_get_bits_per_modem_frame(freedv);
@@ -126,34 +208,19 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
         pthread_mutex_unlock(&modem_freedv_lock);
         return 0;
     }
-    pthread_mutex_unlock(&modem_freedv_lock);
-
-    struct freedv *new_freedv = open_freedv_mode_locked(target_mode);
+    size_t payload_bytes_per_modem_frame = 0;
+    struct freedv *new_freedv = pooled_freedv_for_mode_locked(target_mode, &payload_bytes_per_modem_frame);
     if (!new_freedv)
-        return -1;
-    freedv_set_frames_per_burst(new_freedv, 1);
-    freedv_set_verbose(new_freedv, 0);
-
-    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(new_freedv) / 8;
-    size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
-
-    pthread_mutex_lock(&modem_freedv_lock);
-    if (g_modem->mode == target_mode)
     {
         pthread_mutex_unlock(&modem_freedv_lock);
-        freedv_close(new_freedv);
-        return 0;
+        return -1;
     }
-    struct freedv *old_freedv = g_modem->freedv;
     g_modem->freedv = new_freedv;
     g_modem->mode = target_mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     modem_freedv_epoch++;
     pthread_mutex_unlock(&modem_freedv_lock);
     arq_set_active_modem_mode(target_mode, payload_bytes_per_modem_frame);
-
-    if (old_freedv)
-        freedv_close(old_freedv);
 
     fprintf(stderr, "Switched modem mode to %d (%s), payload=%zu\n",
             target_mode, mode_name_from_enum(target_mode), payload_bytes_per_modem_frame);
@@ -198,19 +265,31 @@ try_shm_connect2:
     
     printf("Created data buffers for ARQ and BROADCAST datalink, tx/rx paths.\n");
 
-    g_modem->freedv = open_freedv_mode_locked(mode);
-    if (!g_modem->freedv)
+    pthread_mutex_lock(&modem_freedv_lock);
+    if (init_mode_pool_locked(frames_per_burst) < 0)
     {
-        fprintf(stderr, "Failed to open FreeDV mode %d\n", mode);
+        pthread_mutex_unlock(&modem_freedv_lock);
+        fprintf(stderr, "Failed to initialize persistent FreeDV pool\n");
         return -1;
     }
-    
-    freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
 
-    freedv_set_verbose(g_modem->freedv, 0);
+    size_t payload_bytes_per_modem_frame = 0;
+    g_modem->freedv = pooled_freedv_for_mode_locked(mode, &payload_bytes_per_modem_frame);
+    if (!g_modem->freedv)
+    {
+        g_modem->freedv = open_freedv_mode_locked(mode);
+        if (!g_modem->freedv)
+        {
+            pthread_mutex_unlock(&modem_freedv_lock);
+            fprintf(stderr, "Failed to open FreeDV mode %d\n", mode);
+            return -1;
+        }
+        freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
+        freedv_set_verbose(g_modem->freedv, 0);
+        payload_bytes_per_modem_frame = (freedv_get_bits_per_modem_frame(g_modem->freedv) / 8) - 2;
+    }
+    pthread_mutex_unlock(&modem_freedv_lock);
 
-    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
-    size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
     g_modem->mode = mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     
@@ -347,7 +426,12 @@ int shutdown_modem(generic_modem_t *g_modem)
     circular_buf_free(data_tx_buffer_broadcast);
     circular_buf_free(data_rx_buffer_broadcast);
     
-    freedv_close(g_modem->freedv);   
+    pthread_mutex_lock(&modem_freedv_lock);
+    if (g_modem->freedv && !is_pooled_freedv_locked(g_modem->freedv))
+        freedv_close(g_modem->freedv);
+    g_modem->freedv = NULL;
+    clear_mode_pool_locked();
+    pthread_mutex_unlock(&modem_freedv_lock);
 
     return 0;
 }
