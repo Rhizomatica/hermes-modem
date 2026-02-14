@@ -114,6 +114,8 @@ enum {
 #define ARQ_ACCEPT_RETRY_SLOTS 3
 #define ARQ_DATA_RETRY_SLOTS 3
 #define ARQ_CONNECT_GRACE_SLOTS 2
+#define ARQ_CHANNEL_GUARD_S 1
+#define ARQ_CONNECT_BUSY_EXT_S 2
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -221,15 +223,33 @@ static void mark_failure_locked(void)
     maybe_gear_down_locked();
 }
 
-static void advance_role_tx_slot_locked(time_t now)
+static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
 {
-    if (arq_ctx.tx_period_s <= 0)
-        return;
+    int interval = arq_ctx.slot_len_s;
+    if (interval < 1)
+        interval = 1;
 
-    if (arq_ctx.next_role_tx_at <= now)
-        arq_ctx.next_role_tx_at = now + arq_ctx.tx_period_s;
-    else
-        arq_ctx.next_role_tx_at += arq_ctx.tx_period_s;
+    if (arq_ctx.snr_ema != 0.0f && arq_ctx.snr_ema < 2.0f)
+        interval += 1;
+    if (with_jitter)
+        interval += (int)(now & 0x1);
+
+    return interval;
+}
+
+static void schedule_next_tx_locked(time_t now, bool with_jitter)
+{
+    arq_ctx.next_role_tx_at = now + compute_inter_frame_interval_locked(now, with_jitter);
+}
+
+static bool defer_tx_if_busy_locked(time_t now)
+{
+    if (now >= arq_ctx.remote_busy_until)
+        return false;
+
+    if (arq_ctx.next_role_tx_at < arq_ctx.remote_busy_until)
+        arq_ctx.next_role_tx_at = arq_ctx.remote_busy_until;
+    return true;
 }
 
 static int queue_frame_locked(const uint8_t *frame)
@@ -484,12 +504,14 @@ static bool do_slot_tx_locked(time_t now)
         return false;
     if (now < arq_ctx.next_role_tx_at)
         return false;
+    if (defer_tx_if_busy_locked(now))
+        return false;
 
     if (arq_ctx.pending_disconnect)
     {
         send_disconnect_locked();
         arq_ctx.pending_disconnect = false;
-        advance_role_tx_slot_locked(now);
+        schedule_next_tx_locked(now, false);
         return true;
     }
 
@@ -498,29 +520,22 @@ static bool do_slot_tx_locked(time_t now)
         arq_ctx.pending_call &&
         arq_ctx.call_retries_left > 0)
     {
-        if (now < arq_ctx.remote_busy_until)
-        {
-            arq_ctx.next_role_tx_at = arq_ctx.remote_busy_until;
-            return false;
-        }
-
         send_call_locked();
         arq_ctx.call_retries_left--;
         if (arq_ctx.call_retries_left <= 0)
             arq_ctx.pending_call = false;
-        advance_role_tx_slot_locked(now);
+        schedule_next_tx_locked(now, true);
         return true;
     }
 
-    if (arq_ctx.pending_accept && arq_ctx.accept_retries_left > 0)
+    if (arq_ctx.pending_accept)
     {
         send_accept_locked();
-        arq_ctx.accept_retries_left--;
+        arq_ctx.pending_accept = false;
+        arq_ctx.accept_retries_left = 0;
         if (arq_fsm.current != state_connected)
             enter_connected_locked();
-        if (arq_ctx.accept_retries_left <= 0)
-            arq_ctx.pending_accept = false;
-        advance_role_tx_slot_locked(now);
+        schedule_next_tx_locked(now, false);
         return true;
     }
 
@@ -528,7 +543,7 @@ static bool do_slot_tx_locked(time_t now)
     {
         send_ack_locked(arq_ctx.pending_ack_seq);
         arq_ctx.pending_ack = false;
-        advance_role_tx_slot_locked(now);
+        schedule_next_tx_locked(now, false);
         return true;
     }
 
@@ -542,14 +557,14 @@ static bool do_slot_tx_locked(time_t now)
                 arq_ctx.data_retries_left--;
                 arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s;
                 mark_failure_locked();
-                advance_role_tx_slot_locked(now);
+                schedule_next_tx_locked(now, true);
                 return true;
             }
 
             send_disconnect_locked();
             notify_disconnected_locked();
             arq_fsm.current = idle_or_listen_state_locked();
-            advance_role_tx_slot_locked(now);
+            schedule_next_tx_locked(now, false);
             return true;
         }
 
@@ -558,7 +573,7 @@ static bool do_slot_tx_locked(time_t now)
             queue_next_data_frame_locked();
             if (arq_ctx.waiting_ack)
             {
-                advance_role_tx_slot_locked(now);
+                schedule_next_tx_locked(now, false);
                 return true;
             }
         }
@@ -700,14 +715,14 @@ int arq_init(size_t frame_size, int mode)
 
     arq_ctx.initialized = true;
     arq_ctx.slot_len_s = mode_slot_len_s(mode);
-    arq_ctx.tx_period_s = arq_ctx.slot_len_s * 2;
+    arq_ctx.tx_period_s = arq_ctx.slot_len_s;
     arq_ctx.max_call_retries = ARQ_CALL_RETRY_SLOTS;
     arq_ctx.max_accept_retries = ARQ_ACCEPT_RETRY_SLOTS;
     arq_ctx.max_data_retries = ARQ_DATA_RETRY_SLOTS;
-    arq_ctx.ack_timeout_s = arq_ctx.tx_period_s + 1;
+    arq_ctx.ack_timeout_s = arq_ctx.tx_period_s + ARQ_CHANNEL_GUARD_S;
     arq_ctx.connect_timeout_s =
-        (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 1)) +
-        (arq_ctx.slot_len_s * ARQ_CONNECT_GRACE_SLOTS);
+        (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 2)) +
+        ARQ_CONNECT_GRACE_SLOTS;
     arq_ctx.max_gear = max_gear_for_frame_size(frame_size);
 
     fsm_init(&arq_fsm, state_no_connected_client);
@@ -819,9 +834,9 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.outstanding_frame_len = 0;
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.pending_accept = true;
-        arq_ctx.accept_retries_left = arq_ctx.max_accept_retries + 1;
-        arq_ctx.next_role_tx_at = now + arq_ctx.slot_len_s;
-        arq_ctx.remote_busy_until = 0;
+        arq_ctx.accept_retries_left = 1;
+        arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
+        arq_ctx.remote_busy_until = now + ARQ_CHANNEL_GUARD_S;
         return;
 
     case ARQ_SUBTYPE_ACCEPT:
@@ -894,8 +909,8 @@ static void handle_data_frame_locked(uint8_t session_id,
         arq_ctx.rx_expected_seq++;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
-        if (arq_ctx.next_role_tx_at < now + arq_ctx.slot_len_s)
-            arq_ctx.next_role_tx_at = now + arq_ctx.slot_len_s;
+        if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
+            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
         mark_success_locked();
         return;
     }
@@ -904,8 +919,8 @@ static void handle_data_frame_locked(uint8_t session_id,
     {
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
-        if (arq_ctx.next_role_tx_at < now + arq_ctx.slot_len_s)
-            arq_ctx.next_role_tx_at = now + arq_ctx.slot_len_s;
+        if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
+            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
     }
 }
 
@@ -955,6 +970,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
+    time_t now = time(NULL);
+
     arq_lock();
     if (!arq_ctx.initialized)
     {
@@ -973,14 +990,24 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
     if (!frame_decoded && (rx_status & 0x4))
         mark_failure_locked();
 
+    if (sync || frame_decoded)
+    {
+        time_t busy_until = now + ARQ_CHANNEL_GUARD_S;
+        if (sync && !frame_decoded)
+            busy_until += 1;
+        if (arq_ctx.remote_busy_until < busy_until)
+            arq_ctx.remote_busy_until = busy_until;
+        if (arq_ctx.next_role_tx_at < arq_ctx.remote_busy_until)
+            arq_ctx.next_role_tx_at = arq_ctx.remote_busy_until;
+    }
+
     if (arq_fsm.current == state_calling_wait_accept &&
         arq_ctx.role == ARQ_ROLE_CALLER &&
         (sync || frame_decoded))
     {
-        time_t now = time(NULL);
-        arq_ctx.remote_busy_until = now + arq_ctx.slot_len_s + 1;
-        if (arq_ctx.connect_deadline < arq_ctx.remote_busy_until + arq_ctx.slot_len_s)
-            arq_ctx.connect_deadline = arq_ctx.remote_busy_until + arq_ctx.slot_len_s;
+        time_t min_deadline = now + arq_ctx.slot_len_s + ARQ_CONNECT_BUSY_EXT_S;
+        if (arq_ctx.connect_deadline < min_deadline)
+            arq_ctx.connect_deadline = min_deadline;
     }
 
     arq_unlock();
@@ -1038,8 +1065,8 @@ void callee_accept_connection(void)
     {
         arq_ctx.role = ARQ_ROLE_CALLEE;
         arq_ctx.pending_accept = true;
-        arq_ctx.accept_retries_left = arq_ctx.max_accept_retries + 1;
-        arq_ctx.next_role_tx_at = time(NULL) + arq_ctx.slot_len_s;
+        arq_ctx.accept_retries_left = 1;
+        arq_ctx.next_role_tx_at = time(NULL) + ARQ_CHANNEL_GUARD_S;
     }
     arq_unlock();
 }
