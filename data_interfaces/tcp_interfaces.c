@@ -411,16 +411,16 @@ void *recv_thread(void *client_socket_ptr)
     uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
     uint8_t decoded_frame[MAX_PAYLOAD];
 
-    if (frame_size == 0 || frame_size > MAX_PAYLOAD)
-    {
-        fprintf(stderr, "Invalid broadcast frame size: %zu\n", frame_size);
-        return NULL;
-    }
-
     if (!buffer)
     {
         fprintf(stderr, "Failed to allocate memory for recv buffer.\n");
         return NULL;
+    }
+
+    if (frame_size == 0 || frame_size > MAX_PAYLOAD)
+    {
+        fprintf(stderr, "Invalid broadcast frame size: %zu\n", frame_size);
+        goto cleanup;
     }
 
     while (!shutdown_)
@@ -456,6 +456,7 @@ void *recv_thread(void *client_socket_ptr)
         }
     }
 
+cleanup:
     free(buffer);
     return NULL;
 }
