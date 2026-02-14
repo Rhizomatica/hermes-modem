@@ -23,6 +23,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <limits.h>
 
 #include "arq.h"
 #include "defines_modem.h"
@@ -799,6 +800,23 @@ int arq_queue_data(const uint8_t *data, size_t len)
     arq_ctx.app_tx_len += len;
     arq_unlock();
     return (int)len;
+}
+
+int arq_get_tx_backlog_bytes(void)
+{
+    size_t pending = 0;
+
+    arq_lock();
+    if (arq_ctx.initialized)
+    {
+        pending = arq_ctx.app_tx_len;
+    }
+    arq_unlock();
+
+    if (pending > (size_t)INT_MAX)
+        return INT_MAX;
+
+    return (int)pending;
 }
 
 static void handle_control_frame_locked(uint8_t subtype,

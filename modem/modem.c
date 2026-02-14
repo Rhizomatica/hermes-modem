@@ -529,6 +529,8 @@ void *rx_thread(void *g_modem)
             if (payload_nbytes == 0)
                 continue;
 
+            tnc_send_sn(snr_est);
+
             int frame_type = parse_frame_header(data, payload_nbytes);
 
             switch (frame_type)

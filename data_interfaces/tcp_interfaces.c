@@ -45,6 +45,7 @@ static pthread_t tid[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
 static size_t broadcast_frame_size_cfg = 0;
+static float last_sn_value = 0.0f;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -208,8 +209,16 @@ void *data_worker_thread_rx(void *conn)
             continue;
         }
 
-        if (arq_queue_data(buffer, (size_t)n) < 0)
+        int queued = arq_queue_data(buffer, (size_t)n);
+        if (queued < 0)
             fprintf(stderr, "Failed to queue ARQ data frame(s)\n");
+        else
+        {
+            int buffered = arq_get_tx_backlog_bytes();
+            if (buffered < 0)
+                buffered = 0;
+            tnc_send_buffer((uint32_t)buffered);
+        }
     }
 
     free(buffer);
@@ -219,12 +228,14 @@ void *data_worker_thread_rx(void *conn)
 void *control_worker_thread_tx(void *conn)
 {
     int counter = 0;
+    int last_buffer_report = -1;
     char imalive[] = "IAMALIVE\r";
 
     while(!shutdown_)
     {
         if (status_ctl != NET_CONNECTED)
         {
+            last_buffer_report = -1;
             sleep(1);
             continue;
         }
@@ -235,6 +246,15 @@ void *control_worker_thread_tx(void *conn)
             counter = 0;
             tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
 
+        }
+
+        int buffered = arq_get_tx_backlog_bytes();
+        if (buffered < 0)
+            buffered = 0;
+        if (buffered != last_buffer_report)
+        {
+            tnc_send_buffer((uint32_t)buffered);
+            last_buffer_report = buffered;
         }
 
         arq_tick_1hz();
@@ -340,6 +360,21 @@ void *control_worker_thread_rx(void *conn)
         {
             sscanf(buffer,"BW%d", &arq_conn.bw);
             goto send_ok;
+        }
+
+        if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
+        {
+            int buffered = arq_get_tx_backlog_bytes();
+            if (buffered < 0)
+                buffered = 0;
+            tnc_send_buffer((uint32_t)buffered);
+            continue;
+        }
+
+        if (!memcmp(buffer, "SN", strlen("SN")))
+        {
+            tnc_send_sn(last_sn_value);
+            continue;
         }
 
         if (!memcmp(buffer, "P2P", strlen("P2P")))
@@ -606,6 +641,21 @@ void tnc_send_disconnected()
     ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
     if (i < 0)
         printf("Error sending disconnected message: %s\n", strerror(errno));
+}
+
+void tnc_send_buffer(uint32_t bytes)
+{
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "BUFFER %u\r", bytes);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+}
+
+void tnc_send_sn(float snr)
+{
+    char buffer[64];
+    last_sn_value = snr;
+    snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
