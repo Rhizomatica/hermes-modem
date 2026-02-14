@@ -29,6 +29,7 @@
 #include "modem.h"
 #include "ring_buffer_posix.h"
 #include "framer.h"
+#include "arq.h"
 #include "tcp_interfaces.h"
 #include "freedv_api.h"
 #include "fsk.h"
@@ -499,8 +500,15 @@ void *rx_thread(void *g_modem)
     struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     int frames_per_burst = freedv_get_frames_per_burst(freedv);
+    uint32_t bits_per_modem_frame = (uint32_t)freedv_get_bits_per_modem_frame(freedv);
+    uint32_t tx_modem_samples = (uint32_t)freedv_get_n_tx_modem_samples(freedv);
+    uint32_t modem_sample_rate = (uint32_t)freedv_get_modem_sample_rate(freedv);
+    uint32_t bitrate_bps = 0;
     uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame * frames_per_burst);
     size_t nbytes_out = 0;
+
+    if (tx_modem_samples > 0)
+        bitrate_bps = (uint32_t)(((uint64_t)bits_per_modem_frame * modem_sample_rate + (tx_modem_samples / 2)) / tx_modem_samples);
 
     if (!data)
     {
@@ -510,13 +518,26 @@ void *rx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        // we are running full-duplex for now - TODO: change to half-duplex
+        // Always drain modem input, but ignore decoded frames while local TX is active.
         receive_modulated_data(g_modem, data, &nbytes_out);
+
+        if (arq_conn.TRX == TX)
+            continue;
+
+        int sync = 0;
+        float snr_est = 0.0f;
+        int rx_status = freedv_get_rx_status(freedv);
+        freedv_get_modem_stats(freedv, &sync, &snr_est);
+        arq_update_link_metrics(sync, snr_est, rx_status, nbytes_out > 0);
+
         if (nbytes_out > 0)
         {
             size_t payload_nbytes = (nbytes_out >= 2) ? nbytes_out - 2 : 0;
             if (payload_nbytes == 0)
                 continue;
+
+            tnc_send_sn(snr_est);
+            tnc_send_bitrate((uint32_t)arq_get_speed_level(), bitrate_bps);
 
             int frame_type = parse_frame_header(data, payload_nbytes);
 
@@ -524,7 +545,7 @@ void *rx_thread(void *g_modem)
             {
             case PACKET_TYPE_ARQ_CONTROL:
             case PACKET_TYPE_ARQ_DATA:
-                write_buffer(data_rx_buffer_arq, data, payload_nbytes);
+                arq_handle_incoming_frame(data, payload_nbytes);
                 break;
             case PACKET_TYPE_BROADCAST_CONTROL:
             case PACKET_TYPE_BROADCAST_DATA:

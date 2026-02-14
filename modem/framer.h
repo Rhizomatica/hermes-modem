@@ -19,6 +19,7 @@
  */
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifndef FRAMER_H
 #define FRAMER_H
@@ -34,6 +35,7 @@
 // Parse the frame header, validate CRC
 // Returns packet type or negative if CRC error
 int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size);
+void write_frame_header(uint8_t *data, int packet_type, size_t frame_size);
 
 
 

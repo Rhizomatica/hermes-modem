@@ -45,6 +45,9 @@ static pthread_t tid[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
 static size_t broadcast_frame_size_cfg = 0;
+static float last_sn_value = 0.0f;
+static uint32_t last_bitrate_sl = 0;
+static uint32_t last_bitrate_bps = 0;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -208,7 +211,16 @@ void *data_worker_thread_rx(void *conn)
             continue;
         }
 
-        write_buffer(data_tx_buffer_arq, buffer, n);
+        int queued = arq_queue_data(buffer, (size_t)n);
+        if (queued < 0)
+            fprintf(stderr, "Failed to queue ARQ data frame(s)\n");
+        else
+        {
+            int buffered = arq_get_tx_backlog_bytes();
+            if (buffered < 0)
+                buffered = 0;
+            tnc_send_buffer((uint32_t)buffered);
+        }
     }
 
     free(buffer);
@@ -218,12 +230,14 @@ void *data_worker_thread_rx(void *conn)
 void *control_worker_thread_tx(void *conn)
 {
     int counter = 0;
+    int last_buffer_report = -1;
     char imalive[] = "IAMALIVE\r";
 
     while(!shutdown_)
     {
         if (status_ctl != NET_CONNECTED)
         {
+            last_buffer_report = -1;
             sleep(1);
             continue;
         }
@@ -235,6 +249,17 @@ void *control_worker_thread_tx(void *conn)
             tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
 
         }
+
+        int buffered = arq_get_tx_backlog_bytes();
+        if (buffered < 0)
+            buffered = 0;
+        if (buffered != last_buffer_report)
+        {
+            tnc_send_buffer((uint32_t)buffered);
+            last_buffer_report = buffered;
+        }
+
+        arq_tick_1hz();
 
         sleep(1);
         counter++;
@@ -303,13 +328,13 @@ void *control_worker_thread_rx(void *conn)
         // now we parse the commands
         if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
         {
-            sscanf(buffer,"MYCALL %s", arq_conn.my_call_sign);
+            sscanf(buffer,"MYCALL %15s", arq_conn.my_call_sign);
             goto send_ok;
         }
         
         if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
         {
-            sscanf(buffer,"LISTEN %s", temp);
+            sscanf(buffer,"LISTEN %15s", temp);
             if (temp[1] == 'N') // ON
             {
                 fsm_dispatch(&arq_fsm, EV_START_LISTEN);
@@ -324,7 +349,7 @@ void *control_worker_thread_rx(void *conn)
 
         if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
         {
-            sscanf(buffer,"PUBLIC %s", temp);
+            sscanf(buffer,"PUBLIC %15s", temp);
             if (temp[1] == 'N') // ON
                 arq_conn.encryption = false;
             if (temp[1] == 'F') // OFF
@@ -339,9 +364,36 @@ void *control_worker_thread_rx(void *conn)
             goto send_ok;
         }
 
+        if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
+        {
+            int buffered = arq_get_tx_backlog_bytes();
+            if (buffered < 0)
+                buffered = 0;
+            tnc_send_buffer((uint32_t)buffered);
+            continue;
+        }
+
+        if (!memcmp(buffer, "SN", strlen("SN")))
+        {
+            tnc_send_sn(last_sn_value);
+            continue;
+        }
+
+        if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
+        {
+            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps);
+            continue;
+        }
+
+        if (!memcmp(buffer, "P2P", strlen("P2P")))
+        {
+            // VARA compatibility no-op.
+            goto send_ok;
+        }
+
         if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
         {
-            sscanf(buffer,"CONNECT %s %s", arq_conn.src_addr, arq_conn.dst_addr);
+            sscanf(buffer,"CONNECT %15s %15s", arq_conn.src_addr, arq_conn.dst_addr);
             fsm_dispatch(&arq_fsm, EV_LINK_CALL_REMOTE);
             goto send_ok;
         }
@@ -597,6 +649,30 @@ void tnc_send_disconnected()
     ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
     if (i < 0)
         printf("Error sending disconnected message: %s\n", strerror(errno));
+}
+
+void tnc_send_buffer(uint32_t bytes)
+{
+    char buffer[64];
+    snprintf(buffer, sizeof(buffer), "BUFFER %u\r", bytes);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+}
+
+void tnc_send_sn(float snr)
+{
+    char buffer[64];
+    last_sn_value = snr;
+    snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+}
+
+void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
+{
+    char buffer[64];
+    last_bitrate_sl = speed_level;
+    last_bitrate_bps = bps;
+    snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
