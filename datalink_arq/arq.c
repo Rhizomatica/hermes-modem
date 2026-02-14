@@ -134,10 +134,11 @@ enum {
 #define ARQ_HDR_LEN_LO_IDX 8
 #define ARQ_PAYLOAD_OFFSET 9
 
+#define ARQ_CONTROL_FRAME_SIZE 14
 #define ARQ_CONNECT_SESSION_IDX 1
 #define ARQ_CONNECT_PAYLOAD_IDX 2
-#define ARQ_CONNECT_META_SIZE 2
-#define ARQ_CONNECT_MAX_ENCODED (14 - ARQ_CONNECT_META_SIZE)
+#define ARQ_CONNECT_META_SIZE 2 /* HEADER + connect meta byte */
+#define ARQ_CONNECT_MAX_ENCODED (ARQ_CONTROL_FRAME_SIZE - ARQ_CONNECT_META_SIZE)
 #define ARQ_ARITH_BUFFER_SIZE 4096
 #define ARQ_CONNECT_SESSION_MASK 0x7F
 #define ARQ_CONNECT_ACCEPT_FLAG 0x80
@@ -168,6 +169,22 @@ static inline void arq_lock(void)
 static inline void arq_unlock(void)
 {
     pthread_mutex_unlock(&arq_fsm.lock);
+}
+
+static inline uint8_t connect_meta_build(uint8_t session_id, bool is_accept)
+{
+    return (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK) |
+           (is_accept ? ARQ_CONNECT_ACCEPT_FLAG : 0);
+}
+
+static inline uint8_t connect_meta_session(uint8_t meta)
+{
+    return (uint8_t)(meta & ARQ_CONNECT_SESSION_MASK);
+}
+
+static inline bool connect_meta_is_accept(uint8_t meta)
+{
+    return (meta & ARQ_CONNECT_ACCEPT_FLAG) != 0;
 }
 
 static fsm_state idle_or_listen_state_locked(void)
@@ -282,7 +299,7 @@ static size_t chunk_size_for_gear_locked(void)
 
 static size_t control_frame_size_locked(void)
 {
-    return 14; /* DATAC13 payload bytes per modem frame */
+    return ARQ_CONTROL_FRAME_SIZE; /* DATAC13 payload bytes per modem frame */
 }
 
 static int initial_gear_locked(void)
@@ -462,7 +479,7 @@ static int build_connect_call_accept_frame_locked(uint8_t subtype,
     uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
     int encoded_len;
 
-    if (frame_size != 14)
+    if (frame_size != ARQ_CONTROL_FRAME_SIZE)
         return -1;
     if (subtype != ARQ_SUBTYPE_CALL && subtype != ARQ_SUBTYPE_ACCEPT)
         return -1;
@@ -472,11 +489,26 @@ static int build_connect_call_accept_frame_locked(uint8_t subtype,
         return -1;
 
     memset(frame, 0, frame_size);
-    frame[ARQ_CONNECT_SESSION_IDX] = (session_id & ARQ_CONNECT_SESSION_MASK) |
-                                     ((subtype == ARQ_SUBTYPE_ACCEPT) ? ARQ_CONNECT_ACCEPT_FLAG : 0);
+    frame[ARQ_CONNECT_SESSION_IDX] = connect_meta_build(session_id, subtype == ARQ_SUBTYPE_ACCEPT);
     memcpy(frame + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)encoded_len);
     write_frame_header(frame, PACKET_TYPE_ARQ_DATA, frame_size);
     return 0;
+}
+
+static void split_call_connect_payload(char *decoded, char *dst, char *src)
+{
+    /* Supports truncation: dst may be present even when "|src" is missing. */
+    char *sep = strchr(decoded, '|');
+
+    if (sep)
+    {
+        *sep = 0;
+        sep++;
+        strncpy(src, sep, CALLSIGN_MAX_SIZE - 1);
+        src[CALLSIGN_MAX_SIZE - 1] = 0;
+    }
+
+    snprintf(dst, CALLSIGN_MAX_SIZE, "%.*s", CALLSIGN_MAX_SIZE - 1, decoded);
 }
 
 static bool parse_callsign_pair_payload(const uint8_t *payload,
@@ -1451,19 +1483,20 @@ static void handle_data_frame_locked(uint8_t session_id,
 
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 {
-    uint8_t subtype;
+    uint8_t meta;
     uint8_t session_id;
+    uint8_t subtype;
     char decoded[(CALLSIGN_MAX_SIZE * 2) + 2] = {0};
     char dst[CALLSIGN_MAX_SIZE] = {0};
     char src[CALLSIGN_MAX_SIZE] = {0};
-    char *sep;
     time_t now;
 
-    if (!data || frame_size != 14)
+    if (!data || frame_size != ARQ_CONTROL_FRAME_SIZE)
         return false;
 
-    subtype = (data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) ? ARQ_SUBTYPE_ACCEPT : ARQ_SUBTYPE_CALL;
-    session_id = data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
+    meta = data[ARQ_CONNECT_SESSION_IDX];
+    subtype = connect_meta_is_accept(meta) ? ARQ_SUBTYPE_ACCEPT : ARQ_SUBTYPE_CALL;
+    session_id = connect_meta_session(meta);
     if (!decode_connect_callsign_payload(data + ARQ_CONNECT_PAYLOAD_IDX, decoded))
         return false;
 
@@ -1477,15 +1510,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     now = time(NULL);
     if (subtype == ARQ_SUBTYPE_CALL)
     {
-        sep = strchr(decoded, '|');
-        if (sep)
-        {
-            *sep = 0;
-            sep++;
-            strncpy(src, sep, CALLSIGN_MAX_SIZE - 1);
-            src[CALLSIGN_MAX_SIZE - 1] = 0;
-        }
-        snprintf(dst, sizeof(dst), "%.*s", CALLSIGN_MAX_SIZE - 1, decoded);
+        split_call_connect_payload(decoded, dst, src);
 
         if (dst[0] != 0 &&
             arq_conn.my_call_sign[0] != 0 &&
@@ -1518,7 +1543,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 
     if (arq_fsm.current == state_calling_wait_accept &&
         arq_ctx.role == ARQ_ROLE_CALLER &&
-        session_id == (arq_ctx.session_id & ARQ_CONNECT_SESSION_MASK) &&
+        session_id == connect_meta_session(arq_ctx.session_id) &&
         decoded[0] != 0 &&
         strncasecmp(arq_conn.dst_addr, decoded, strnlen(decoded, CALLSIGN_MAX_SIZE - 1)) == 0)
     {
