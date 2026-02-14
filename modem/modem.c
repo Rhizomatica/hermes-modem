@@ -665,15 +665,29 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        size_t pending_arq = size_buffer(data_tx_buffer_arq) + size_buffer(data_tx_buffer_arq_control);
-        size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
         if (arq_conn.TRX != TX &&
-            arq_ready_for_mode_policy() &&
-            (pending_arq > 0 || pending_broadcast > 0))
+            arq_ready_for_mode_policy())
         {
             int pref_tx_mode = arq_get_preferred_tx_mode();
             if (pref_tx_mode >= 0)
-                maybe_switch_modem_mode(modem, pref_tx_mode);
+            {
+                size_t pref_payload_bytes = 0;
+                int pref_frames_per_burst = 1;
+                pthread_mutex_lock(&modem_freedv_lock);
+                (void)pooled_freedv_for_mode_locked(pref_tx_mode, &pref_payload_bytes);
+                if (modem->freedv)
+                    pref_frames_per_burst = freedv_get_frames_per_burst(modem->freedv);
+                pthread_mutex_unlock(&modem_freedv_lock);
+
+                if (pref_payload_bytes > 0)
+                {
+                    size_t pref_required = pref_payload_bytes * (size_t)pref_frames_per_burst;
+                    cbuf_handle_t pref_tx_buffer =
+                        (pref_tx_mode == FREEDV_MODE_DATAC13) ? data_tx_buffer_arq_control : data_tx_buffer_arq;
+                    if (size_buffer(pref_tx_buffer) >= pref_required)
+                        maybe_switch_modem_mode(modem, pref_tx_mode);
+                }
+            }
         }
 
         size_t payload_bytes_per_modem_frame = 0;
@@ -760,8 +774,16 @@ void *rx_thread(void *g_modem)
                 last_pref_tx_mode = pref_tx_mode;
             }
 
+            size_t queued_arq_data = size_buffer(data_tx_buffer_arq);
+            size_t queued_arq_control = size_buffer(data_tx_buffer_arq_control);
+            size_t queued_broadcast = size_buffer(data_tx_buffer_broadcast);
+            bool local_tx_queued =
+                (queued_arq_data > 0) ||
+                (queued_arq_control > 0) ||
+                (queued_broadcast > 0);
             if (arq_conn.TRX != TX &&
-                pref_rx_mode >= 0)
+                pref_rx_mode >= 0 &&
+                !local_tx_queued)
                 maybe_switch_modem_mode(modem, pref_rx_mode);
         }
 
