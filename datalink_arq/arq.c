@@ -343,11 +343,25 @@ static int send_disconnect_locked(void)
 
 static void clear_runtime_locked(void)
 {
+    int retry_interval_s = arq_ctx.retry_interval_s;
+    int ack_timeout_s = arq_ctx.ack_timeout_s;
+    int connect_timeout_s = arq_ctx.connect_timeout_s;
+    int max_call_retries = arq_ctx.max_call_retries;
+    int max_data_retries = arq_ctx.max_data_retries;
+    int max_gear = arq_ctx.max_gear;
+
     clear_buffer(data_tx_buffer_arq);
     clear_buffer(data_rx_buffer_arq);
 
     memset(&arq_ctx, 0, sizeof(arq_ctx));
     arq_ctx.initialized = true;
+    arq_ctx.retry_interval_s = retry_interval_s;
+    arq_ctx.ack_timeout_s = ack_timeout_s;
+    arq_ctx.connect_timeout_s = connect_timeout_s;
+    arq_ctx.max_call_retries = max_call_retries;
+    arq_ctx.max_data_retries = max_data_retries;
+    arq_ctx.max_gear = max_gear;
+    arq_ctx.gear = 0;
 
     arq_conn.TRX = RX;
     arq_conn.encryption = false;
