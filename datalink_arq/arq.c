@@ -88,6 +88,7 @@ typedef struct {
     time_t keepalive_deadline;
     time_t last_keepalive_rx;
     time_t last_keepalive_tx;
+    time_t last_phy_activity;
 
     bool disconnect_in_progress;
     bool disconnect_to_no_client;
@@ -526,6 +527,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.keepalive_deadline = 0;
     arq_ctx.last_keepalive_rx = 0;
     arq_ctx.last_keepalive_tx = 0;
+    arq_ctx.last_phy_activity = 0;
     arq_ctx.disconnect_in_progress = false;
     arq_ctx.disconnect_to_no_client = false;
     arq_ctx.disconnect_retries_left = 0;
@@ -592,6 +594,7 @@ static void enter_connected_locked(void)
     arq_ctx.keepalive_misses = 0;
     arq_ctx.last_keepalive_rx = now;
     arq_ctx.last_keepalive_tx = now;
+    arq_ctx.last_phy_activity = now;
     arq_ctx.disconnect_in_progress = false;
     arq_ctx.disconnect_retries_left = 0;
     arq_ctx.disconnect_deadline = 0;
@@ -999,6 +1002,8 @@ void arq_tick_1hz(void)
         time_t last_link_activity = arq_ctx.last_keepalive_tx;
         if (arq_ctx.last_keepalive_rx > last_link_activity)
             last_link_activity = arq_ctx.last_keepalive_rx;
+        if (arq_ctx.last_phy_activity > last_link_activity)
+            last_link_activity = arq_ctx.last_phy_activity;
 
         bool link_idle =
             !arq_ctx.waiting_ack &&
@@ -1382,6 +1387,7 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
 
     if (sync || frame_decoded)
     {
+        arq_ctx.last_phy_activity = now;
         time_t busy_until = now + ARQ_CHANNEL_GUARD_S;
         if (sync && !frame_decoded)
             busy_until += 1;
