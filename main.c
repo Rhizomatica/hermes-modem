@@ -68,7 +68,7 @@ static void print_usage(const char *prog)
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
-    printf(" -s [modulation_config]     Sets modulation configuration for broadcasting. Modes: 0 to 6. Use \"-l\" for listing all available modulations. Default is 0 (DATAC1)\n");
+    printf(" -s [mode_index]            Selects modem mode by index shown in \"-l\" output. Default is 0 (DATAC1)\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
@@ -90,6 +90,7 @@ int main(int argc, char *argv[])
     printf("Mercury Version %s\n", VERSION__);
 #endif
     int verbose = 0;
+    const int mode_count = (int)(sizeof(freedv_modes) / sizeof(freedv_modes[0]));
     int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;
@@ -160,7 +161,17 @@ int main(int argc, char *argv[])
             break;
         case 's':
             if (optarg)
-                mod_config = atoi(optarg);
+            {
+                char *endptr = NULL;
+                long mode_index = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || mode_index < 0 || mode_index >= mode_count)
+                {
+                    fprintf(stderr, "Invalid -s index '%s'. Use -l to list valid mode indexes (0..%d).\n",
+                            optarg, mode_count - 1);
+                    return EXIT_FAILURE;
+                }
+                mod_config = freedv_modes[(int)mode_index];
+            }
             break;
         case 'l':
             list_modes = true;
@@ -182,9 +193,9 @@ int main(int argc, char *argv[])
     if (list_modes)
     {
         printf("Available modulation modes:\n");
-        for (int i = 0; i < sizeof(freedv_modes) / sizeof(freedv_modes[0]); i++)
+        for (int i = 0; i < mode_count; i++)
         {
-            printf("Mode: %d\n", i);
+            printf("Mode index: %d\n", i);
             printf("Opening mode %s (%d)\n", freedv_mode_names[i], freedv_modes[i]);
 
             struct freedv *freedv = freedv_open(freedv_modes[i]);
