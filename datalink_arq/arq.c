@@ -871,7 +871,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.payload_mode = 0;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
     arq_ctx.turn_role = ARQ_TURN_NONE;
-    arq_ctx.peer_backlog_nonzero = (arq_ctx.role == ARQ_ROLE_CALLEE);
+    arq_ctx.peer_backlog_nonzero = false;
     arq_ctx.pending_flow_hint = false;
     arq_ctx.flow_hint_value = false;
     arq_ctx.last_flow_hint_sent = -1;
@@ -971,7 +971,7 @@ static void enter_connected_locked(void)
     arq_ctx.turn_promote_after_ack = false;
     arq_ctx.pending_flow_hint = false;
     arq_ctx.last_flow_hint_sent = -1;
-    arq_ctx.peer_backlog_nonzero = false;
+    arq_ctx.peer_backlog_nonzero = (arq_ctx.role == ARQ_ROLE_CALLEE);
     arq_ctx.turn_role = (arq_ctx.role == ARQ_ROLE_CALLER) ? ARQ_TURN_ISS : ARQ_TURN_IRS;
     arq_ctx.gear = initial_gear_locked();
     update_connected_state_from_turn_locked();
@@ -1675,7 +1675,8 @@ int arq_get_preferred_rx_mode(void)
             else
                 mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
-        else if (arq_ctx.turn_role == ARQ_TURN_IRS && arq_ctx.peer_backlog_nonzero)
+        else if (arq_ctx.turn_role == ARQ_TURN_IRS &&
+                 (arq_ctx.payload_start_pending || arq_ctx.peer_backlog_nonzero))
         {
             mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
         }

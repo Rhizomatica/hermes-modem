@@ -294,7 +294,8 @@ try_shm_connect2:
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
-    printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, mode_name_from_enum(mode), frames_per_burst, 0);
+    printf("Initialized persistent FreeDV mode pool (DATAC13/DATAC4/DATAC3/DATAC1), frames per burst: %d\n", frames_per_burst);
+    printf("Active FreeDV mode at startup: %d (%s), verbosity: %d\n", mode, mode_name_from_enum(mode), 0);
     printf("Modem expects sample rate: %d Hz\n", modem_sample_rate);
     printf("Modem payload bytes per frame: %zu\n", payload_bytes_per_modem_frame);
     printf("Split control/data mode switching: ENABLED\n");
