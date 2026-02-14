@@ -107,6 +107,7 @@ typedef struct {
     int success_streak;
     int failure_streak;
     float snr_ema;
+    bool payload_start_pending;
     int payload_mode;
     int control_mode;
 } arq_ctx_t;
@@ -664,6 +665,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
     arq_ctx.snr_ema = 0.0f;
+    arq_ctx.payload_start_pending = false;
     arq_ctx.payload_mode = 0;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
 
@@ -711,10 +713,6 @@ static void start_disconnect_locked(bool to_no_client)
 static void enter_connected_locked(void)
 {
     time_t now = time(NULL);
-    arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
-    arq_ctx.slot_len_s = mode_slot_len_s(arq_ctx.payload_mode);
-    arq_ctx.tx_period_s = arq_ctx.slot_len_s;
-    arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.pending_call = false;
@@ -732,6 +730,7 @@ static void enter_connected_locked(void)
     arq_ctx.connect_deadline = 0;
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
+    arq_ctx.payload_start_pending = true;
     arq_ctx.gear = initial_gear_locked();
     arq_fsm.current = state_connected;
     tnc_send_connected();
@@ -781,6 +780,12 @@ static void queue_next_data_frame_locked(void)
         return;
     if (arq_ctx.app_tx_len == 0)
         return;
+
+    if (arq_ctx.payload_start_pending)
+    {
+        arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
+        arq_ctx.payload_start_pending = false;
+    }
 
     chunk = chunk_size_for_gear_locked();
     if (chunk == 0)
@@ -1061,7 +1066,10 @@ int arq_init(size_t frame_size, int mode)
     arq_conn.call_burst_size = 1;
 
     arq_ctx.initialized = true;
-    arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
+    if (mode == FREEDV_MODE_DATAC1 || mode == FREEDV_MODE_DATAC3 || mode == FREEDV_MODE_DATAC4)
+        arq_ctx.payload_mode = mode;
+    else
+        arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
 
     arq_ctx.slot_len_s = mode_slot_len_s(arq_ctx.payload_mode);
@@ -1074,6 +1082,7 @@ int arq_init(size_t frame_size, int mode)
         (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 2)) +
         ARQ_CONNECT_GRACE_SLOTS;
     arq_ctx.max_gear = max_gear_for_frame_size(frame_size);
+    arq_ctx.payload_start_pending = false;
     arq_ctx.keepalive_interval_s = ARQ_KEEPALIVE_INTERVAL_S;
     arq_ctx.keepalive_miss_limit = ARQ_KEEPALIVE_MISS_LIMIT;
 
