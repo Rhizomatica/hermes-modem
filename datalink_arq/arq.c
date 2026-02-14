@@ -170,21 +170,29 @@ static int max_gear_for_frame_size(size_t frame_size)
 static size_t chunk_size_for_gear_locked(void)
 {
     size_t cap = arq_conn.frame_size - ARQ_PAYLOAD_OFFSET;
-    if (cap == 0)
-        return 0;
-
-    if (arq_ctx.gear <= 0)
-        return cap / 4 ? cap / 4 : cap;
-    if (arq_ctx.gear == 1)
-        return cap / 2 ? cap / 2 : cap;
     return cap;
+}
+
+static int initial_gear_locked(void)
+{
+    if (arq_ctx.max_gear >= 2)
+    {
+        if (arq_ctx.snr_ema >= 8.0f)
+            return 2;
+        return 1;
+    }
+
+    if (arq_ctx.max_gear == 1 && arq_ctx.snr_ema >= 6.0f)
+        return 1;
+
+    return 0;
 }
 
 static void maybe_gear_up_locked(void)
 {
     if (arq_ctx.gear >= arq_ctx.max_gear)
         return;
-    if (arq_ctx.success_streak < 20)
+    if (arq_ctx.success_streak < 6)
         return;
     if (arq_ctx.snr_ema != 0.0f && arq_ctx.snr_ema < 8.0f)
         return;
@@ -432,6 +440,7 @@ static void enter_connected_locked(void)
     arq_ctx.connect_deadline = 0;
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
+    arq_ctx.gear = initial_gear_locked();
     arq_fsm.current = state_connected;
     tnc_send_connected();
 }
