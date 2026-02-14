@@ -248,6 +248,9 @@ static void update_payload_mode_locked(void)
     int new_mode = old_mode;
     float snr = arq_ctx.snr_ema;
 
+    if (arq_ctx.payload_start_pending)
+        return;
+
     if (snr == 0.0f)
         return;
 
@@ -713,6 +716,7 @@ static void start_disconnect_locked(bool to_no_client)
 static void enter_connected_locked(void)
 {
     time_t now = time(NULL);
+    arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.pending_call = false;
