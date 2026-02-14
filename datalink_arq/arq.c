@@ -102,6 +102,8 @@ typedef struct {
     int success_streak;
     int failure_streak;
     float snr_ema;
+    int payload_mode;
+    int control_mode;
 } arq_ctx_t;
 
 static arq_ctx_t arq_ctx;
@@ -136,6 +138,7 @@ enum {
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
 #define ARQ_KEEPALIVE_INTERVAL_S 10
 #define ARQ_KEEPALIVE_MISS_LIMIT 5
+#define ARQ_SNR_HYST_DB 1.0f
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -176,6 +179,77 @@ static int mode_slot_len_s(int mode)
     default:
         return 2;
     }
+}
+
+static const char *mode_name(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1:
+        return "DATAC1";
+    case FREEDV_MODE_DATAC3:
+        return "DATAC3";
+    case FREEDV_MODE_DATAC4:
+        return "DATAC4";
+    case FREEDV_MODE_DATAC0:
+        return "DATAC0";
+    case FREEDV_MODE_DATAC13:
+        return "DATAC13";
+    case FREEDV_MODE_DATAC14:
+        return "DATAC14";
+    default:
+        return "OTHER";
+    }
+}
+
+static int payload_mode_from_snr(float snr)
+{
+    if (snr >= 5.0f)
+        return FREEDV_MODE_DATAC1;
+    if (snr >= 0.0f)
+        return FREEDV_MODE_DATAC3;
+    return FREEDV_MODE_DATAC4;
+}
+
+static void update_payload_mode_locked(void)
+{
+    int old_mode = arq_ctx.payload_mode;
+    int new_mode = old_mode;
+    float snr = arq_ctx.snr_ema;
+
+    if (snr == 0.0f)
+        return;
+
+    switch (old_mode)
+    {
+    case FREEDV_MODE_DATAC1:
+        if (snr < (5.0f - ARQ_SNR_HYST_DB))
+            new_mode = FREEDV_MODE_DATAC3;
+        break;
+    case FREEDV_MODE_DATAC3:
+        if (snr >= (5.0f + ARQ_SNR_HYST_DB))
+            new_mode = FREEDV_MODE_DATAC1;
+        else if (snr < (0.0f - ARQ_SNR_HYST_DB))
+            new_mode = FREEDV_MODE_DATAC4;
+        break;
+    case FREEDV_MODE_DATAC4:
+    default:
+        if (snr >= (0.0f + ARQ_SNR_HYST_DB))
+            new_mode = FREEDV_MODE_DATAC3;
+        break;
+    }
+
+    if (old_mode == 0)
+        new_mode = payload_mode_from_snr(snr);
+
+    if (new_mode == old_mode)
+        return;
+
+    arq_ctx.payload_mode = new_mode;
+    arq_ctx.slot_len_s = mode_slot_len_s(new_mode);
+    arq_ctx.tx_period_s = arq_ctx.slot_len_s;
+    arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
+    fprintf(stderr, "ARQ payload mode -> %s (snr=%.1f)\n", mode_name(new_mode), snr);
 }
 
 static int max_gear_for_frame_size(size_t frame_size)
@@ -461,6 +535,8 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
     arq_ctx.snr_ema = 0.0f;
+    arq_ctx.payload_mode = 0;
+    arq_ctx.control_mode = FREEDV_MODE_DATAC13;
 
     arq_conn.TRX = RX;
     arq_conn.encryption = false;
@@ -484,6 +560,7 @@ static void finalize_disconnect_locked(void)
     fsm_state next_state = arq_ctx.disconnect_to_no_client ?
                            state_no_connected_client :
                            idle_or_listen_state_locked();
+    fprintf(stderr, "ARQ disconnect finalized\n");
     notify_disconnected_locked();
     arq_fsm.current = next_state;
 }
@@ -499,6 +576,7 @@ static void start_disconnect_locked(bool to_no_client)
     arq_ctx.disconnect_deadline = now + (arq_ctx.slot_len_s * 2) + 2;
     arq_ctx.next_role_tx_at = now;
     arq_fsm.current = state_disconnecting;
+    fprintf(stderr, "ARQ disconnect start (to_no_client=%d)\n", to_no_client ? 1 : 0);
 }
 
 static void enter_connected_locked(void)
@@ -615,6 +693,7 @@ static bool do_slot_tx_locked(time_t now)
             return false;
         }
         send_disconnect_locked();
+        fprintf(stderr, "ARQ disconnect tx retry=%d\n", arq_ctx.disconnect_retries_left);
         arq_ctx.disconnect_retries_left--;
         if (arq_ctx.disconnect_retries_left <= 0)
             arq_ctx.pending_disconnect = false;
@@ -657,6 +736,7 @@ static bool do_slot_tx_locked(time_t now)
     if (arq_ctx.pending_keepalive_ack)
     {
         send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE_ACK);
+        fprintf(stderr, "ARQ keepalive ack tx\n");
         arq_ctx.pending_keepalive_ack = false;
         arq_ctx.last_keepalive_tx = now;
         schedule_next_tx_locked(now, false);
@@ -666,6 +746,7 @@ static bool do_slot_tx_locked(time_t now)
     if (arq_ctx.pending_keepalive)
     {
         send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE);
+        fprintf(stderr, "ARQ keepalive tx\n");
         arq_ctx.pending_keepalive = false;
         arq_ctx.keepalive_waiting = true;
         arq_ctx.keepalive_deadline = now + arq_ctx.keepalive_interval_s;
@@ -842,7 +923,13 @@ int arq_init(size_t frame_size, int mode)
     arq_conn.call_burst_size = 1;
 
     arq_ctx.initialized = true;
-    arq_ctx.slot_len_s = mode_slot_len_s(mode);
+    if (mode == FREEDV_MODE_DATAC1 || mode == FREEDV_MODE_DATAC3 || mode == FREEDV_MODE_DATAC4)
+        arq_ctx.payload_mode = mode;
+    else
+        arq_ctx.payload_mode = FREEDV_MODE_DATAC3;
+    arq_ctx.control_mode = FREEDV_MODE_DATAC13;
+
+    arq_ctx.slot_len_s = mode_slot_len_s(arq_ctx.payload_mode);
     arq_ctx.tx_period_s = arq_ctx.slot_len_s;
     arq_ctx.max_call_retries = ARQ_CALL_RETRY_SLOTS;
     arq_ctx.max_accept_retries = ARQ_ACCEPT_RETRY_SLOTS;
@@ -921,6 +1008,7 @@ void arq_tick_1hz(void)
         {
             arq_ctx.keepalive_waiting = false;
             arq_ctx.keepalive_misses++;
+            fprintf(stderr, "ARQ keepalive miss=%d\n", arq_ctx.keepalive_misses);
             if (arq_ctx.keepalive_misses >= arq_ctx.keepalive_miss_limit)
                 start_disconnect_locked(false);
         }
@@ -993,6 +1081,82 @@ int arq_get_speed_level(void)
     if (gear < 0)
         gear = 0;
     return gear;
+}
+
+int arq_get_payload_mode(void)
+{
+    int mode;
+
+    arq_lock();
+    mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    arq_unlock();
+    return mode;
+}
+
+int arq_get_control_mode(void)
+{
+    int mode;
+
+    arq_lock();
+    mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+    arq_unlock();
+    return mode;
+}
+
+int arq_get_preferred_rx_mode(void)
+{
+    int mode;
+
+    arq_lock();
+    mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+    if (arq_ctx.initialized && arq_fsm.current == state_calling_wait_accept)
+    {
+        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    }
+    else if (arq_ctx.initialized &&
+             arq_fsm.current == state_connected &&
+             !arq_ctx.disconnect_in_progress &&
+             !arq_ctx.pending_disconnect &&
+             !arq_ctx.pending_accept &&
+             !arq_ctx.pending_ack &&
+             !arq_ctx.pending_keepalive &&
+             !arq_ctx.pending_keepalive_ack &&
+             !arq_ctx.keepalive_waiting &&
+             !arq_ctx.waiting_ack &&
+             arq_ctx.app_tx_len == 0)
+    {
+        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    }
+    arq_unlock();
+    return mode;
+}
+
+int arq_get_preferred_tx_mode(void)
+{
+    int mode;
+
+    arq_lock();
+    mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+    if (arq_ctx.initialized &&
+        arq_fsm.current == state_calling_wait_accept &&
+        arq_ctx.pending_call)
+    {
+        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    }
+    else if (arq_ctx.initialized &&
+             arq_fsm.current == state_connected &&
+             !arq_ctx.disconnect_in_progress &&
+             !arq_ctx.pending_disconnect &&
+             !arq_ctx.pending_accept &&
+             !arq_ctx.pending_ack &&
+             !arq_ctx.pending_keepalive &&
+             !arq_ctx.pending_keepalive_ack &&
+             (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0))
+    {
+        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    }
+    arq_unlock();
+    return mode;
 }
 
 static void handle_control_frame_locked(uint8_t subtype,
@@ -1201,6 +1365,9 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
             arq_ctx.snr_ema = snr;
         else
             arq_ctx.snr_ema = (0.8f * arq_ctx.snr_ema) + (0.2f * snr);
+
+        if (arq_fsm.current == state_connected)
+            update_payload_mode_locked();
     }
 
     if (!frame_decoded && (rx_status & 0x4))
