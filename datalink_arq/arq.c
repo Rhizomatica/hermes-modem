@@ -33,7 +33,11 @@
 #include "tcp_interfaces.h"
 
 extern cbuf_handle_t data_tx_buffer_arq;
+extern cbuf_handle_t data_tx_buffer_arq_control;
 extern cbuf_handle_t data_rx_buffer_arq;
+extern void init_model(void);
+extern int arithmetic_encode(const char *msg, uint8_t *output);
+extern int arithmetic_decode(uint8_t *input, int max_len, char *output);
 
 arq_info arq_conn;
 fsm_handle arq_fsm;
@@ -129,6 +133,12 @@ enum {
 #define ARQ_HDR_LEN_HI_IDX 7
 #define ARQ_HDR_LEN_LO_IDX 8
 #define ARQ_PAYLOAD_OFFSET 9
+
+#define ARQ_CONNECT_SESSION_IDX 1
+#define ARQ_CONNECT_PAYLOAD_IDX 2
+#define ARQ_CONNECT_META_SIZE 2
+#define ARQ_CONNECT_MAX_ENCODED (14 - ARQ_CONNECT_META_SIZE)
+#define ARQ_ARITH_BUFFER_SIZE 4096
 
 #define ARQ_CALL_RETRY_SLOTS 4
 #define ARQ_ACCEPT_RETRY_SLOTS 3
@@ -268,6 +278,11 @@ static size_t chunk_size_for_gear_locked(void)
     return cap;
 }
 
+static size_t control_frame_size_locked(void)
+{
+    return 14; /* DATAC13 payload bytes per modem frame */
+}
+
 static int initial_gear_locked(void)
 {
     if (arq_ctx.max_gear >= 2)
@@ -363,9 +378,10 @@ static bool defer_tx_if_busy_locked(time_t now)
     return true;
 }
 
-static int queue_frame_locked(const uint8_t *frame)
+static int queue_frame_locked(const uint8_t *frame, size_t frame_size, bool control_plane)
 {
-    return write_buffer(data_tx_buffer_arq, (uint8_t *)frame, arq_conn.frame_size);
+    cbuf_handle_t tx_buffer = control_plane ? data_tx_buffer_arq_control : data_tx_buffer_arq;
+    return write_buffer(tx_buffer, (uint8_t *)frame, frame_size);
 }
 
 static int build_frame_locked(uint8_t packet_type,
@@ -374,14 +390,15 @@ static int build_frame_locked(uint8_t packet_type,
                               uint8_t ack,
                               const uint8_t *payload,
                               uint16_t payload_len,
-                              uint8_t *out_frame)
+                              uint8_t *out_frame,
+                              size_t frame_size)
 {
-    if (arq_conn.frame_size < ARQ_PAYLOAD_OFFSET)
+    if (frame_size < ARQ_PAYLOAD_OFFSET)
         return -1;
-    if ((size_t)ARQ_PAYLOAD_OFFSET + payload_len > arq_conn.frame_size)
+    if ((size_t)ARQ_PAYLOAD_OFFSET + payload_len > frame_size)
         return -1;
 
-    memset(out_frame, 0, arq_conn.frame_size);
+    memset(out_frame, 0, frame_size);
     out_frame[ARQ_HDR_VERSION_IDX] = ARQ_PROTO_VERSION;
     out_frame[ARQ_HDR_SUBTYPE_IDX] = subtype;
     out_frame[ARQ_HDR_SESSION_IDX] = arq_ctx.session_id;
@@ -394,28 +411,68 @@ static int build_frame_locked(uint8_t packet_type,
     if (payload_len > 0)
         memcpy(out_frame + ARQ_PAYLOAD_OFFSET, payload, payload_len);
 
-    write_frame_header(out_frame, packet_type, arq_conn.frame_size);
+    write_frame_header(out_frame, packet_type, frame_size);
     return 0;
 }
 
-static int build_callsign_pair_payload(const char *src,
-                                       const char *dst,
-                                       uint8_t *payload,
-                                       uint16_t *payload_len)
+static int encode_connect_callsign_payload(const char *msg, uint8_t *encoded, size_t encoded_cap)
 {
-    size_t src_len = strnlen(src, CALLSIGN_MAX_SIZE - 1);
-    size_t dst_len = strnlen(dst, CALLSIGN_MAX_SIZE - 1);
+    uint8_t encoded_full[ARQ_ARITH_BUFFER_SIZE];
+    char normalized[(CALLSIGN_MAX_SIZE * 2) + 2];
+    int n;
 
-    if (src_len == 0 || dst_len == 0)
-        return -1;
-    if (2 + src_len + dst_len > arq_conn.frame_size - ARQ_PAYLOAD_OFFSET)
+    n = snprintf(normalized, sizeof(normalized), "%s", msg);
+    if (n <= 0 || n >= (int)sizeof(normalized))
         return -1;
 
-    payload[0] = (uint8_t)src_len;
-    payload[1] = (uint8_t)dst_len;
-    memcpy(payload + 2, src, src_len);
-    memcpy(payload + 2 + src_len, dst, dst_len);
-    *payload_len = (uint16_t)(2 + src_len + dst_len);
+    for (int i = 0; i < n; i++)
+    {
+        if (normalized[i] >= 'a' && normalized[i] <= 'z')
+            normalized[i] = (char)(normalized[i] - ('a' - 'A'));
+    }
+
+    init_model();
+    int enc_len = arithmetic_encode(normalized, encoded_full);
+    if (enc_len <= 0)
+        return -1;
+
+    if ((size_t)enc_len > encoded_cap)
+        enc_len = (int)encoded_cap;
+
+    memcpy(encoded, encoded_full, (size_t)enc_len);
+    return enc_len;
+}
+
+static bool decode_connect_callsign_payload(const uint8_t *encoded, char *decoded)
+{
+    init_model();
+    if (arithmetic_decode((uint8_t *)encoded, ARQ_CONNECT_MAX_ENCODED, decoded) < 0)
+        return false;
+    return decoded[0] != 0;
+}
+
+static int build_connect_call_accept_frame_locked(uint8_t subtype,
+                                                  uint8_t session_id,
+                                                  const char *msg,
+                                                  uint8_t *frame,
+                                                  size_t frame_size)
+{
+    uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
+    int encoded_len;
+
+    if (frame_size != 14)
+        return -1;
+    if (subtype != ARQ_SUBTYPE_CALL && subtype != ARQ_SUBTYPE_ACCEPT)
+        return -1;
+
+    encoded_len = encode_connect_callsign_payload(msg, encoded, sizeof(encoded));
+    if (encoded_len <= 0)
+        return -1;
+
+    memset(frame, 0, frame_size);
+    frame[ARQ_CONNECT_SESSION_IDX] = session_id;
+    memcpy(frame + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)encoded_len);
+    write_frame_header(frame, PACKET_TYPE_ARQ_DATA, frame_size);
     return 0;
 }
 
@@ -445,57 +502,92 @@ static bool parse_callsign_pair_payload(const uint8_t *payload,
 
 static int send_call_locked(void)
 {
-    uint8_t payload[2 + (CALLSIGN_MAX_SIZE * 2)];
-    uint16_t payload_len = 0;
     uint8_t frame[INT_BUFFER_SIZE];
+    size_t frame_size = control_frame_size_locked();
+    char callsigns[(CALLSIGN_MAX_SIZE * 2) + 2];
 
-    if (build_callsign_pair_payload(arq_conn.src_addr, arq_conn.dst_addr, payload, &payload_len) < 0)
+    if (snprintf(callsigns, sizeof(callsigns), "%s|%s", arq_conn.dst_addr, arq_conn.src_addr) <= 0)
         return -1;
-    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL, ARQ_SUBTYPE_CALL, 0, 0, payload, payload_len, frame) < 0)
+
+    if (build_connect_call_accept_frame_locked(ARQ_SUBTYPE_CALL,
+                                               arq_ctx.session_id,
+                                               callsigns,
+                                               frame,
+                                               frame_size) < 0)
         return -1;
-    return queue_frame_locked(frame);
+    return queue_frame_locked(frame, frame_size, true);
 }
 
 static int send_accept_locked(void)
 {
-    uint8_t payload[2 + (CALLSIGN_MAX_SIZE * 2)];
-    uint16_t payload_len = 0;
     uint8_t frame[INT_BUFFER_SIZE];
+    size_t frame_size = control_frame_size_locked();
+    char callsign[CALLSIGN_MAX_SIZE];
 
-    if (build_callsign_pair_payload(arq_conn.my_call_sign, arq_conn.dst_addr, payload, &payload_len) < 0)
+    if (snprintf(callsign, sizeof(callsign), "%s", arq_conn.my_call_sign) <= 0)
         return -1;
-    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL, ARQ_SUBTYPE_ACCEPT, 0, 0, payload, payload_len, frame) < 0)
+
+    if (build_connect_call_accept_frame_locked(ARQ_SUBTYPE_ACCEPT,
+                                               arq_ctx.session_id,
+                                               callsign,
+                                               frame,
+                                               frame_size) < 0)
         return -1;
-    return queue_frame_locked(frame);
+    return queue_frame_locked(frame, frame_size, true);
 }
 
 static int send_ack_locked(uint8_t ack_seq)
 {
     uint8_t frame[INT_BUFFER_SIZE];
-    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL, ARQ_SUBTYPE_ACK, 0, ack_seq, NULL, 0, frame) < 0)
+    size_t frame_size = control_frame_size_locked();
+    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL,
+                           ARQ_SUBTYPE_ACK,
+                           0,
+                           ack_seq,
+                           NULL,
+                           0,
+                           frame,
+                           frame_size) < 0)
         return -1;
-    return queue_frame_locked(frame);
+    return queue_frame_locked(frame, frame_size, true);
 }
 
 static int send_disconnect_locked(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
-    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL, ARQ_SUBTYPE_DISCONNECT, 0, 0, NULL, 0, frame) < 0)
+    size_t frame_size = control_frame_size_locked();
+    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL,
+                           ARQ_SUBTYPE_DISCONNECT,
+                           0,
+                           0,
+                           NULL,
+                           0,
+                           frame,
+                           frame_size) < 0)
         return -1;
-    return queue_frame_locked(frame);
+    return queue_frame_locked(frame, frame_size, true);
 }
 
 static int send_keepalive_locked(uint8_t subtype)
 {
     uint8_t frame[INT_BUFFER_SIZE];
-    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL, subtype, 0, 0, NULL, 0, frame) < 0)
+    size_t frame_size = control_frame_size_locked();
+    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL,
+                           subtype,
+                           0,
+                           0,
+                           NULL,
+                           0,
+                           frame,
+                           frame_size) < 0)
         return -1;
-    return queue_frame_locked(frame);
+    return queue_frame_locked(frame, frame_size, true);
 }
 
 static void reset_runtime_locked(bool clear_peer_addresses)
 {
     clear_buffer(data_tx_buffer_arq);
+    clear_buffer(data_tx_buffer_arq_control);
     clear_buffer(data_rx_buffer_arq);
 
     arq_ctx.role = ARQ_ROLE_NONE;
@@ -661,12 +753,13 @@ static void queue_next_data_frame_locked(void)
                            (uint8_t)(arq_ctx.rx_expected_seq - 1),
                            arq_ctx.app_tx_queue,
                            (uint16_t)chunk,
-                           frame) < 0)
+                           frame,
+                           arq_conn.frame_size) < 0)
     {
         return;
     }
 
-    if (queue_frame_locked(frame) < 0)
+    if (queue_frame_locked(frame, arq_conn.frame_size, false) < 0)
         return;
 
     memcpy(arq_ctx.outstanding_frame, frame, arq_conn.frame_size);
@@ -764,7 +857,7 @@ static bool do_slot_tx_locked(time_t now)
         {
             if (arq_ctx.data_retries_left > 0 && arq_ctx.outstanding_frame_len == arq_conn.frame_size)
             {
-                queue_frame_locked(arq_ctx.outstanding_frame);
+                queue_frame_locked(arq_ctx.outstanding_frame, arq_ctx.outstanding_frame_len, false);
                 arq_ctx.data_retries_left--;
                 arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s;
                 mark_failure_locked();
@@ -920,6 +1013,7 @@ int arq_init(size_t frame_size, int mode)
 
     memset(&arq_conn, 0, sizeof(arq_conn));
     memset(&arq_ctx, 0, sizeof(arq_ctx));
+    init_model();
 
     arq_conn.frame_size = frame_size;
     arq_conn.mode = mode;
@@ -1190,8 +1284,17 @@ int arq_get_preferred_tx_mode(void)
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     arq_lock();
-    arq_conn.mode = mode;
-    arq_conn.frame_size = frame_size;
+    if (mode == FREEDV_MODE_DATAC1 ||
+        mode == FREEDV_MODE_DATAC3 ||
+        mode == FREEDV_MODE_DATAC4)
+    {
+        arq_conn.mode = mode;
+        arq_conn.frame_size = frame_size;
+        arq_ctx.payload_mode = mode;
+        arq_ctx.max_gear = max_gear_for_frame_size(frame_size);
+        if (arq_ctx.gear > arq_ctx.max_gear)
+            arq_ctx.gear = arq_ctx.max_gear;
+    }
     arq_unlock();
 }
 
@@ -1340,6 +1443,92 @@ static void handle_data_frame_locked(uint8_t session_id,
     }
 }
 
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
+{
+    uint8_t subtype;
+    uint8_t session_id;
+    char decoded[(CALLSIGN_MAX_SIZE * 2) + 2] = {0};
+    char dst[CALLSIGN_MAX_SIZE] = {0};
+    char src[CALLSIGN_MAX_SIZE] = {0};
+    char *sep;
+    time_t now;
+
+    if (!data || frame_size != 14)
+        return false;
+
+    session_id = data[ARQ_CONNECT_SESSION_IDX];
+    if (!decode_connect_callsign_payload(data + ARQ_CONNECT_PAYLOAD_IDX, decoded))
+        return false;
+
+    if (strchr(decoded, '|') != NULL)
+        subtype = ARQ_SUBTYPE_CALL;
+    else
+        subtype = ARQ_SUBTYPE_ACCEPT;
+
+    arq_lock();
+    if (!arq_ctx.initialized)
+    {
+        arq_unlock();
+        return true;
+    }
+
+    now = time(NULL);
+    if (subtype == ARQ_SUBTYPE_CALL)
+    {
+        sep = strchr(decoded, '|');
+        if (!sep)
+        {
+            arq_unlock();
+            return true;
+        }
+
+        *sep = 0;
+        sep++;
+        strncpy(src, sep, CALLSIGN_MAX_SIZE - 1);
+        src[CALLSIGN_MAX_SIZE - 1] = 0;
+        snprintf(dst, sizeof(dst), "%.*s", CALLSIGN_MAX_SIZE - 1, decoded);
+
+        if (dst[0] != 0 &&
+            arq_conn.my_call_sign[0] != 0 &&
+            strncasecmp(arq_conn.my_call_sign, dst, strnlen(dst, CALLSIGN_MAX_SIZE - 1)) == 0 &&
+            (arq_fsm.current == state_listen || arq_fsm.current == state_connected))
+        {
+            strncpy(arq_conn.src_addr, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1);
+            arq_conn.src_addr[CALLSIGN_MAX_SIZE - 1] = 0;
+            strncpy(arq_conn.dst_addr, src, CALLSIGN_MAX_SIZE - 1);
+            arq_conn.dst_addr[CALLSIGN_MAX_SIZE - 1] = 0;
+
+            arq_ctx.role = ARQ_ROLE_CALLEE;
+            arq_ctx.session_id = session_id;
+            arq_ctx.tx_seq = 0;
+            arq_ctx.rx_expected_seq = 0;
+            arq_ctx.waiting_ack = false;
+            arq_ctx.outstanding_frame_len = 0;
+            arq_ctx.outstanding_app_len = 0;
+            arq_ctx.pending_accept = true;
+            arq_ctx.accept_retries_left = 1;
+            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
+            arq_ctx.remote_busy_until = now + ARQ_CHANNEL_GUARD_S;
+        }
+        arq_unlock();
+        return true;
+    }
+
+    if (arq_fsm.current == state_calling_wait_accept &&
+        arq_ctx.role == ARQ_ROLE_CALLER &&
+        session_id == arq_ctx.session_id &&
+        decoded[0] != 0 &&
+        strncasecmp(arq_conn.dst_addr, decoded, strnlen(decoded, CALLSIGN_MAX_SIZE - 1)) == 0)
+    {
+        enter_connected_locked();
+        mark_link_activity_locked(now);
+        mark_success_locked();
+    }
+
+    arq_unlock();
+    return true;
+}
+
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 {
     uint8_t packet_type;
@@ -1351,10 +1540,14 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
     uint16_t payload_len;
     const uint8_t *payload;
 
-    if (!data || frame_size < ARQ_PAYLOAD_OFFSET)
+    if (!data || frame_size < HEADER_SIZE)
         return;
 
     packet_type = (data[0] >> 6) & 0x3;
+
+    if (frame_size < ARQ_PAYLOAD_OFFSET)
+        return;
+
     version = data[ARQ_HDR_VERSION_IDX];
     subtype = data[ARQ_HDR_SUBTYPE_IDX];
     session_id = data[ARQ_HDR_SESSION_IDX];

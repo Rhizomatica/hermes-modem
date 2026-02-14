@@ -52,6 +52,7 @@ extern cbuf_handle_t playback_buffer;
 extern char *freedv_mode_names[];
 
 cbuf_handle_t data_tx_buffer_arq;
+cbuf_handle_t data_tx_buffer_arq_control;
 cbuf_handle_t data_rx_buffer_arq;
 
 cbuf_handle_t data_tx_buffer_broadcast;
@@ -116,8 +117,6 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
     if (!is_supported_split_mode(target_mode))
         return 0;
     if (arq_conn.TRX == TX)
-        return 0;
-    if (size_buffer(data_tx_buffer_arq) > 0 || size_buffer(data_tx_buffer_broadcast) > 0)
         return 0;
 
     pthread_mutex_lock(&modem_freedv_lock);
@@ -185,8 +184,10 @@ try_shm_connect2:
 
     // buffers for the ARQ datalink
     uint8_t *buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
+    uint8_t *buffer_tx_control = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
     uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
     data_tx_buffer_arq = circular_buf_init(buffer_tx, DATA_TX_BUFFER_SIZE);
+    data_tx_buffer_arq_control = circular_buf_init(buffer_tx_control, DATA_TX_BUFFER_SIZE);
     data_rx_buffer_arq = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
 
     // buffers for the broadcast datalink
@@ -336,10 +337,12 @@ int shutdown_modem(generic_modem_t *g_modem)
     circular_buf_free_shm(playback_buffer);
 
     free(data_tx_buffer_arq->buffer);
+    free(data_tx_buffer_arq_control->buffer);
     free(data_rx_buffer_arq->buffer);
     free(data_tx_buffer_broadcast->buffer);
     free(data_rx_buffer_broadcast->buffer);
     circular_buf_free(data_tx_buffer_arq);
+    circular_buf_free(data_tx_buffer_arq_control);
     circular_buf_free(data_rx_buffer_arq);
     circular_buf_free(data_tx_buffer_broadcast);
     circular_buf_free(data_rx_buffer_broadcast);
@@ -577,7 +580,11 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        if (arq_conn.TRX != TX && arq_ready_for_mode_policy())
+        size_t pending_arq = size_buffer(data_tx_buffer_arq) + size_buffer(data_tx_buffer_arq_control);
+        size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
+        if (arq_conn.TRX != TX &&
+            arq_ready_for_mode_policy() &&
+            (pending_arq > 0 || pending_broadcast > 0))
         {
             int pref_tx_mode = arq_get_preferred_tx_mode();
             if (pref_tx_mode >= 0)
@@ -612,11 +619,12 @@ void *tx_thread(void *g_modem)
             data_size = required;
         }
 
-        if (size_buffer(data_tx_buffer_arq) >= required)
+        cbuf_handle_t arq_tx_buffer = (payload_bytes_per_modem_frame == 14) ? data_tx_buffer_arq_control : data_tx_buffer_arq;
+        if (size_buffer(arq_tx_buffer) >= required)
         {
             for (int i = 0; i < frames_per_burst; i++)
             {
-                read_buffer(data_tx_buffer_arq, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
+                read_buffer(arq_tx_buffer, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
             send_modulated_data(modem, data, frames_per_burst);
         }
@@ -631,6 +639,7 @@ void *tx_thread(void *g_modem)
         }
 
         if (size_buffer(data_tx_buffer_arq) < required &&
+            size_buffer(data_tx_buffer_arq_control) < required &&
             size_buffer(data_tx_buffer_broadcast) < required)
         {
             usleep(100000); // sleep for 100ms if there is no data to send
@@ -666,7 +675,12 @@ void *rx_thread(void *g_modem)
                 last_pref_tx_mode = pref_tx_mode;
             }
 
-            if (arq_conn.TRX != TX && pref_rx_mode >= 0)
+            size_t pending_arq = size_buffer(data_tx_buffer_arq) + size_buffer(data_tx_buffer_arq_control);
+            size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
+            if (arq_conn.TRX != TX &&
+                pref_rx_mode >= 0 &&
+                pending_arq == 0 &&
+                pending_broadcast == 0)
                 maybe_switch_modem_mode(modem, pref_rx_mode);
         }
 
@@ -727,6 +741,17 @@ void *rx_thread(void *g_modem)
             tnc_send_bitrate(0, bitrate_bps);
 
             int frame_type = parse_frame_header(data, payload_nbytes);
+            if (frame_type == PACKET_TYPE_ARQ_DATA &&
+                payload_nbytes == 14 &&
+                arq_ready_for_mode_policy() &&
+                arq_handle_incoming_connect_frame(data, payload_nbytes))
+            {
+                printf("Received %zu payload bytes, packet type %d, frame_bytes: %zu\n",
+                       payload_nbytes,
+                       PACKET_TYPE_ARQ_CONTROL,
+                       frame_bytes);
+                continue;
+            }
 
             switch (frame_type)
             {

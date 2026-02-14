@@ -203,9 +203,6 @@ int arithmetic_encode(const char* msg, uint8_t* output) {
             bw_write_bit(&bw, 0);
     }
 
-    printf("\n[ENCODE DONE] Total bits written: %d (%d bytes)\n", bw.total_bits, bw_bytes(&bw));
-    printf("Bit packing: MSB-first within each byte (big-endian per byte)\n");
-
     return bw_bytes(&bw);
 }
 

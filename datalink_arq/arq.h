@@ -68,6 +68,7 @@ int arq_get_control_mode(void);
 int arq_get_preferred_rx_mode(void);
 int arq_get_preferred_tx_mode(void);
 void arq_set_active_modem_mode(int mode, size_t frame_size);
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 
