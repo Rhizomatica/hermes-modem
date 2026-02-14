@@ -110,6 +110,15 @@ typedef struct {
     bool payload_start_pending;
     int payload_mode;
     int control_mode;
+    bool pending_mode_req;
+    bool pending_mode_ack;
+    uint8_t pending_mode;
+    bool mode_req_in_flight;
+    uint8_t mode_req_mode;
+    int mode_req_retries_left;
+    time_t mode_req_deadline;
+    int mode_candidate_mode;
+    int mode_candidate_hits;
 } arq_ctx_t;
 
 static arq_ctx_t arq_ctx;
@@ -121,7 +130,9 @@ enum {
     ARQ_SUBTYPE_DISCONNECT = 4,
     ARQ_SUBTYPE_DATA = 5,
     ARQ_SUBTYPE_KEEPALIVE = 6,
-    ARQ_SUBTYPE_KEEPALIVE_ACK = 7
+    ARQ_SUBTYPE_KEEPALIVE_ACK = 7,
+    ARQ_SUBTYPE_MODE_REQ = 8,
+    ARQ_SUBTYPE_MODE_ACK = 9
 };
 
 #define ARQ_PROTO_VERSION 2
@@ -154,6 +165,10 @@ enum {
 #define ARQ_KEEPALIVE_INTERVAL_S 10
 #define ARQ_KEEPALIVE_MISS_LIMIT 5
 #define ARQ_SNR_HYST_DB 1.0f
+#define ARQ_MODE_REQ_RETRIES 2
+#define ARQ_MODE_SWITCH_HYST_COUNT 3
+#define ARQ_BACKLOG_MIN_DATAC3 120
+#define ARQ_BACKLOG_MIN_DATAC1 500
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -242,50 +257,105 @@ static int payload_mode_from_snr(float snr)
     return FREEDV_MODE_DATAC4;
 }
 
-static void update_payload_mode_locked(void)
+static bool is_payload_mode(int mode)
 {
-    int old_mode = arq_ctx.payload_mode;
-    int new_mode = old_mode;
-    float snr = arq_ctx.snr_ema;
+    return mode == FREEDV_MODE_DATAC1 ||
+           mode == FREEDV_MODE_DATAC3 ||
+           mode == FREEDV_MODE_DATAC4;
+}
 
-    if (arq_ctx.payload_start_pending)
-        return;
-    if (arq_ctx.waiting_ack)
-        return;
-
-    if (snr == 0.0f)
-        return;
-
-    switch (old_mode)
+static int payload_mode_rank(int mode)
+{
+    switch (mode)
     {
     case FREEDV_MODE_DATAC1:
-        if (snr < (5.0f - ARQ_SNR_HYST_DB))
-            new_mode = FREEDV_MODE_DATAC3;
-        break;
+        return 2;
     case FREEDV_MODE_DATAC3:
-        if (snr >= (5.0f + ARQ_SNR_HYST_DB))
-            new_mode = FREEDV_MODE_DATAC1;
-        else if (snr < (0.0f - ARQ_SNR_HYST_DB))
-            new_mode = FREEDV_MODE_DATAC4;
-        break;
+        return 1;
     case FREEDV_MODE_DATAC4:
     default:
-        if (snr >= (0.0f + ARQ_SNR_HYST_DB))
-            new_mode = FREEDV_MODE_DATAC3;
-        break;
+        return 0;
     }
+}
 
-    if (old_mode == 0)
-        new_mode = payload_mode_from_snr(snr);
-
-    if (new_mode == old_mode)
+static void apply_payload_mode_locked(int new_mode, const char *reason)
+{
+    if (!is_payload_mode(new_mode))
+        return;
+    if (arq_ctx.payload_mode == new_mode)
         return;
 
     arq_ctx.payload_mode = new_mode;
     arq_ctx.slot_len_s = mode_slot_len_s(new_mode);
     arq_ctx.tx_period_s = arq_ctx.slot_len_s;
     arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
-    fprintf(stderr, "ARQ payload mode -> %s (snr=%.1f)\n", mode_name(new_mode), snr);
+    fprintf(stderr, "ARQ payload mode -> %s (%s)\n",
+            mode_name(new_mode),
+            reason ? reason : "negotiated");
+}
+
+static int desired_payload_mode_locked(void)
+{
+    int current = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
+    int desired;
+    int current_rank;
+    int desired_rank;
+
+    if (arq_ctx.snr_ema == 0.0f)
+        return current;
+
+    desired = payload_mode_from_snr(arq_ctx.snr_ema);
+    current_rank = payload_mode_rank(current);
+    desired_rank = payload_mode_rank(desired);
+
+    if (desired_rank > current_rank)
+    {
+        if (desired == FREEDV_MODE_DATAC1 && arq_ctx.app_tx_len < ARQ_BACKLOG_MIN_DATAC1)
+            return current;
+        if (desired == FREEDV_MODE_DATAC3 && arq_ctx.app_tx_len < ARQ_BACKLOG_MIN_DATAC3)
+            return current;
+    }
+
+    return desired;
+}
+
+static void update_payload_mode_locked(void)
+{
+    if (arq_ctx.payload_start_pending)
+        return;
+    if (arq_ctx.waiting_ack)
+        return;
+    if (arq_ctx.mode_req_in_flight || arq_ctx.pending_mode_req || arq_ctx.pending_mode_ack)
+        return;
+    if (arq_fsm.current != state_connected)
+        return;
+    if (!is_payload_mode(arq_ctx.payload_mode))
+        return;
+
+    int desired = desired_payload_mode_locked();
+    if (desired == arq_ctx.payload_mode)
+    {
+        arq_ctx.mode_candidate_mode = 0;
+        arq_ctx.mode_candidate_hits = 0;
+        return;
+    }
+
+    if (arq_ctx.mode_candidate_mode != desired)
+    {
+        arq_ctx.mode_candidate_mode = desired;
+        arq_ctx.mode_candidate_hits = 1;
+        return;
+    }
+
+    arq_ctx.mode_candidate_hits++;
+    if (arq_ctx.mode_candidate_hits < ARQ_MODE_SWITCH_HYST_COUNT)
+        return;
+
+    arq_ctx.pending_mode = (uint8_t)desired;
+    arq_ctx.pending_mode_req = true;
+    arq_ctx.mode_candidate_hits = 0;
+    fprintf(stderr, "ARQ mode req -> %s (snr=%.1f backlog=%zu)\n",
+            mode_name(desired), arq_ctx.snr_ema, arq_ctx.app_tx_len);
 }
 
 static int max_gear_for_frame_size(size_t frame_size)
@@ -625,6 +695,30 @@ static int send_keepalive_locked(uint8_t subtype)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+static int send_mode_change_locked(uint8_t subtype, uint8_t mode)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    uint8_t payload[1];
+    size_t frame_size = control_frame_size_locked();
+
+    if (subtype != ARQ_SUBTYPE_MODE_REQ && subtype != ARQ_SUBTYPE_MODE_ACK)
+        return -1;
+    if (!is_payload_mode((int)mode))
+        return -1;
+
+    payload[0] = mode;
+    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL,
+                           subtype,
+                           0,
+                           0,
+                           payload,
+                           1,
+                           frame,
+                           frame_size) < 0)
+        return -1;
+    return queue_frame_locked(frame, frame_size, true);
+}
+
 static void reset_runtime_locked(bool clear_peer_addresses)
 {
     clear_buffer(data_tx_buffer_arq);
@@ -673,6 +767,15 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.payload_start_pending = false;
     arq_ctx.payload_mode = 0;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
+    arq_ctx.pending_mode_req = false;
+    arq_ctx.pending_mode_ack = false;
+    arq_ctx.pending_mode = 0;
+    arq_ctx.mode_req_in_flight = false;
+    arq_ctx.mode_req_mode = 0;
+    arq_ctx.mode_req_retries_left = 0;
+    arq_ctx.mode_req_deadline = 0;
+    arq_ctx.mode_candidate_mode = 0;
+    arq_ctx.mode_candidate_hits = 0;
 
     arq_conn.TRX = RX;
     arq_conn.encryption = false;
@@ -737,6 +840,15 @@ static void enter_connected_locked(void)
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
     arq_ctx.payload_start_pending = true;
+    arq_ctx.pending_mode_req = false;
+    arq_ctx.pending_mode_ack = false;
+    arq_ctx.pending_mode = 0;
+    arq_ctx.mode_req_in_flight = false;
+    arq_ctx.mode_req_mode = 0;
+    arq_ctx.mode_req_retries_left = 0;
+    arq_ctx.mode_req_deadline = 0;
+    arq_ctx.mode_candidate_mode = 0;
+    arq_ctx.mode_candidate_hits = 0;
     arq_ctx.gear = initial_gear_locked();
     arq_fsm.current = state_connected;
     tnc_send_connected();
@@ -888,6 +1000,43 @@ static bool do_slot_tx_locked(time_t now)
         arq_ctx.last_keepalive_tx = now;
         schedule_next_tx_locked(now, false);
         return true;
+    }
+
+    if (arq_ctx.pending_mode_ack)
+    {
+        if (send_mode_change_locked(ARQ_SUBTYPE_MODE_ACK, arq_ctx.pending_mode) == 0)
+        {
+            arq_ctx.pending_mode_ack = false;
+            schedule_next_tx_locked(now, false);
+            return true;
+        }
+    }
+
+    if (arq_ctx.pending_mode_req && !arq_ctx.mode_req_in_flight)
+    {
+        if (send_mode_change_locked(ARQ_SUBTYPE_MODE_REQ, arq_ctx.pending_mode) == 0)
+        {
+            arq_ctx.pending_mode_req = false;
+            arq_ctx.mode_req_in_flight = true;
+            arq_ctx.mode_req_mode = arq_ctx.pending_mode;
+            arq_ctx.mode_req_retries_left = ARQ_MODE_REQ_RETRIES;
+            arq_ctx.mode_req_deadline = now + arq_ctx.ack_timeout_s;
+            schedule_next_tx_locked(now, false);
+            return true;
+        }
+    }
+
+    if (arq_ctx.mode_req_in_flight && now >= arq_ctx.mode_req_deadline)
+    {
+        if (arq_ctx.mode_req_retries_left > 0 &&
+            send_mode_change_locked(ARQ_SUBTYPE_MODE_REQ, arq_ctx.mode_req_mode) == 0)
+        {
+            arq_ctx.mode_req_retries_left--;
+            arq_ctx.mode_req_deadline = now + arq_ctx.ack_timeout_s;
+            schedule_next_tx_locked(now, true);
+            return true;
+        }
+        arq_ctx.mode_req_in_flight = false;
     }
 
     if (arq_ctx.pending_keepalive)
@@ -1286,6 +1435,9 @@ int arq_get_preferred_rx_mode(void)
              !arq_ctx.pending_disconnect &&
              !arq_ctx.pending_accept &&
              !arq_ctx.pending_ack &&
+             !arq_ctx.pending_mode_req &&
+             !arq_ctx.pending_mode_ack &&
+             !arq_ctx.mode_req_in_flight &&
              !arq_ctx.pending_keepalive &&
              !arq_ctx.pending_keepalive_ack &&
              !arq_ctx.keepalive_waiting &&
@@ -1324,6 +1476,9 @@ int arq_get_preferred_tx_mode(void)
              !arq_ctx.pending_disconnect &&
              !arq_ctx.pending_accept &&
              !arq_ctx.pending_ack &&
+             !arq_ctx.pending_mode_req &&
+             !arq_ctx.pending_mode_ack &&
+             !arq_ctx.mode_req_in_flight &&
              !arq_ctx.pending_keepalive &&
              !arq_ctx.pending_keepalive_ack &&
              (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0))
@@ -1431,6 +1586,36 @@ static void handle_control_frame_locked(uint8_t subtype,
         update_payload_mode_locked();
         return;
 
+    case ARQ_SUBTYPE_MODE_REQ:
+        if (arq_fsm.current != state_connected)
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        if (payload_len < 1 || !is_payload_mode(payload[0]))
+            return;
+        arq_ctx.pending_mode = payload[0];
+        arq_ctx.pending_mode_ack = true;
+        arq_ctx.mode_req_in_flight = false;
+        apply_payload_mode_locked(payload[0], "peer req");
+        mark_link_activity_locked(now);
+        return;
+
+    case ARQ_SUBTYPE_MODE_ACK:
+        if (arq_fsm.current != state_connected)
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        if (!arq_ctx.mode_req_in_flight)
+            return;
+        if (payload_len < 1 || !is_payload_mode(payload[0]))
+            return;
+        arq_ctx.mode_req_in_flight = false;
+        arq_ctx.mode_req_retries_left = 0;
+        arq_ctx.mode_candidate_hits = 0;
+        apply_payload_mode_locked(payload[0], "peer ack");
+        mark_link_activity_locked(now);
+        return;
+
     case ARQ_SUBTYPE_DISCONNECT:
         if (session_id != arq_ctx.session_id)
             return;
@@ -1481,6 +1666,8 @@ static void handle_data_frame_locked(uint8_t session_id,
         mark_link_activity_locked(now);
         write_buffer(data_rx_buffer_arq, (uint8_t *)payload, payload_len);
         arq_ctx.rx_expected_seq++;
+        if (arq_ctx.payload_start_pending)
+            arq_ctx.payload_start_pending = false;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
@@ -1640,9 +1827,6 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
             arq_ctx.snr_ema = snr;
         else
             arq_ctx.snr_ema = (0.8f * arq_ctx.snr_ema) + (0.2f * snr);
-
-        if (arq_fsm.current == state_connected)
-            update_payload_mode_locked();
     }
 
     if (!frame_decoded && (rx_status & 0x4))
