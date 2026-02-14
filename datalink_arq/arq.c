@@ -190,6 +190,8 @@ enum {
 #define ARQ_MODE_SWITCH_HYST_COUNT 3
 #define ARQ_BACKLOG_MIN_DATAC3 120
 #define ARQ_BACKLOG_MIN_DATAC1 500
+/* Stability hotfix: keep payload on DATAC4 until split-mode negotiation is hardened. */
+#define ARQ_ENABLE_MODE_UPGRADE 0
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -386,6 +388,8 @@ static int desired_payload_mode_locked(void)
 
 static void update_payload_mode_locked(void)
 {
+    if (!ARQ_ENABLE_MODE_UPGRADE)
+        return;
     if (arq_ctx.payload_start_pending)
         return;
     if (arq_ctx.waiting_ack)
