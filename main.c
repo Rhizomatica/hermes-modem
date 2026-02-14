@@ -347,7 +347,7 @@ int main(int argc, char *argv[])
     broadcast_run(&g_modem);
 
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
-    interfaces_init(base_tcp_port, broadcast_port);
+    interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame);
 
 
     // we block somewhere here until shutdown

@@ -26,7 +26,7 @@
 
 #define TCP_BLOCK_SIZE 128
 
-int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port);
+int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t payload_bytes_per_frame);
 void interfaces_shutdown();
 
 // ARQ TCP/IP server threads

@@ -45,6 +45,7 @@
 static pthread_t tid[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
+static size_t broadcast_payload_bytes_per_frame = 0;
 
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_rx_buffer_arq;
@@ -365,7 +366,7 @@ void *control_worker_thread_rx(void *conn)
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    size_t frame_size = modem_get_payload_bytes_per_frame();
+    size_t frame_size = broadcast_payload_bytes_per_frame;
     uint8_t *frame_buffer = NULL;
     uint8_t *kiss_buffer = NULL;
 
@@ -407,7 +408,7 @@ void *send_thread(void *client_socket_ptr)
 void *recv_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    size_t frame_size = modem_get_payload_bytes_per_frame();
+    size_t frame_size = broadcast_payload_bytes_per_frame;
     uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
     uint8_t decoded_frame[MAX_PAYLOAD];
 
@@ -589,10 +590,11 @@ void tnc_send_disconnected()
         printf("Error sending disconnected message: %s\n", strerror(errno));
 }
 
-int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
+int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t payload_bytes_per_frame)
 {
     arq_tcp_base_port_cfg = arq_tcp_base_port;
     broadcast_tcp_port_cfg = broadcast_tcp_port;
+    broadcast_payload_bytes_per_frame = payload_bytes_per_frame;
 
     /*************** ARQ TCP ports *******************/
     status_ctl = NET_NONE;
