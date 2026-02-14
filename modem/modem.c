@@ -59,6 +59,20 @@ cbuf_handle_t data_rx_buffer_broadcast;
 
 pthread_t tx_thread_tid, rx_thread_tid;
 static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t modem_freedv_epoch = 1;
+
+static bool arq_ready_for_mode_policy(void)
+{
+    return arq_fsm.current != NULL && arq_conn.frame_size > 0;
+}
+
+static bool is_supported_split_mode(int mode)
+{
+    return mode == FREEDV_MODE_DATAC1 ||
+           mode == FREEDV_MODE_DATAC3 ||
+           mode == FREEDV_MODE_DATAC4 ||
+           mode == FREEDV_MODE_DATAC13;
+}
 
 static const char *mode_name_from_enum(int mode)
 {
@@ -99,7 +113,7 @@ static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
 
 static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
 {
-    if (target_mode < 0)
+    if (!is_supported_split_mode(target_mode))
         return 0;
     if (arq_conn.TRX == TX)
         return 0;
@@ -108,9 +122,12 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
 
     pthread_mutex_lock(&modem_freedv_lock);
     int current_mode = g_modem->mode;
-    pthread_mutex_unlock(&modem_freedv_lock);
     if (current_mode == target_mode)
+    {
+        pthread_mutex_unlock(&modem_freedv_lock);
         return 0;
+    }
+    pthread_mutex_unlock(&modem_freedv_lock);
 
     struct freedv *new_freedv = open_freedv_mode_locked(target_mode);
     if (!new_freedv)
@@ -122,10 +139,17 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
     size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
 
     pthread_mutex_lock(&modem_freedv_lock);
+    if (g_modem->mode == target_mode)
+    {
+        pthread_mutex_unlock(&modem_freedv_lock);
+        freedv_close(new_freedv);
+        return 0;
+    }
     struct freedv *old_freedv = g_modem->freedv;
     g_modem->freedv = new_freedv;
     g_modem->mode = target_mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
+    modem_freedv_epoch++;
     pthread_mutex_unlock(&modem_freedv_lock);
     arq_set_active_modem_mode(target_mode, payload_bytes_per_modem_frame);
 
@@ -426,8 +450,10 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out)
 {
-    pthread_mutex_lock(&modem_freedv_lock);
-    struct freedv *freedv = g_modem->freedv;
+    struct freedv *freedv = NULL;
+    uint64_t epoch = 0;
+    size_t nin = 0;
+    int input_size = 0;
 
     static int frames_received = 0;
     static int debug_counter = 0;
@@ -435,7 +461,12 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     static int32_t *buffer_in = NULL;
     static int buffer_size = 0;
 
-    int input_size = freedv_get_n_max_modem_samples(freedv);
+    pthread_mutex_lock(&modem_freedv_lock);
+    freedv = g_modem->freedv;
+    epoch = modem_freedv_epoch;
+    input_size = freedv_get_n_max_modem_samples(freedv);
+    nin = freedv_nin(freedv);
+    pthread_mutex_unlock(&modem_freedv_lock);
     
     // Allocate buffers on first call or if size changed
     if (buffer_size < input_size)
@@ -447,14 +478,11 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
         buffer_size = input_size;
     }
 
-    size_t nin = freedv_nin(freedv);
-
     // Safety check: nin should not be larger than buffer
     if (nin > (size_t)input_size)
     {
         printf("[DEBUG RX] ERROR: nin=%zu exceeds input_size=%d\n", nin, input_size);
         *nbytes_out = 0;
-        pthread_mutex_unlock(&modem_freedv_lock);
         return -1;
     }
 
@@ -485,6 +513,14 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
         {
             demod_in[i] = (int16_t)(buffer_in[i] >> 16);
         }
+    }
+
+    pthread_mutex_lock(&modem_freedv_lock);
+    if (g_modem->freedv != freedv || modem_freedv_epoch != epoch)
+    {
+        pthread_mutex_unlock(&modem_freedv_lock);
+        *nbytes_out = 0;
+        return 0;
     }
 
     // ALWAYS call freedv_rawdatarx - even when nin==0, it processes internal buffers
@@ -541,7 +577,7 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        if (arq_conn.TRX != TX)
+        if (arq_conn.TRX != TX && arq_ready_for_mode_policy())
         {
             int pref_tx_mode = arq_get_preferred_tx_mode();
             if (pref_tx_mode >= 0)
@@ -617,17 +653,22 @@ void *rx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        int pref_rx_mode = arq_get_preferred_rx_mode();
-        int pref_tx_mode = arq_get_preferred_tx_mode();
-        if (pref_rx_mode != last_pref_rx_mode || pref_tx_mode != last_pref_tx_mode)
+        int pref_rx_mode = -1;
+        int pref_tx_mode = -1;
+        if (arq_ready_for_mode_policy())
         {
-            fprintf(stderr, "ARQ preferred modes: rx=%d tx=%d\n", pref_rx_mode, pref_tx_mode);
-            last_pref_rx_mode = pref_rx_mode;
-            last_pref_tx_mode = pref_tx_mode;
-        }
+            pref_rx_mode = arq_get_preferred_rx_mode();
+            pref_tx_mode = arq_get_preferred_tx_mode();
+            if (pref_rx_mode != last_pref_rx_mode || pref_tx_mode != last_pref_tx_mode)
+            {
+                fprintf(stderr, "ARQ preferred modes: rx=%d tx=%d\n", pref_rx_mode, pref_tx_mode);
+                last_pref_rx_mode = pref_rx_mode;
+                last_pref_tx_mode = pref_tx_mode;
+            }
 
-        if (arq_conn.TRX != TX && pref_rx_mode >= 0)
-            maybe_switch_modem_mode(modem, pref_rx_mode);
+            if (arq_conn.TRX != TX && pref_rx_mode >= 0)
+                maybe_switch_modem_mode(modem, pref_rx_mode);
+        }
 
         uint32_t bitrate_bps = 0;
         size_t frame_bytes = 0;
@@ -673,7 +714,8 @@ void *rx_thread(void *g_modem)
             freedv_get_modem_stats(modem->freedv, &sync, &snr_est);
         }
         pthread_mutex_unlock(&modem_freedv_lock);
-        arq_update_link_metrics(sync, snr_est, rx_status, nbytes_out > 0);
+        if (arq_ready_for_mode_policy())
+            arq_update_link_metrics(sync, snr_est, rx_status, nbytes_out > 0);
 
         if (nbytes_out > 0)
         {
@@ -690,7 +732,8 @@ void *rx_thread(void *g_modem)
             {
             case PACKET_TYPE_ARQ_CONTROL:
             case PACKET_TYPE_ARQ_DATA:
-                arq_handle_incoming_frame(data, payload_nbytes);
+                if (arq_ready_for_mode_policy())
+                    arq_handle_incoming_frame(data, payload_nbytes);
                 break;
             case PACKET_TYPE_BROADCAST_CONTROL:
             case PACKET_TYPE_BROADCAST_DATA:
