@@ -35,8 +35,11 @@
 
 #define CALL_BURST_SIZE 3 // 3 frames
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "fsm.h"
 
 typedef struct
 {
@@ -44,46 +47,27 @@ typedef struct
     char my_call_sign[CALLSIGN_MAX_SIZE];
     char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
     bool encryption;
-    bool call_burst_size;
+    int call_burst_size;
     bool listen;
     int bw; // in Hz
+    size_t frame_size;
 } arq_info;
 
-
-// frame sizes, no CRC enabled, modes 0 to 16.
-// extern uint32_t mercury_frame_size[];
-
-// FSM states
-void state_listen(int event);
-void state_idle(int event);
-void state_connecting_caller(int event);
-void state_connecting_callee(int event);
+extern arq_info arq_conn;
+extern fsm_handle arq_fsm;
 
 // ARQ core functions
-int arq_init();
+int arq_init(size_t frame_size);
 void arq_shutdown();
-
-void print_arq_stats();
-
-// DSP threads
-void *dsp_thread_tx(void *conn);
-void *dsp_thread_rx(void *conn);
+void arq_tick_1hz(void);
+bool arq_is_link_connected(void);
+int arq_queue_data(const uint8_t *data, size_t len);
+void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
 
 // auxiliary functions
 void clear_connection_data();
 void reset_arq_info(arq_info *arq_conn);
 void call_remote();
 void callee_accept_connection();
-int check_for_incoming_connection(uint8_t *data);
-int check_for_connection_acceptance_caller(uint8_t *data);
-char *get_timestamp();
-
-// file crc6.cc
-uint16_t crc6_0X6F(uint16_t crc, const uint8_t *data, int data_len);
-
-// from arith.cc
-void init_model();
-int arithmetic_encode(const char* msg, uint8_t* output);
-int arithmetic_decode(uint8_t* input, int max_len, char* output);
 
 #endif

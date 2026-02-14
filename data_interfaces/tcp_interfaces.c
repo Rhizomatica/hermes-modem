@@ -208,7 +208,8 @@ void *data_worker_thread_rx(void *conn)
             continue;
         }
 
-        write_buffer(data_tx_buffer_arq, buffer, n);
+        if (arq_queue_data(buffer, (size_t)n) < 0)
+            fprintf(stderr, "Failed to queue ARQ data frame(s)\n");
     }
 
     free(buffer);
@@ -235,6 +236,8 @@ void *control_worker_thread_tx(void *conn)
             tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
 
         }
+
+        arq_tick_1hz();
 
         sleep(1);
         counter++;
@@ -303,13 +306,13 @@ void *control_worker_thread_rx(void *conn)
         // now we parse the commands
         if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
         {
-            sscanf(buffer,"MYCALL %s", arq_conn.my_call_sign);
+            sscanf(buffer,"MYCALL %15s", arq_conn.my_call_sign);
             goto send_ok;
         }
         
         if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
         {
-            sscanf(buffer,"LISTEN %s", temp);
+            sscanf(buffer,"LISTEN %15s", temp);
             if (temp[1] == 'N') // ON
             {
                 fsm_dispatch(&arq_fsm, EV_START_LISTEN);
@@ -324,7 +327,7 @@ void *control_worker_thread_rx(void *conn)
 
         if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
         {
-            sscanf(buffer,"PUBLIC %s", temp);
+            sscanf(buffer,"PUBLIC %15s", temp);
             if (temp[1] == 'N') // ON
                 arq_conn.encryption = false;
             if (temp[1] == 'F') // OFF
@@ -341,7 +344,7 @@ void *control_worker_thread_rx(void *conn)
 
         if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
         {
-            sscanf(buffer,"CONNECT %s %s", arq_conn.src_addr, arq_conn.dst_addr);
+            sscanf(buffer,"CONNECT %15s %15s", arq_conn.src_addr, arq_conn.dst_addr);
             fsm_dispatch(&arq_fsm, EV_LINK_CALL_REMOTE);
             goto send_ok;
         }

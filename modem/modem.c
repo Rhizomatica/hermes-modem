@@ -29,6 +29,7 @@
 #include "modem.h"
 #include "ring_buffer_posix.h"
 #include "framer.h"
+#include "arq.h"
 #include "tcp_interfaces.h"
 #include "freedv_api.h"
 #include "fsk.h"
@@ -524,7 +525,7 @@ void *rx_thread(void *g_modem)
             {
             case PACKET_TYPE_ARQ_CONTROL:
             case PACKET_TYPE_ARQ_DATA:
-                write_buffer(data_rx_buffer_arq, data, payload_nbytes);
+                arq_handle_incoming_frame(data, payload_nbytes);
                 break;
             case PACKET_TYPE_BROADCAST_CONTROL:
             case PACKET_TYPE_BROADCAST_DATA:
