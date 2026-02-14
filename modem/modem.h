@@ -45,8 +45,6 @@ int run_tests_rx(generic_modem_t *g_modem);
 
 int shutdown_modem(generic_modem_t *g_modem);
 
-size_t modem_get_payload_bytes_per_frame(void);
-
 // always send the frame size in bytes_in
 int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst);
 

@@ -39,12 +39,18 @@
 #include "arq.h"
 #include "fsm.h"
 #include "defines_modem.h"
-#include "modem.h"
 #include "kiss.h"
 
 static pthread_t tid[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
+static size_t broadcast_frame_size_cfg = 0;
+
+#if defined(MSG_NOSIGNAL)
+#define HERMES_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define HERMES_SEND_FLAGS 0
+#endif
 
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_rx_buffer_arq;
@@ -66,7 +72,7 @@ static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 
     while (total_sent < len)
     {
-        ssize_t sent = send(socket_fd, buffer + total_sent, len - total_sent, 0);
+        ssize_t sent = send(socket_fd, buffer + total_sent, len - total_sent, HERMES_SEND_FLAGS);
         if (sent <= 0)
         {
             return -1;
@@ -365,7 +371,7 @@ void *control_worker_thread_rx(void *conn)
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    size_t frame_size = modem_get_payload_bytes_per_frame();
+    size_t frame_size = broadcast_frame_size_cfg;
     uint8_t *frame_buffer = NULL;
     uint8_t *kiss_buffer = NULL;
 
@@ -407,7 +413,7 @@ void *send_thread(void *client_socket_ptr)
 void *recv_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    size_t frame_size = modem_get_payload_bytes_per_frame();
+    size_t frame_size = broadcast_frame_size_cfg;
     uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
     uint8_t decoded_frame[MAX_PAYLOAD];
 
@@ -590,10 +596,11 @@ void tnc_send_disconnected()
         printf("Error sending disconnected message: %s\n", strerror(errno));
 }
 
-int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port)
+int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
 {
     arq_tcp_base_port_cfg = arq_tcp_base_port;
     broadcast_tcp_port_cfg = broadcast_tcp_port;
+    broadcast_frame_size_cfg = broadcast_frame_size;
 
     /*************** ARQ TCP ports *******************/
     status_ctl = NET_NONE;

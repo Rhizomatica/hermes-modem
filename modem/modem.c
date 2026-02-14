@@ -57,12 +57,6 @@ cbuf_handle_t data_tx_buffer_broadcast;
 cbuf_handle_t data_rx_buffer_broadcast;
 
 pthread_t tx_thread_tid, rx_thread_tid;
-static size_t modem_payload_bytes_per_frame = 0;
-
-size_t modem_get_payload_bytes_per_frame(void)
-{
-    return modem_payload_bytes_per_frame;
-}
 
 int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode)
 {
@@ -116,7 +110,6 @@ try_shm_connect2:
     size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
     g_modem->mode = mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
-    modem_payload_bytes_per_frame = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, freedv_mode_names[mode], frames_per_burst, 3);

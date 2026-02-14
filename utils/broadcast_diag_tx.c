@@ -19,6 +19,12 @@
 #define DEFAULT_INTERVAL_MS 200
 #define CONFIG_PACKET_SIZE 9
 
+#if defined(MSG_NOSIGNAL)
+#define DIAG_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define DIAG_SEND_FLAGS 0
+#endif
+
 static volatile sig_atomic_t running = 1;
 
 static void handle_signal(int sig)
@@ -62,7 +68,7 @@ static int send_all(int socket_fd, const uint8_t *buffer, size_t len)
     size_t sent_total = 0;
     while (sent_total < len)
     {
-        ssize_t sent = send(socket_fd, buffer + sent_total, len - sent_total, 0);
+        ssize_t sent = send(socket_fd, buffer + sent_total, len - sent_total, DIAG_SEND_FLAGS);
         if (sent <= 0)
         {
             return -1;
