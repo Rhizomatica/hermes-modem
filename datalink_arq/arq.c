@@ -1020,6 +1020,7 @@ void arq_tick_1hz(void)
         }
 
         if (link_idle &&
+            arq_ctx.role == ARQ_ROLE_CALLER &&
             !arq_ctx.keepalive_waiting &&
             (now - last_link_activity) >= arq_ctx.keepalive_interval_s)
         {
