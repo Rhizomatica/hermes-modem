@@ -62,6 +62,7 @@ void arq_tick_1hz(void);
 bool arq_is_link_connected(void);
 int arq_queue_data(const uint8_t *data, size_t len);
 int arq_get_tx_backlog_bytes(void);
+int arq_get_speed_level(void);
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 

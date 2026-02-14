@@ -819,6 +819,20 @@ int arq_get_tx_backlog_bytes(void)
     return (int)pending;
 }
 
+int arq_get_speed_level(void)
+{
+    int gear = 0;
+
+    arq_lock();
+    if (arq_ctx.initialized)
+        gear = arq_ctx.gear;
+    arq_unlock();
+
+    if (gear < 0)
+        gear = 0;
+    return gear;
+}
+
 static void handle_control_frame_locked(uint8_t subtype,
                                         uint8_t session_id,
                                         uint8_t ack,

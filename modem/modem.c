@@ -500,8 +500,15 @@ void *rx_thread(void *g_modem)
     struct freedv *freedv = ((generic_modem_t *)g_modem)->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     int frames_per_burst = freedv_get_frames_per_burst(freedv);
+    uint32_t bits_per_modem_frame = (uint32_t)freedv_get_bits_per_modem_frame(freedv);
+    uint32_t tx_modem_samples = (uint32_t)freedv_get_n_tx_modem_samples(freedv);
+    uint32_t modem_sample_rate = (uint32_t)freedv_get_modem_sample_rate(freedv);
+    uint32_t bitrate_bps = 0;
     uint8_t *data = (uint8_t *)malloc(bytes_per_modem_frame * frames_per_burst);
     size_t nbytes_out = 0;
+
+    if (tx_modem_samples > 0)
+        bitrate_bps = (uint32_t)(((uint64_t)bits_per_modem_frame * modem_sample_rate + (tx_modem_samples / 2)) / tx_modem_samples);
 
     if (!data)
     {
@@ -530,6 +537,7 @@ void *rx_thread(void *g_modem)
                 continue;
 
             tnc_send_sn(snr_est);
+            tnc_send_bitrate((uint32_t)arq_get_speed_level(), bitrate_bps);
 
             int frame_type = parse_frame_header(data, payload_nbytes);
 

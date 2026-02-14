@@ -52,6 +52,7 @@ void tnc_send_connected();
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
 void tnc_send_sn(float snr);
+void tnc_send_bitrate(uint32_t speed_level, uint32_t bps);
 char *get_timestamp();
 
 #endif // TCP_INTERFACES_H_

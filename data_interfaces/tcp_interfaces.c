@@ -46,6 +46,8 @@ static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
 static size_t broadcast_frame_size_cfg = 0;
 static float last_sn_value = 0.0f;
+static uint32_t last_bitrate_sl = 0;
+static uint32_t last_bitrate_bps = 0;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -377,6 +379,12 @@ void *control_worker_thread_rx(void *conn)
             continue;
         }
 
+        if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
+        {
+            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps);
+            continue;
+        }
+
         if (!memcmp(buffer, "P2P", strlen("P2P")))
         {
             // VARA compatibility no-op.
@@ -655,6 +663,15 @@ void tnc_send_sn(float snr)
     char buffer[64];
     last_sn_value = snr;
     snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+}
+
+void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
+{
+    char buffer[64];
+    last_bitrate_sl = speed_level;
+    last_bitrate_bps = bps;
+    snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
