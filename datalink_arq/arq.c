@@ -1125,6 +1125,10 @@ int arq_get_preferred_rx_mode(void)
     {
         mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
     }
+    else if (arq_ctx.initialized && arq_ctx.pending_accept)
+    {
+        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    }
     else if (arq_ctx.initialized &&
              arq_fsm.current == state_connected &&
              !arq_ctx.disconnect_in_progress &&
@@ -1155,6 +1159,10 @@ int arq_get_preferred_tx_mode(void)
     {
         mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
     }
+    else if (arq_ctx.initialized && arq_ctx.pending_accept)
+    {
+        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    }
     else if (arq_ctx.initialized &&
              arq_fsm.current == state_connected &&
              !arq_ctx.disconnect_in_progress &&
@@ -1169,6 +1177,14 @@ int arq_get_preferred_tx_mode(void)
     }
     arq_unlock();
     return mode;
+}
+
+void arq_set_active_modem_mode(int mode, size_t frame_size)
+{
+    arq_lock();
+    arq_conn.mode = mode;
+    arq_conn.frame_size = frame_size;
+    arq_unlock();
 }
 
 static void handle_control_frame_locked(uint8_t subtype,

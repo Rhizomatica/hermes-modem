@@ -59,7 +59,6 @@ cbuf_handle_t data_rx_buffer_broadcast;
 
 pthread_t tx_thread_tid, rx_thread_tid;
 static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
-static bool split_mode_switch_enabled = false;
 
 static const char *mode_name_from_enum(int mode)
 {
@@ -100,8 +99,6 @@ static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
 
 static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
 {
-    if (!split_mode_switch_enabled)
-        return 0;
     if (target_mode < 0)
         return 0;
     if (arq_conn.TRX == TX)
@@ -129,9 +126,8 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
     g_modem->freedv = new_freedv;
     g_modem->mode = target_mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
-    arq_conn.mode = target_mode;
-    arq_conn.frame_size = payload_bytes_per_modem_frame;
     pthread_mutex_unlock(&modem_freedv_lock);
+    arq_set_active_modem_mode(target_mode, payload_bytes_per_modem_frame);
 
     if (old_freedv)
         freedv_close(old_freedv);
@@ -192,14 +188,12 @@ try_shm_connect2:
     size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2;
     g_modem->mode = mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
-    split_mode_switch_enabled = getenv("HERMES_ENABLE_SPLIT_SWITCH") != NULL;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     printf("Opened FreeDV modem with mode %d (%s), frames per burst: %d, verbosity: %d\n", mode, mode_name_from_enum(mode), frames_per_burst, 0);
     printf("Modem expects sample rate: %d Hz\n", modem_sample_rate);
     printf("Modem payload bytes per frame: %zu\n", payload_bytes_per_modem_frame);
-    if (split_mode_switch_enabled)
-        printf("Experimental split-mode switching: ENABLED\n");
+    printf("Split control/data mode switching: ENABLED\n");
     
     if (modem_sample_rate != 8000)
     {
@@ -333,9 +327,7 @@ int shutdown_modem(generic_modem_t *g_modem)
 
 int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst)
 {
-    bool use_lock = split_mode_switch_enabled;
-    if (use_lock)
-        pthread_mutex_lock(&modem_freedv_lock);
+    pthread_mutex_lock(&modem_freedv_lock);
     struct freedv *freedv = g_modem->freedv;
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     size_t payload_bytes = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC16 */
@@ -361,8 +353,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         printf("ERROR: Failed to allocate TX buffer\n");
         if (tx_buffer) free(tx_buffer);
         if (mod_out_short) free(mod_out_short);
-        if (use_lock)
-            pthread_mutex_unlock(&modem_freedv_lock);
+        pthread_mutex_unlock(&modem_freedv_lock);
         return -1;
     }
 
@@ -406,6 +397,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     {
         tx_buffer[total_samples++] = 0;
     }
+    pthread_mutex_unlock(&modem_freedv_lock);
 
 
     /* === STEP 2: Key transmitter and send pre-generated audio === */
@@ -429,16 +421,12 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     free(tx_buffer);
     free(mod_out_short);
 
-    if (use_lock)
-        pthread_mutex_unlock(&modem_freedv_lock);
     return 0;
 }
 
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out)
 {
-    bool use_lock = split_mode_switch_enabled;
-    if (use_lock)
-        pthread_mutex_lock(&modem_freedv_lock);
+    pthread_mutex_lock(&modem_freedv_lock);
     struct freedv *freedv = g_modem->freedv;
 
     static int frames_received = 0;
@@ -466,8 +454,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     {
         printf("[DEBUG RX] ERROR: nin=%zu exceeds input_size=%d\n", nin, input_size);
         *nbytes_out = 0;
-        if (use_lock)
-            pthread_mutex_unlock(&modem_freedv_lock);
+        pthread_mutex_unlock(&modem_freedv_lock);
         return -1;
     }
 
@@ -537,8 +524,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
                frames_received, *nbytes_out, snr_est);
     }
 
-    if (use_lock)
-        pthread_mutex_unlock(&modem_freedv_lock);
+    pthread_mutex_unlock(&modem_freedv_lock);
     return 0;
 }
 
@@ -555,7 +541,7 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        if (split_mode_switch_enabled && arq_conn.TRX != TX)
+        if (arq_conn.TRX != TX)
         {
             int pref_tx_mode = arq_get_preferred_tx_mode();
             if (pref_tx_mode >= 0)
@@ -640,7 +626,7 @@ void *rx_thread(void *g_modem)
             last_pref_tx_mode = pref_tx_mode;
         }
 
-        if (split_mode_switch_enabled && arq_conn.TRX != TX && pref_rx_mode >= 0)
+        if (arq_conn.TRX != TX && pref_rx_mode >= 0)
             maybe_switch_modem_mode(modem, pref_rx_mode);
 
         uint32_t bitrate_bps = 0;
