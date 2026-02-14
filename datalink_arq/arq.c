@@ -113,7 +113,7 @@ enum {
 
 #define ARQ_CALL_RETRY_SLOTS 4
 #define ARQ_ACCEPT_RETRY_SLOTS 3
-#define ARQ_DATA_RETRY_SLOTS 3
+#define ARQ_DATA_RETRY_SLOTS 6
 #define ARQ_CONNECT_GRACE_SLOTS 2
 #define ARQ_CHANNEL_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
@@ -729,7 +729,7 @@ int arq_init(size_t frame_size, int mode)
     arq_ctx.max_call_retries = ARQ_CALL_RETRY_SLOTS;
     arq_ctx.max_accept_retries = ARQ_ACCEPT_RETRY_SLOTS;
     arq_ctx.max_data_retries = ARQ_DATA_RETRY_SLOTS;
-    arq_ctx.ack_timeout_s = arq_ctx.tx_period_s + ARQ_CHANNEL_GUARD_S;
+    arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
     arq_ctx.connect_timeout_s =
         (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 2)) +
         ARQ_CONNECT_GRACE_SLOTS;
