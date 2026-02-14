@@ -78,7 +78,21 @@ typedef struct {
     bool pending_accept;
     bool pending_ack;
     bool pending_disconnect;
+    bool pending_keepalive;
+    bool pending_keepalive_ack;
     uint8_t pending_ack_seq;
+    bool keepalive_waiting;
+    int keepalive_misses;
+    int keepalive_interval_s;
+    int keepalive_miss_limit;
+    time_t keepalive_deadline;
+    time_t last_keepalive_rx;
+    time_t last_keepalive_tx;
+
+    bool disconnect_in_progress;
+    bool disconnect_to_no_client;
+    int disconnect_retries_left;
+    time_t disconnect_deadline;
 
     size_t app_tx_len;
     uint8_t app_tx_queue[DATA_TX_BUFFER_SIZE];
@@ -97,7 +111,9 @@ enum {
     ARQ_SUBTYPE_ACCEPT = 2,
     ARQ_SUBTYPE_ACK = 3,
     ARQ_SUBTYPE_DISCONNECT = 4,
-    ARQ_SUBTYPE_DATA = 5
+    ARQ_SUBTYPE_DATA = 5,
+    ARQ_SUBTYPE_KEEPALIVE = 6,
+    ARQ_SUBTYPE_KEEPALIVE_ACK = 7
 };
 
 #define ARQ_PROTO_VERSION 2
@@ -117,12 +133,16 @@ enum {
 #define ARQ_CONNECT_GRACE_SLOTS 2
 #define ARQ_CHANNEL_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
+#define ARQ_DISCONNECT_RETRY_SLOTS 2
+#define ARQ_KEEPALIVE_INTERVAL_S 10
+#define ARQ_KEEPALIVE_MISS_LIMIT 5
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
 static void state_listen(int event);
 static void state_calling_wait_accept(int event);
 static void state_connected(int event);
+static void state_disconnecting(int event);
 
 static inline void arq_lock(void)
 {
@@ -230,6 +250,13 @@ static void mark_failure_locked(void)
     arq_ctx.failure_streak++;
     arq_ctx.success_streak = 0;
     maybe_gear_down_locked();
+}
+
+static void mark_link_activity_locked(time_t now)
+{
+    arq_ctx.last_keepalive_rx = now;
+    arq_ctx.keepalive_waiting = false;
+    arq_ctx.keepalive_misses = 0;
 }
 
 static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
@@ -383,6 +410,14 @@ static int send_disconnect_locked(void)
     return queue_frame_locked(frame);
 }
 
+static int send_keepalive_locked(uint8_t subtype)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    if (build_frame_locked(PACKET_TYPE_ARQ_CONTROL, subtype, 0, 0, NULL, 0, frame) < 0)
+        return -1;
+    return queue_frame_locked(frame);
+}
+
 static void reset_runtime_locked(bool clear_peer_addresses)
 {
     clear_buffer(data_tx_buffer_arq);
@@ -407,7 +442,20 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.pending_accept = false;
     arq_ctx.pending_ack = false;
     arq_ctx.pending_disconnect = false;
+    arq_ctx.pending_keepalive = false;
+    arq_ctx.pending_keepalive_ack = false;
     arq_ctx.pending_ack_seq = 0;
+    arq_ctx.keepalive_waiting = false;
+    arq_ctx.keepalive_misses = 0;
+    arq_ctx.keepalive_interval_s = ARQ_KEEPALIVE_INTERVAL_S;
+    arq_ctx.keepalive_miss_limit = ARQ_KEEPALIVE_MISS_LIMIT;
+    arq_ctx.keepalive_deadline = 0;
+    arq_ctx.last_keepalive_rx = 0;
+    arq_ctx.last_keepalive_tx = 0;
+    arq_ctx.disconnect_in_progress = false;
+    arq_ctx.disconnect_to_no_client = false;
+    arq_ctx.disconnect_retries_left = 0;
+    arq_ctx.disconnect_deadline = 0;
     arq_ctx.app_tx_len = 0;
     arq_ctx.gear = 0;
     arq_ctx.success_streak = 0;
@@ -431,12 +479,44 @@ static void notify_disconnected_locked(void)
     reset_runtime_locked(true);
 }
 
+static void finalize_disconnect_locked(void)
+{
+    fsm_state next_state = arq_ctx.disconnect_to_no_client ?
+                           state_no_connected_client :
+                           idle_or_listen_state_locked();
+    notify_disconnected_locked();
+    arq_fsm.current = next_state;
+}
+
+static void start_disconnect_locked(bool to_no_client)
+{
+    time_t now = time(NULL);
+
+    arq_ctx.disconnect_in_progress = true;
+    arq_ctx.disconnect_to_no_client = to_no_client;
+    arq_ctx.disconnect_retries_left = ARQ_DISCONNECT_RETRY_SLOTS + 1;
+    arq_ctx.pending_disconnect = true;
+    arq_ctx.disconnect_deadline = now + (arq_ctx.slot_len_s * 2) + 2;
+    arq_ctx.next_role_tx_at = now;
+    arq_fsm.current = state_disconnecting;
+}
+
 static void enter_connected_locked(void)
 {
+    time_t now = time(NULL);
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.pending_call = false;
     arq_ctx.pending_accept = false;
+    arq_ctx.pending_keepalive = false;
+    arq_ctx.pending_keepalive_ack = false;
+    arq_ctx.keepalive_waiting = false;
+    arq_ctx.keepalive_misses = 0;
+    arq_ctx.last_keepalive_rx = now;
+    arq_ctx.last_keepalive_tx = now;
+    arq_ctx.disconnect_in_progress = false;
+    arq_ctx.disconnect_retries_left = 0;
+    arq_ctx.disconnect_deadline = 0;
     arq_ctx.connect_deadline = 0;
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
@@ -460,6 +540,16 @@ static void start_outgoing_call_locked(void)
     arq_ctx.pending_accept = false;
     arq_ctx.pending_ack = false;
     arq_ctx.pending_disconnect = false;
+    arq_ctx.pending_keepalive = false;
+    arq_ctx.pending_keepalive_ack = false;
+    arq_ctx.keepalive_waiting = false;
+    arq_ctx.keepalive_misses = 0;
+    arq_ctx.last_keepalive_rx = now;
+    arq_ctx.last_keepalive_tx = now;
+    arq_ctx.disconnect_in_progress = false;
+    arq_ctx.disconnect_to_no_client = false;
+    arq_ctx.disconnect_retries_left = 0;
+    arq_ctx.disconnect_deadline = 0;
     arq_ctx.next_role_tx_at = now;
     arq_ctx.remote_busy_until = 0;
     arq_ctx.connect_deadline = now + arq_ctx.connect_timeout_s;
@@ -519,8 +609,15 @@ static bool do_slot_tx_locked(time_t now)
 
     if (arq_ctx.pending_disconnect)
     {
+        if (arq_ctx.disconnect_retries_left <= 0)
+        {
+            arq_ctx.pending_disconnect = false;
+            return false;
+        }
         send_disconnect_locked();
-        arq_ctx.pending_disconnect = false;
+        arq_ctx.disconnect_retries_left--;
+        if (arq_ctx.disconnect_retries_left <= 0)
+            arq_ctx.pending_disconnect = false;
         schedule_next_tx_locked(now, false);
         return true;
     }
@@ -553,6 +650,26 @@ static bool do_slot_tx_locked(time_t now)
     {
         send_ack_locked(arq_ctx.pending_ack_seq);
         arq_ctx.pending_ack = false;
+        schedule_next_tx_locked(now, false);
+        return true;
+    }
+
+    if (arq_ctx.pending_keepalive_ack)
+    {
+        send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE_ACK);
+        arq_ctx.pending_keepalive_ack = false;
+        arq_ctx.last_keepalive_tx = now;
+        schedule_next_tx_locked(now, false);
+        return true;
+    }
+
+    if (arq_ctx.pending_keepalive)
+    {
+        send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE);
+        arq_ctx.pending_keepalive = false;
+        arq_ctx.keepalive_waiting = true;
+        arq_ctx.keepalive_deadline = now + arq_ctx.keepalive_interval_s;
+        arq_ctx.last_keepalive_tx = now;
         schedule_next_tx_locked(now, false);
         return true;
     }
@@ -669,14 +786,10 @@ static void state_calling_wait_accept(int event)
         arq_conn.listen = false;
         break;
     case EV_LINK_DISCONNECT:
-        arq_ctx.pending_disconnect = true;
-        notify_disconnected_locked();
-        arq_fsm.current = idle_or_listen_state_locked();
+        start_disconnect_locked(false);
         break;
     case EV_CLIENT_DISCONNECT:
-        arq_ctx.pending_disconnect = true;
-        notify_disconnected_locked();
-        arq_fsm.current = state_no_connected_client;
+        start_disconnect_locked(true);
         break;
     default:
         break;
@@ -694,14 +807,22 @@ static void state_connected(int event)
         arq_conn.listen = false;
         break;
     case EV_LINK_DISCONNECT:
-        arq_ctx.pending_disconnect = true;
-        notify_disconnected_locked();
-        arq_fsm.current = idle_or_listen_state_locked();
+        start_disconnect_locked(false);
         break;
     case EV_CLIENT_DISCONNECT:
-        arq_ctx.pending_disconnect = true;
-        notify_disconnected_locked();
-        arq_fsm.current = state_no_connected_client;
+        start_disconnect_locked(true);
+        break;
+    default:
+        break;
+    }
+}
+
+static void state_disconnecting(int event)
+{
+    switch (event)
+    {
+    case EV_CLIENT_DISCONNECT:
+        arq_ctx.disconnect_to_no_client = true;
         break;
     default:
         break;
@@ -734,6 +855,8 @@ int arq_init(size_t frame_size, int mode)
         (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 2)) +
         ARQ_CONNECT_GRACE_SLOTS;
     arq_ctx.max_gear = max_gear_for_frame_size(frame_size);
+    arq_ctx.keepalive_interval_s = ARQ_KEEPALIVE_INTERVAL_S;
+    arq_ctx.keepalive_miss_limit = ARQ_KEEPALIVE_MISS_LIMIT;
 
     fsm_init(&arq_fsm, state_no_connected_client);
     return EXIT_SUCCESS;
@@ -778,6 +901,39 @@ void arq_tick_1hz(void)
         arq_fsm.current = idle_or_listen_state_locked();
         arq_unlock();
         return;
+    }
+
+    if (arq_fsm.current == state_disconnecting && now >= arq_ctx.disconnect_deadline)
+    {
+        finalize_disconnect_locked();
+        arq_unlock();
+        return;
+    }
+
+    if (arq_fsm.current == state_connected)
+    {
+        bool link_idle =
+            !arq_ctx.waiting_ack &&
+            arq_ctx.app_tx_len == 0 &&
+            !arq_ctx.pending_ack &&
+            !arq_ctx.pending_accept &&
+            !arq_ctx.pending_call &&
+            !arq_ctx.pending_disconnect;
+
+        if (arq_ctx.keepalive_waiting && now >= arq_ctx.keepalive_deadline)
+        {
+            arq_ctx.keepalive_waiting = false;
+            arq_ctx.keepalive_misses++;
+            if (arq_ctx.keepalive_misses >= arq_ctx.keepalive_miss_limit)
+                start_disconnect_locked(false);
+        }
+
+        if (link_idle &&
+            !arq_ctx.keepalive_waiting &&
+            (now - arq_ctx.last_keepalive_tx) >= arq_ctx.keepalive_interval_s)
+        {
+            arq_ctx.pending_keepalive = true;
+        }
     }
 
     do_slot_tx_locked(now);
@@ -893,6 +1049,7 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
 
         enter_connected_locked();
+        mark_link_activity_locked(now);
         mark_success_locked();
         return;
 
@@ -914,17 +1071,36 @@ static void handle_control_frame_locked(uint8_t subtype,
         }
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.outstanding_frame_len = 0;
+        mark_link_activity_locked(now);
         mark_success_locked();
         return;
 
     case ARQ_SUBTYPE_DISCONNECT:
         if (session_id != arq_ctx.session_id)
             return;
-        if (arq_fsm.current == state_connected || arq_fsm.current == state_calling_wait_accept)
-        {
-            notify_disconnected_locked();
-            arq_fsm.current = idle_or_listen_state_locked();
-        }
+        if (arq_fsm.current == state_connected ||
+            arq_fsm.current == state_calling_wait_accept ||
+            arq_fsm.current == state_disconnecting)
+            finalize_disconnect_locked();
+        return;
+
+    case ARQ_SUBTYPE_KEEPALIVE:
+        if (arq_fsm.current != state_connected)
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        mark_link_activity_locked(now);
+        arq_ctx.pending_keepalive_ack = true;
+        if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
+            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
+        return;
+
+    case ARQ_SUBTYPE_KEEPALIVE_ACK:
+        if (arq_fsm.current != state_connected)
+            return;
+        if (session_id != arq_ctx.session_id)
+            return;
+        mark_link_activity_locked(now);
         return;
 
     default:
@@ -946,6 +1122,7 @@ static void handle_data_frame_locked(uint8_t session_id,
 
     if (seq == arq_ctx.rx_expected_seq)
     {
+        mark_link_activity_locked(now);
         write_buffer(data_rx_buffer_arq, (uint8_t *)payload, payload_len);
         arq_ctx.rx_expected_seq++;
         arq_ctx.pending_ack = true;
@@ -958,6 +1135,7 @@ static void handle_data_frame_locked(uint8_t session_id,
 
     if ((uint8_t)(arq_ctx.rx_expected_seq - 1) == seq)
     {
+        mark_link_activity_locked(now);
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
