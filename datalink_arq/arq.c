@@ -250,6 +250,10 @@ static void update_payload_mode_locked(void)
 
     if (arq_ctx.payload_start_pending)
         return;
+    if (arq_ctx.waiting_ack)
+        return;
+    if (arq_ctx.app_tx_len > 0)
+        return;
 
     if (snr == 0.0f)
         return;
@@ -788,7 +792,6 @@ static void queue_next_data_frame_locked(void)
     if (arq_ctx.payload_start_pending)
     {
         arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
-        arq_ctx.payload_start_pending = false;
     }
 
     chunk = chunk_size_for_gear_locked();
@@ -1414,6 +1417,8 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
 
         arq_ctx.waiting_ack = false;
+        if (arq_ctx.payload_start_pending)
+            arq_ctx.payload_start_pending = false;
         if (arq_ctx.outstanding_app_len <= arq_ctx.app_tx_len)
         {
             memmove(arq_ctx.app_tx_queue,
