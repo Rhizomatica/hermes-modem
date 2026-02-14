@@ -688,10 +688,7 @@ static bool do_slot_tx_locked(time_t now)
                 return true;
             }
 
-            send_disconnect_locked();
-            notify_disconnected_locked();
-            arq_fsm.current = idle_or_listen_state_locked();
-            schedule_next_tx_locked(now, false);
+            start_disconnect_locked(false);
             return true;
         }
 
