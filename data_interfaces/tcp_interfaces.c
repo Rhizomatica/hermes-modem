@@ -342,6 +342,12 @@ void *control_worker_thread_rx(void *conn)
             goto send_ok;
         }
 
+        if (!memcmp(buffer, "P2P", strlen("P2P")))
+        {
+            // VARA compatibility no-op.
+            goto send_ok;
+        }
+
         if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
         {
             sscanf(buffer,"CONNECT %15s %15s", arq_conn.src_addr, arq_conn.dst_addr);
