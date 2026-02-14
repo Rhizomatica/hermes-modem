@@ -711,6 +711,10 @@ static void start_disconnect_locked(bool to_no_client)
 static void enter_connected_locked(void)
 {
     time_t now = time(NULL);
+    arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
+    arq_ctx.slot_len_s = mode_slot_len_s(arq_ctx.payload_mode);
+    arq_ctx.tx_period_s = arq_ctx.slot_len_s;
+    arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.pending_call = false;
@@ -1057,10 +1061,7 @@ int arq_init(size_t frame_size, int mode)
     arq_conn.call_burst_size = 1;
 
     arq_ctx.initialized = true;
-    if (mode == FREEDV_MODE_DATAC1 || mode == FREEDV_MODE_DATAC3 || mode == FREEDV_MODE_DATAC4)
-        arq_ctx.payload_mode = mode;
-    else
-        arq_ctx.payload_mode = FREEDV_MODE_DATAC3;
+    arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
 
     arq_ctx.slot_len_s = mode_slot_len_s(arq_ctx.payload_mode);
