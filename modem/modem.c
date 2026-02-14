@@ -760,12 +760,8 @@ void *rx_thread(void *g_modem)
                 last_pref_tx_mode = pref_tx_mode;
             }
 
-            size_t pending_arq = size_buffer(data_tx_buffer_arq) + size_buffer(data_tx_buffer_arq_control);
-            size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
             if (arq_conn.TRX != TX &&
-                pref_rx_mode >= 0 &&
-                pending_arq == 0 &&
-                pending_broadcast == 0)
+                pref_rx_mode >= 0)
                 maybe_switch_modem_mode(modem, pref_rx_mode);
         }
 

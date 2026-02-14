@@ -1116,6 +1116,7 @@ static bool do_slot_tx_locked(time_t now)
     if (arq_ctx.pending_ack)
     {
         send_ack_locked(arq_ctx.pending_ack_seq);
+        fprintf(stderr, "ARQ ack tx seq=%u\n", arq_ctx.pending_ack_seq);
         arq_ctx.pending_ack = false;
         schedule_next_tx_locked(now, false);
         return true;
@@ -1819,6 +1820,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         if (ack != arq_ctx.outstanding_seq)
             return;
 
+        fprintf(stderr, "ARQ ack rx seq=%u\n", ack);
         arq_ctx.waiting_ack = false;
         if (arq_ctx.payload_start_pending)
             arq_ctx.payload_start_pending = false;
