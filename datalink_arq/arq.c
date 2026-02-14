@@ -139,6 +139,8 @@ enum {
 #define ARQ_CONNECT_META_SIZE 2
 #define ARQ_CONNECT_MAX_ENCODED (14 - ARQ_CONNECT_META_SIZE)
 #define ARQ_ARITH_BUFFER_SIZE 4096
+#define ARQ_CONNECT_SESSION_MASK 0x7F
+#define ARQ_CONNECT_ACCEPT_FLAG 0x80
 
 #define ARQ_CALL_RETRY_SLOTS 4
 #define ARQ_ACCEPT_RETRY_SLOTS 3
@@ -470,7 +472,8 @@ static int build_connect_call_accept_frame_locked(uint8_t subtype,
         return -1;
 
     memset(frame, 0, frame_size);
-    frame[ARQ_CONNECT_SESSION_IDX] = session_id;
+    frame[ARQ_CONNECT_SESSION_IDX] = (session_id & ARQ_CONNECT_SESSION_MASK) |
+                                     ((subtype == ARQ_SUBTYPE_ACCEPT) ? ARQ_CONNECT_ACCEPT_FLAG : 0);
     memcpy(frame + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)encoded_len);
     write_frame_header(frame, PACKET_TYPE_ARQ_DATA, frame_size);
     return 0;
@@ -702,7 +705,9 @@ static void start_outgoing_call_locked(void)
 {
     time_t now = time(NULL);
     arq_ctx.role = ARQ_ROLE_CALLER;
-    arq_ctx.session_id++;
+    arq_ctx.session_id = (uint8_t)((arq_ctx.session_id + 1) & ARQ_CONNECT_SESSION_MASK);
+    if (arq_ctx.session_id == 0)
+        arq_ctx.session_id = 1;
     arq_ctx.tx_seq = 0;
     arq_ctx.rx_expected_seq = 0;
     arq_ctx.waiting_ack = false;
@@ -1457,14 +1462,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     if (!data || frame_size != 14)
         return false;
 
-    session_id = data[ARQ_CONNECT_SESSION_IDX];
+    subtype = (data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) ? ARQ_SUBTYPE_ACCEPT : ARQ_SUBTYPE_CALL;
+    session_id = data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
     if (!decode_connect_callsign_payload(data + ARQ_CONNECT_PAYLOAD_IDX, decoded))
         return false;
-
-    if (strchr(decoded, '|') != NULL)
-        subtype = ARQ_SUBTYPE_CALL;
-    else
-        subtype = ARQ_SUBTYPE_ACCEPT;
 
     arq_lock();
     if (!arq_ctx.initialized)
@@ -1477,16 +1478,13 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     if (subtype == ARQ_SUBTYPE_CALL)
     {
         sep = strchr(decoded, '|');
-        if (!sep)
+        if (sep)
         {
-            arq_unlock();
-            return true;
+            *sep = 0;
+            sep++;
+            strncpy(src, sep, CALLSIGN_MAX_SIZE - 1);
+            src[CALLSIGN_MAX_SIZE - 1] = 0;
         }
-
-        *sep = 0;
-        sep++;
-        strncpy(src, sep, CALLSIGN_MAX_SIZE - 1);
-        src[CALLSIGN_MAX_SIZE - 1] = 0;
         snprintf(dst, sizeof(dst), "%.*s", CALLSIGN_MAX_SIZE - 1, decoded);
 
         if (dst[0] != 0 &&
@@ -1496,8 +1494,11 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
         {
             strncpy(arq_conn.src_addr, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1);
             arq_conn.src_addr[CALLSIGN_MAX_SIZE - 1] = 0;
-            strncpy(arq_conn.dst_addr, src, CALLSIGN_MAX_SIZE - 1);
-            arq_conn.dst_addr[CALLSIGN_MAX_SIZE - 1] = 0;
+            if (src[0] != 0)
+            {
+                strncpy(arq_conn.dst_addr, src, CALLSIGN_MAX_SIZE - 1);
+                arq_conn.dst_addr[CALLSIGN_MAX_SIZE - 1] = 0;
+            }
 
             arq_ctx.role = ARQ_ROLE_CALLEE;
             arq_ctx.session_id = session_id;
@@ -1517,7 +1518,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 
     if (arq_fsm.current == state_calling_wait_accept &&
         arq_ctx.role == ARQ_ROLE_CALLER &&
-        session_id == arq_ctx.session_id &&
+        session_id == (arq_ctx.session_id & ARQ_CONNECT_SESSION_MASK) &&
         decoded[0] != 0 &&
         strncasecmp(arq_conn.dst_addr, decoded, strnlen(decoded, CALLSIGN_MAX_SIZE - 1)) == 0)
     {
