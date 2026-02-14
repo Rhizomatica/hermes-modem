@@ -1221,11 +1221,11 @@ int arq_get_preferred_rx_mode(void)
     }
     if (arq_ctx.initialized && arq_fsm.current == state_calling_wait_accept)
     {
-        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
     else if (arq_ctx.initialized && arq_ctx.pending_accept)
     {
-        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
     else if (arq_ctx.initialized &&
              arq_fsm.current == state_connected &&
@@ -1259,11 +1259,11 @@ int arq_get_preferred_tx_mode(void)
         arq_fsm.current == state_calling_wait_accept &&
         arq_ctx.pending_call)
     {
-        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
     else if (arq_ctx.initialized && arq_ctx.pending_accept)
     {
-        mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
     else if (arq_ctx.initialized &&
              arq_fsm.current == state_connected &&
