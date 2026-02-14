@@ -1215,7 +1215,8 @@ int arq_get_preferred_rx_mode(void)
 
     arq_lock();
     mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
-    if (arq_ctx.initialized && arq_fsm.current == state_connected)
+    if (arq_ctx.initialized &&
+        (arq_fsm.current == state_connected || arq_fsm.current == state_listen))
     {
         mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
