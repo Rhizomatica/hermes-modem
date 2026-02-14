@@ -511,8 +511,18 @@ void *rx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        // we are running full-duplex for now - TODO: change to half-duplex
+        // Always drain modem input, but ignore decoded frames while local TX is active.
         receive_modulated_data(g_modem, data, &nbytes_out);
+
+        if (arq_conn.TRX == TX)
+            continue;
+
+        int sync = 0;
+        float snr_est = 0.0f;
+        int rx_status = freedv_get_rx_status(freedv);
+        freedv_get_modem_stats(freedv, &sync, &snr_est);
+        arq_update_link_metrics(sync, snr_est, rx_status, nbytes_out > 0);
+
         if (nbytes_out > 0)
         {
             size_t payload_nbytes = (nbytes_out >= 2) ? nbytes_out - 2 : 0;

@@ -33,8 +33,6 @@
 #define PACKET_BROADCAST_CONTROL 0x02
 #define PACKET_BROADCAST_PAYLOAD 0x03
 
-#define CALL_BURST_SIZE 3 // 3 frames
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -51,18 +49,20 @@ typedef struct
     bool listen;
     int bw; // in Hz
     size_t frame_size;
+    int mode;
 } arq_info;
 
 extern arq_info arq_conn;
 extern fsm_handle arq_fsm;
 
 // ARQ core functions
-int arq_init(size_t frame_size);
+int arq_init(size_t frame_size, int mode);
 void arq_shutdown();
 void arq_tick_1hz(void);
 bool arq_is_link_connected(void);
 int arq_queue_data(const uint8_t *data, size_t len);
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
+void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 
 // auxiliary functions
 void clear_connection_data();

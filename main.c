@@ -341,7 +341,7 @@ int main(int argc, char *argv[])
     printf("Initializing Modem\n");
     init_modem(&g_modem, mod_config, 1, test_mode); // frames per burst is 1 for now
     
-    if (arq_init(g_modem.payload_bytes_per_modem_frame) != EXIT_SUCCESS)
+    if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
         fprintf(stderr, "Failed to initialize ARQ subsystem.\n");
         return EXIT_FAILURE;
