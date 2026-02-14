@@ -143,6 +143,7 @@ enum {
 #define ARQ_ARITH_BUFFER_SIZE 4096
 #define ARQ_CONNECT_SESSION_MASK 0x7F
 #define ARQ_CONNECT_ACCEPT_FLAG 0x80
+#define ARQ_PIN_PAYLOAD_MODE 1
 
 #define ARQ_CALL_RETRY_SLOTS 4
 #define ARQ_ACCEPT_RETRY_SLOTS 3
@@ -247,6 +248,9 @@ static void update_payload_mode_locked(void)
     int old_mode = arq_ctx.payload_mode;
     int new_mode = old_mode;
     float snr = arq_ctx.snr_ema;
+
+    if (ARQ_PIN_PAYLOAD_MODE)
+        return;
 
     if (arq_ctx.payload_start_pending)
         return;

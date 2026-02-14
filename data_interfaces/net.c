@@ -159,11 +159,13 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
 ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
 {
     ssize_t n = 0;
+    int attempted_send = 0;
 
     pthread_mutex_lock(&write_mutex[port_type]);
 
     if (port_type == CTL_TCP_PORT && status_ctl == NET_CONNECTED)
     {
+        attempted_send = 1;
         n = send(cli_ctl_sockfd, buffer, tx_size, MSG_NOSIGNAL);
 
         if (n != (ssize_t) tx_size)
@@ -172,6 +174,7 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
 
     if (port_type == DATA_TCP_PORT && status_data == NET_CONNECTED)
     {
+        attempted_send = 1;
         n = send(cli_data_sockfd, buffer, tx_size, MSG_NOSIGNAL);
 
         if (n != (ssize_t) tx_size)
@@ -180,7 +183,7 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
 
     pthread_mutex_unlock(&write_mutex[port_type]);
     
-    if (n != (ssize_t) tx_size)
+    if (attempted_send && n != (ssize_t) tx_size)
         fprintf(stderr, "ERROR writing to socket\n");
 
     return n;
@@ -193,14 +196,14 @@ int tcp_close(int port_type)
     {
         close(cli_ctl_sockfd);
         close(ctl_sockfd);
+        status_ctl = NET_NONE;
     }
     if(port_type == DATA_TCP_PORT)
     {
         close(cli_data_sockfd);
         close(data_sockfd);
+        status_data = NET_NONE;
     }
-    status_ctl = NET_NONE;
-    status_data = NET_NONE;
     
     return 0;
 }
