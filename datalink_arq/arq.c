@@ -47,9 +47,11 @@ enum {
 #define ARQ_CTRL_PAYLOAD_OFFSET (HEADER_SIZE + ARQ_CTRL_META_SIZE)
 #define ARQ_DATA_LEN_SIZE 2
 #define ARQ_DATA_PAYLOAD_OFFSET (HEADER_SIZE + ARQ_DATA_LEN_SIZE)
+#define ARQ_ACCEPT_RETRY_TICKS 4
 
 static time_t connect_deadline;
 static bool arq_initialized = false;
+static int accept_retry_ticks = 0;
 
 static void state_no_connected_client(int event);
 static void state_link_connected(int event);
@@ -61,6 +63,16 @@ void state_connecting_callee(int event);
 static void clear_connect_deadline(void)
 {
     connect_deadline = 0;
+}
+
+static void clear_accept_retries(void)
+{
+    accept_retry_ticks = 0;
+}
+
+static void arm_accept_retries(void)
+{
+    accept_retry_ticks = ARQ_ACCEPT_RETRY_TICKS;
 }
 
 static void set_connect_deadline(void)
@@ -163,6 +175,7 @@ void clear_connection_data()
     reset_arq_info(&arq_conn);
     arq_conn.frame_size = frame_size;
     clear_connect_deadline();
+    clear_accept_retries();
 }
 
 void reset_arq_info(arq_info *arq_conn_i)
@@ -254,16 +267,19 @@ void state_connecting_caller(int event)
         break;
     case EV_LINK_ESTABLISHED:
         clear_connect_deadline();
+        clear_accept_retries();
         tnc_send_connected();
         arq_fsm.current = state_link_connected;
         break;
     case EV_LINK_ESTABLISHMENT_TIMEOUT:
         clear_connect_deadline();
+        clear_accept_retries();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_LINK_DISCONNECT:
         clear_connect_deadline();
+        clear_accept_retries();
         queue_disconnect_control();
         tnc_send_disconnected();
         go_to_idle_or_listen();
@@ -294,11 +310,13 @@ void state_connecting_callee(int event)
         break;
     case EV_LINK_ESTABLISHMENT_TIMEOUT:
         clear_connect_deadline();
+        clear_accept_retries();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_LINK_DISCONNECT:
         clear_connect_deadline();
+        clear_accept_retries();
         queue_disconnect_control();
         tnc_send_disconnected();
         go_to_idle_or_listen();
@@ -317,6 +335,7 @@ static void state_link_connected(int event)
     switch (event)
     {
     case EV_LINK_DISCONNECT:
+        clear_accept_retries();
         queue_disconnect_control();
         tnc_send_disconnected();
         go_to_idle_or_listen();
@@ -339,6 +358,7 @@ int arq_init(size_t frame_size)
     reset_arq_info(&arq_conn);
     arq_conn.frame_size = frame_size;
     clear_connect_deadline();
+    clear_accept_retries();
 
     fsm_init(&arq_fsm, state_no_connected_client);
     arq_initialized = true;
@@ -365,14 +385,22 @@ void arq_tick_1hz(void)
         return;
 
     if (connect_deadline == 0)
-        return;
+        goto maybe_retry_accept;
 
     time_t now = time(NULL);
     if (now < connect_deadline)
-        return;
+        goto maybe_retry_accept;
 
     if (arq_state_is(state_connecting_caller) || arq_state_is(state_connecting_callee))
         fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHMENT_TIMEOUT);
+
+maybe_retry_accept:
+    if (accept_retry_ticks > 0 &&
+        (arq_state_is(state_connecting_callee) || arq_state_is(state_link_connected)))
+    {
+        callee_accept_connection();
+        accept_retry_ticks--;
+    }
 }
 
 int arq_queue_data(const uint8_t *data, size_t len)
@@ -451,11 +479,23 @@ static void handle_control_frame(uint8_t *data, size_t frame_size)
     {
     case ARQ_CTRL_CALL:
         if (arq_conn.my_call_sign[0] == 0 ||
-            strncmp(dst, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1) != 0 ||
-            !arq_state_is(state_listen))
+            strncmp(dst, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1) != 0)
         {
             return;
         }
+
+        if (arq_state_is(state_link_connected) || arq_state_is(state_connecting_callee))
+        {
+            if (strncmp(src, arq_conn.dst_addr, CALLSIGN_MAX_SIZE - 1) == 0)
+            {
+                callee_accept_connection();
+                arm_accept_retries();
+            }
+            return;
+        }
+
+        if (!arq_state_is(state_listen))
+            return;
 
         strncpy(arq_conn.src_addr, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1);
         arq_conn.src_addr[CALLSIGN_MAX_SIZE - 1] = 0;
@@ -464,6 +504,7 @@ static void handle_control_frame(uint8_t *data, size_t frame_size)
 
         fsm_dispatch(&arq_fsm, EV_LINK_INCOMING_CALL);
         fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHED);
+        arm_accept_retries();
         return;
 
     case ARQ_CTRL_ACCEPT:
@@ -515,4 +556,5 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
         return;
 
     write_buffer(data_rx_buffer_arq, data + ARQ_DATA_PAYLOAD_OFFSET, payload_len);
+    clear_accept_retries();
 }
