@@ -996,13 +996,19 @@ void arq_tick_1hz(void)
 
     if (arq_fsm.current == state_connected)
     {
+        time_t last_link_activity = arq_ctx.last_keepalive_tx;
+        if (arq_ctx.last_keepalive_rx > last_link_activity)
+            last_link_activity = arq_ctx.last_keepalive_rx;
+
         bool link_idle =
             !arq_ctx.waiting_ack &&
             arq_ctx.app_tx_len == 0 &&
             !arq_ctx.pending_ack &&
             !arq_ctx.pending_accept &&
             !arq_ctx.pending_call &&
-            !arq_ctx.pending_disconnect;
+            !arq_ctx.pending_disconnect &&
+            !arq_ctx.pending_keepalive &&
+            !arq_ctx.pending_keepalive_ack;
 
         if (arq_ctx.keepalive_waiting && now >= arq_ctx.keepalive_deadline)
         {
@@ -1015,7 +1021,7 @@ void arq_tick_1hz(void)
 
         if (link_idle &&
             !arq_ctx.keepalive_waiting &&
-            (now - arq_ctx.last_keepalive_tx) >= arq_ctx.keepalive_interval_s)
+            (now - last_link_activity) >= arq_ctx.keepalive_interval_s)
         {
             arq_ctx.pending_keepalive = true;
         }
@@ -1359,7 +1365,7 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
         return;
     }
 
-    if (snr > -20.0f && snr < 30.0f)
+    if (frame_decoded && snr > -20.0f && snr < 30.0f)
     {
         if (arq_ctx.snr_ema == 0.0f)
             arq_ctx.snr_ema = snr;
