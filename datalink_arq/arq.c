@@ -63,6 +63,7 @@ typedef struct {
     float snr_ema;
 
     int retry_interval_s;
+    int response_delay_s;
     int ack_timeout_s;
     int connect_timeout_s;
     int max_call_retries;
@@ -156,11 +157,11 @@ static int compute_mode_retry_interval_s(int mode)
     switch (mode)
     {
     case FREEDV_MODE_DATAC1:
-        return 6;
+        return 10;
     case FREEDV_MODE_DATAC3:
-        return 3;
+        return 4;
     case FREEDV_MODE_DATAC4:
-        return 2;
+        return 3;
     case FREEDV_MODE_DATAC0:
     case FREEDV_MODE_DATAC13:
     case FREEDV_MODE_DATAC14:
@@ -344,6 +345,7 @@ static int send_disconnect_locked(void)
 static void clear_runtime_locked(void)
 {
     int retry_interval_s = arq_ctx.retry_interval_s;
+    int response_delay_s = arq_ctx.response_delay_s;
     int ack_timeout_s = arq_ctx.ack_timeout_s;
     int connect_timeout_s = arq_ctx.connect_timeout_s;
     int max_call_retries = arq_ctx.max_call_retries;
@@ -356,6 +358,7 @@ static void clear_runtime_locked(void)
     memset(&arq_ctx, 0, sizeof(arq_ctx));
     arq_ctx.initialized = true;
     arq_ctx.retry_interval_s = retry_interval_s;
+    arq_ctx.response_delay_s = response_delay_s;
     arq_ctx.ack_timeout_s = ack_timeout_s;
     arq_ctx.connect_timeout_s = connect_timeout_s;
     arq_ctx.max_call_retries = max_call_retries;
@@ -619,6 +622,9 @@ int arq_init(size_t frame_size, int mode)
     arq_conn.call_burst_size = 1;
     arq_ctx.initialized = true;
     arq_ctx.retry_interval_s = compute_mode_retry_interval_s(mode);
+    arq_ctx.response_delay_s = arq_ctx.retry_interval_s / 3;
+    if (arq_ctx.response_delay_s < 1)
+        arq_ctx.response_delay_s = 1;
     arq_ctx.ack_timeout_s = arq_ctx.retry_interval_s + ARQ_BASE_ACK_TIMEOUT_S;
     arq_ctx.connect_timeout_s = ARQ_BASE_CONNECT_TIMEOUT_S + (arq_ctx.retry_interval_s * (ARQ_CALL_RETRY_WINDOW + 1));
     arq_ctx.max_call_retries = ARQ_CALL_RETRY_WINDOW;
@@ -763,9 +769,8 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.rx_expected_seq = 0;
         arq_ctx.waiting_ack = false;
 
-        send_accept_locked();
-        arq_ctx.accept_retries_left = ARQ_ACCEPT_RETRY_WINDOW;
-        arq_ctx.next_accept_retry_at = time(NULL) + arq_ctx.retry_interval_s;
+        arq_ctx.accept_retries_left = ARQ_ACCEPT_RETRY_WINDOW + 1;
+        arq_ctx.next_accept_retry_at = time(NULL) + arq_ctx.response_delay_s;
 
         if (arq_fsm.current != state_connected)
             enter_connected_locked();
