@@ -42,7 +42,8 @@ enum {
     ARQ_CTRL_DISCONNECT = 3
 };
 
-#define ARQ_CONNECT_TIMEOUT_S 10
+#define ARQ_CONNECT_TIMEOUT_S 15
+#define ARQ_CALL_RETRY_TICKS 12
 #define ARQ_CTRL_META_SIZE 3
 #define ARQ_CTRL_PAYLOAD_OFFSET (HEADER_SIZE + ARQ_CTRL_META_SIZE)
 #define ARQ_DATA_LEN_SIZE 2
@@ -51,6 +52,7 @@ enum {
 
 static time_t connect_deadline;
 static bool arq_initialized = false;
+static int call_retry_ticks = 0;
 static int accept_retry_ticks = 0;
 
 static void state_no_connected_client(int event);
@@ -68,6 +70,16 @@ static void clear_connect_deadline(void)
 static void clear_accept_retries(void)
 {
     accept_retry_ticks = 0;
+}
+
+static void clear_call_retries(void)
+{
+    call_retry_ticks = 0;
+}
+
+static void arm_call_retries(void)
+{
+    call_retry_ticks = ARQ_CALL_RETRY_TICKS;
 }
 
 static void arm_accept_retries(void)
@@ -175,6 +187,7 @@ void clear_connection_data()
     reset_arq_info(&arq_conn);
     arq_conn.frame_size = frame_size;
     clear_connect_deadline();
+    clear_call_retries();
     clear_accept_retries();
 }
 
@@ -217,6 +230,7 @@ void state_idle(int event)
     case EV_LINK_CALL_REMOTE:
         call_remote();
         set_connect_deadline();
+        arm_call_retries();
         arq_fsm.current = state_connecting_caller;
         break;
     case EV_CLIENT_DISCONNECT:
@@ -239,6 +253,7 @@ void state_listen(int event)
     case EV_LINK_CALL_REMOTE:
         call_remote();
         set_connect_deadline();
+        arm_call_retries();
         arq_fsm.current = state_connecting_caller;
         break;
     case EV_CLIENT_DISCONNECT:
@@ -267,24 +282,28 @@ void state_connecting_caller(int event)
         break;
     case EV_LINK_ESTABLISHED:
         clear_connect_deadline();
+        clear_call_retries();
         clear_accept_retries();
         tnc_send_connected();
         arq_fsm.current = state_link_connected;
         break;
     case EV_LINK_ESTABLISHMENT_TIMEOUT:
         clear_connect_deadline();
+        clear_call_retries();
         clear_accept_retries();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_LINK_DISCONNECT:
         clear_connect_deadline();
+        clear_call_retries();
         clear_accept_retries();
         queue_disconnect_control();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_CLIENT_DISCONNECT:
+        clear_call_retries();
         clear_connection_data();
         arq_fsm.current = state_no_connected_client;
         break;
@@ -305,23 +324,27 @@ void state_connecting_callee(int event)
         break;
     case EV_LINK_ESTABLISHED:
         clear_connect_deadline();
+        clear_call_retries();
         tnc_send_connected();
         arq_fsm.current = state_link_connected;
         break;
     case EV_LINK_ESTABLISHMENT_TIMEOUT:
         clear_connect_deadline();
+        clear_call_retries();
         clear_accept_retries();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_LINK_DISCONNECT:
         clear_connect_deadline();
+        clear_call_retries();
         clear_accept_retries();
         queue_disconnect_control();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_CLIENT_DISCONNECT:
+        clear_call_retries();
         clear_connection_data();
         arq_fsm.current = state_no_connected_client;
         break;
@@ -335,12 +358,14 @@ static void state_link_connected(int event)
     switch (event)
     {
     case EV_LINK_DISCONNECT:
+        clear_call_retries();
         clear_accept_retries();
         queue_disconnect_control();
         tnc_send_disconnected();
         go_to_idle_or_listen();
         break;
     case EV_CLIENT_DISCONNECT:
+        clear_call_retries();
         queue_disconnect_control();
         clear_connection_data();
         arq_fsm.current = state_no_connected_client;
@@ -358,6 +383,7 @@ int arq_init(size_t frame_size)
     reset_arq_info(&arq_conn);
     arq_conn.frame_size = frame_size;
     clear_connect_deadline();
+    clear_call_retries();
     clear_accept_retries();
 
     fsm_init(&arq_fsm, state_no_connected_client);
@@ -370,6 +396,8 @@ void arq_shutdown()
     if (!arq_initialized)
         return;
 
+    clear_call_retries();
+    clear_accept_retries();
     arq_initialized = false;
     fsm_destroy(&arq_fsm);
 }
@@ -385,16 +413,22 @@ void arq_tick_1hz(void)
         return;
 
     if (connect_deadline == 0)
-        goto maybe_retry_accept;
+        goto maybe_retry_call;
 
     time_t now = time(NULL);
     if (now < connect_deadline)
-        goto maybe_retry_accept;
+        goto maybe_retry_call;
 
     if (arq_state_is(state_connecting_caller) || arq_state_is(state_connecting_callee))
         fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHMENT_TIMEOUT);
 
-maybe_retry_accept:
+maybe_retry_call:
+    if (call_retry_ticks > 0 && arq_state_is(state_connecting_caller))
+    {
+        call_remote();
+        call_retry_ticks--;
+    }
+
     if (accept_retry_ticks > 0 &&
         (arq_state_is(state_connecting_callee) || arq_state_is(state_link_connected)))
     {
