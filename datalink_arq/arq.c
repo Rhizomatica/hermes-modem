@@ -143,7 +143,6 @@ enum {
 #define ARQ_ARITH_BUFFER_SIZE 4096
 #define ARQ_CONNECT_SESSION_MASK 0x7F
 #define ARQ_CONNECT_ACCEPT_FLAG 0x80
-#define ARQ_PIN_PAYLOAD_MODE 1
 
 #define ARQ_CALL_RETRY_SLOTS 4
 #define ARQ_ACCEPT_RETRY_SLOTS 3
@@ -249,14 +248,9 @@ static void update_payload_mode_locked(void)
     int new_mode = old_mode;
     float snr = arq_ctx.snr_ema;
 
-    if (ARQ_PIN_PAYLOAD_MODE)
-        return;
-
     if (arq_ctx.payload_start_pending)
         return;
     if (arq_ctx.waiting_ack)
-        return;
-    if (arq_ctx.app_tx_len > 0)
         return;
 
     if (snr == 0.0f)
@@ -1434,6 +1428,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.outstanding_frame_len = 0;
         mark_link_activity_locked(now);
         mark_success_locked();
+        update_payload_mode_locked();
         return;
 
     case ARQ_SUBTYPE_DISCONNECT:
@@ -1491,6 +1486,7 @@ static void handle_data_frame_locked(uint8_t session_id,
         if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
             arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
         mark_success_locked();
+        update_payload_mode_locked();
         return;
     }
 
