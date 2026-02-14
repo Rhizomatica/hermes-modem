@@ -42,8 +42,8 @@ enum {
     ARQ_CTRL_DISCONNECT = 3
 };
 
-#define ARQ_CONNECT_TIMEOUT_S 15
-#define ARQ_CALL_RETRY_TICKS 12
+#define ARQ_BASE_CONNECT_TIMEOUT_S 6
+#define ARQ_CALL_RETRY_TICKS 5
 #define ARQ_CTRL_META_SIZE 3
 #define ARQ_CTRL_PAYLOAD_OFFSET (HEADER_SIZE + ARQ_CTRL_META_SIZE)
 #define ARQ_DATA_LEN_SIZE 2
@@ -52,8 +52,12 @@ enum {
 
 static time_t connect_deadline;
 static bool arq_initialized = false;
+static int connect_timeout_s = ARQ_BASE_CONNECT_TIMEOUT_S + 5;
+static int ctrl_retry_interval_ticks = 1;
 static int call_retry_ticks = 0;
+static int call_retry_wait_ticks = 0;
 static int accept_retry_ticks = 0;
+static int accept_retry_wait_ticks = 0;
 
 static void state_no_connected_client(int event);
 static void state_link_connected(int event);
@@ -70,26 +74,30 @@ static void clear_connect_deadline(void)
 static void clear_accept_retries(void)
 {
     accept_retry_ticks = 0;
+    accept_retry_wait_ticks = 0;
 }
 
 static void clear_call_retries(void)
 {
     call_retry_ticks = 0;
+    call_retry_wait_ticks = 0;
 }
 
 static void arm_call_retries(void)
 {
     call_retry_ticks = ARQ_CALL_RETRY_TICKS;
+    call_retry_wait_ticks = ctrl_retry_interval_ticks;
 }
 
 static void arm_accept_retries(void)
 {
     accept_retry_ticks = ARQ_ACCEPT_RETRY_TICKS;
+    accept_retry_wait_ticks = ctrl_retry_interval_ticks;
 }
 
 static void set_connect_deadline(void)
 {
-    connect_deadline = time(NULL) + ARQ_CONNECT_TIMEOUT_S;
+    connect_deadline = time(NULL) + connect_timeout_s;
 }
 
 static bool arq_state_is(fsm_state state)
@@ -167,8 +175,7 @@ void call_remote()
     if (arq_conn.src_addr[0] == 0 || arq_conn.dst_addr[0] == 0)
         return;
 
-    int repeat = arq_conn.call_burst_size > 0 ? arq_conn.call_burst_size : 1;
-    queue_control_frame(ARQ_CTRL_CALL, arq_conn.src_addr, arq_conn.dst_addr, repeat);
+    queue_control_frame(ARQ_CTRL_CALL, arq_conn.src_addr, arq_conn.dst_addr, 1);
 }
 
 void callee_accept_connection()
@@ -196,7 +203,7 @@ void reset_arq_info(arq_info *arq_conn_i)
     arq_conn_i->TRX = RX;
     arq_conn_i->bw = 0;
     arq_conn_i->encryption = false;
-    arq_conn_i->call_burst_size = CALL_BURST_SIZE;
+    arq_conn_i->call_burst_size = 1;
     arq_conn_i->listen = false;
     arq_conn_i->my_call_sign[0] = 0;
     arq_conn_i->src_addr[0] = 0;
@@ -385,6 +392,15 @@ int arq_init(size_t frame_size)
     clear_connect_deadline();
     clear_call_retries();
     clear_accept_retries();
+    if (frame_size >= 510)
+        ctrl_retry_interval_ticks = 5;
+    else if (frame_size >= 126)
+        ctrl_retry_interval_ticks = 2;
+    else
+        ctrl_retry_interval_ticks = 1;
+
+    connect_timeout_s = ARQ_BASE_CONNECT_TIMEOUT_S +
+        (ctrl_retry_interval_ticks * (ARQ_CALL_RETRY_TICKS + 1));
 
     fsm_init(&arq_fsm, state_no_connected_client);
     arq_initialized = true;
@@ -425,15 +441,23 @@ void arq_tick_1hz(void)
 maybe_retry_call:
     if (call_retry_ticks > 0 && arq_state_is(state_connecting_caller))
     {
-        call_remote();
-        call_retry_ticks--;
+        if (--call_retry_wait_ticks <= 0)
+        {
+            call_remote();
+            call_retry_ticks--;
+            call_retry_wait_ticks = ctrl_retry_interval_ticks;
+        }
     }
 
     if (accept_retry_ticks > 0 &&
         (arq_state_is(state_connecting_callee) || arq_state_is(state_link_connected)))
     {
-        callee_accept_connection();
-        accept_retry_ticks--;
+        if (--accept_retry_wait_ticks <= 0)
+        {
+            callee_accept_connection();
+            accept_retry_ticks--;
+            accept_retry_wait_ticks = ctrl_retry_interval_ticks;
+        }
     }
 }
 
