@@ -62,6 +62,7 @@ typedef struct {
 
     time_t connect_deadline;
     time_t next_role_tx_at;
+    time_t remote_busy_until;
     int call_retries_left;
     int accept_retries_left;
 
@@ -365,6 +366,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.outstanding_seq = 0;
     arq_ctx.connect_deadline = 0;
     arq_ctx.next_role_tx_at = 0;
+    arq_ctx.remote_busy_until = 0;
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.waiting_ack = false;
@@ -429,6 +431,7 @@ static void start_outgoing_call_locked(void)
     arq_ctx.pending_ack = false;
     arq_ctx.pending_disconnect = false;
     arq_ctx.next_role_tx_at = now;
+    arq_ctx.remote_busy_until = 0;
     arq_ctx.connect_deadline = now + arq_ctx.connect_timeout_s;
     arq_fsm.current = state_calling_wait_accept;
 }
@@ -495,6 +498,12 @@ static bool do_slot_tx_locked(time_t now)
         arq_ctx.pending_call &&
         arq_ctx.call_retries_left > 0)
     {
+        if (now < arq_ctx.remote_busy_until)
+        {
+            arq_ctx.next_role_tx_at = arq_ctx.remote_busy_until;
+            return false;
+        }
+
         send_call_locked();
         arq_ctx.call_retries_left--;
         if (arq_ctx.call_retries_left <= 0)
@@ -812,6 +821,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.pending_accept = true;
         arq_ctx.accept_retries_left = arq_ctx.max_accept_retries + 1;
         arq_ctx.next_role_tx_at = now + arq_ctx.slot_len_s;
+        arq_ctx.remote_busy_until = 0;
         return;
 
     case ARQ_SUBTYPE_ACCEPT:
@@ -945,8 +955,6 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
-    (void)sync;
-
     arq_lock();
     if (!arq_ctx.initialized)
     {
@@ -964,6 +972,16 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
 
     if (!frame_decoded && (rx_status & 0x4))
         mark_failure_locked();
+
+    if (arq_fsm.current == state_calling_wait_accept &&
+        arq_ctx.role == ARQ_ROLE_CALLER &&
+        (sync || frame_decoded))
+    {
+        time_t now = time(NULL);
+        arq_ctx.remote_busy_until = now + arq_ctx.slot_len_s + 1;
+        if (arq_ctx.connect_deadline < arq_ctx.remote_busy_until + arq_ctx.slot_len_s)
+            arq_ctx.connect_deadline = arq_ctx.remote_busy_until + arq_ctx.slot_len_s;
+    }
 
     arq_unlock();
 }
