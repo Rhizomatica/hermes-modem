@@ -423,6 +423,9 @@ void *recv_thread(void *client_socket_ptr)
         return NULL;
     }
 
+    // Reset global KISS parser state for each new client session.
+    kiss_reset_state();
+
     if (frame_size == 0 || frame_size > MAX_PAYLOAD)
     {
         fprintf(stderr, "Invalid broadcast frame size: %zu\n", frame_size);

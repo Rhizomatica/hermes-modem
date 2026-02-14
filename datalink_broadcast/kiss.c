@@ -19,6 +19,14 @@ bool ESCAPE;
 
 uint8_t kiss_command = CMD_UNKNOWN;
 
+void kiss_reset_state(void)
+{
+    frame_len = 0;
+    IN_FRAME = false;
+    ESCAPE = false;
+    kiss_command = CMD_UNKNOWN;
+}
+
 int kiss_read(uint8_t sbyte, uint8_t *frame_buffer)
 {
     if (IN_FRAME && sbyte == FEND && kiss_command == CMD_DATA)
