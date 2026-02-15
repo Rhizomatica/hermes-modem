@@ -308,7 +308,7 @@ enum {
 #define ARQ_MODE_SWITCH_HYST_COUNT 1
 #define ARQ_BACKLOG_MIN_DATAC3 56
 #define ARQ_BACKLOG_MIN_DATAC1 126
-#define ARQ_PEER_PAYLOAD_HOLD_S 6
+#define ARQ_PEER_PAYLOAD_HOLD_S 15
 /* Re-enable negotiated payload upgrades once ACK path is stabilized. */
 #define ARQ_ENABLE_MODE_UPGRADE 1
 
@@ -2425,6 +2425,7 @@ static int preferred_rx_mode_locked(time_t now)
     if (arq_ctx.turn_role == ARQ_TURN_IRS &&
         arq_ctx.peer_backlog_nonzero &&
         !arq_ctx.payload_start_pending &&
+        !mode_fsm_busy_locked() &&
         arq_ctx.last_peer_payload_rx > 0 &&
         (now - arq_ctx.last_peer_payload_rx) > ARQ_PEER_PAYLOAD_HOLD_S)
     {
@@ -2727,6 +2728,11 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
         if (payload_len < 1 || !is_payload_mode(payload[0]))
             return;
+        if (arq_ctx.turn_role == ARQ_TURN_IRS)
+        {
+            arq_ctx.peer_backlog_nonzero = true;
+            arq_ctx.last_peer_payload_rx = now;
+        }
         mode_fsm_queue_ack_locked(payload[0], "peer req");
         arq_ctx.mode_candidate_hits = 0;
         mark_link_activity_locked(now);
