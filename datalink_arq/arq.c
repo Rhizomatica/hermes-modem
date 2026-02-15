@@ -1702,6 +1702,7 @@ int arq_get_preferred_rx_mode(void)
 int arq_get_preferred_tx_mode(void)
 {
     int mode;
+    time_t now = time(NULL);
 
     arq_lock();
     mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
@@ -1730,12 +1731,19 @@ int arq_get_preferred_tx_mode(void)
 
     if (is_connected_state_locked())
     {
-        if (arq_ctx.turn_role == ARQ_TURN_ISS &&
-            !must_control_tx &&
-            (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0))
-            mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+        if (arq_ctx.turn_role == ARQ_TURN_ISS && !must_control_tx)
+        {
+            if (arq_ctx.waiting_ack && now < arq_ctx.ack_deadline)
+                mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+            else if (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0)
+                mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+            else
+                mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+        }
         else
+        {
             mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+        }
     }
     else if (must_control_tx)
     {
@@ -1819,11 +1827,24 @@ static void handle_control_frame_locked(uint8_t subtype,
 
     case ARQ_SUBTYPE_ACK:
         if (!is_connected_state_locked() || !arq_ctx.waiting_ack)
+        {
+            fprintf(stderr, "ARQ ack drop: not waiting (connected=%d waiting=%d)\n",
+                    is_connected_state_locked() ? 1 : 0,
+                    arq_ctx.waiting_ack ? 1 : 0);
             return;
+        }
         if (session_id != arq_ctx.session_id)
+        {
+            fprintf(stderr, "ARQ ack drop: session mismatch got=%u expect=%u\n",
+                    session_id, arq_ctx.session_id);
             return;
+        }
         if (ack != arq_ctx.outstanding_seq)
+        {
+            fprintf(stderr, "ARQ ack drop: seq mismatch got=%u expect=%u\n",
+                    ack, arq_ctx.outstanding_seq);
             return;
+        }
 
         fprintf(stderr, "ARQ ack rx seq=%u\n", ack);
         arq_ctx.waiting_ack = false;
