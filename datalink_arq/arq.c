@@ -1748,7 +1748,9 @@ int arq_get_preferred_tx_mode(void)
     {
         if (arq_ctx.turn_role == ARQ_TURN_ISS && !must_control_tx)
         {
-            if (arq_ctx.waiting_ack && now < arq_ctx.ack_deadline)
+            if (arq_ctx.waiting_ack && size_buffer(data_tx_buffer_arq) > 0)
+                mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+            else if (arq_ctx.waiting_ack && now < arq_ctx.ack_deadline)
                 mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
             else if (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0)
                 mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
