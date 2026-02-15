@@ -203,6 +203,34 @@ static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
     return (uint32_t)(((uint64_t)bits_per_modem_frame * modem_sample_rate + (tx_modem_samples / 2)) / tx_modem_samples);
 }
 
+static uint32_t bitrate_level_from_payload_mode(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1:
+        return 1;
+    case FREEDV_MODE_DATAC3:
+        return 3;
+    case FREEDV_MODE_DATAC4:
+        return 4;
+    default:
+        return 4;
+    }
+}
+
+static int payload_mode_for_bitrate(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1:
+    case FREEDV_MODE_DATAC3:
+    case FREEDV_MODE_DATAC4:
+        return mode;
+    default:
+        return FREEDV_MODE_DATAC4;
+    }
+}
+
 static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
 {
     if (!is_supported_split_mode(target_mode))
@@ -767,6 +795,7 @@ void *rx_thread(void *g_modem)
 
     while (!shutdown_)
     {
+        int payload_mode = payload_mode_for_bitrate(arq_get_payload_mode());
         int pref_rx_mode = -1;
         int pref_tx_mode = -1;
         if (arq_ready_for_mode_policy())
@@ -787,10 +816,14 @@ void *rx_thread(void *g_modem)
         pthread_mutex_lock(&modem_freedv_lock);
         if (modem->freedv)
         {
-            bitrate_bps = compute_bitrate_bps_locked(modem->freedv);
             uint32_t bits_per_modem_frame = (uint32_t)freedv_get_bits_per_modem_frame(modem->freedv);
             frame_bytes = bits_per_modem_frame / 8;
         }
+        struct freedv *payload_freedv = pooled_freedv_for_mode_locked(payload_mode, NULL);
+        if (payload_freedv)
+            bitrate_bps = compute_bitrate_bps_locked(payload_freedv);
+        else if (modem->freedv)
+            bitrate_bps = compute_bitrate_bps_locked(modem->freedv);
         pthread_mutex_unlock(&modem_freedv_lock);
 
         if (frame_bytes == 0)
@@ -836,7 +869,7 @@ void *rx_thread(void *g_modem)
                 continue;
 
             tnc_send_sn(snr_est);
-            tnc_send_bitrate(0, bitrate_bps, arq_get_payload_mode());
+            tnc_send_bitrate(bitrate_level_from_payload_mode(payload_mode), bitrate_bps);
 
             int frame_type = parse_frame_header(data, payload_nbytes);
             if (frame_type == PACKET_TYPE_ARQ_DATA &&
