@@ -50,6 +50,7 @@ static float last_sn_value = 0.0f;
 static uint32_t last_bitrate_sl = 0;
 static uint32_t last_bitrate_bps = 0;
 static int last_bitrate_mode = 0;
+static const char *bitrate_mode_name(int mode);
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -383,7 +384,7 @@ void *control_worker_thread_rx(void *conn)
 
         if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
         {
-            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps, last_bitrate_mode);
+            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps, arq_get_payload_mode());
             continue;
         }
 
