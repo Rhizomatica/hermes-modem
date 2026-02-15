@@ -64,6 +64,7 @@ static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
 #define ARQ_ACTION_WAIT_MS 100
+#define RX_TX_DRAIN_SAMPLES 160
 
 typedef struct {
     struct freedv *datac1;
@@ -366,6 +367,26 @@ try_shm_connect2:
     pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
 
     return 0;
+}
+
+static void drain_capture_buffer_fast(size_t samples)
+{
+    static int32_t *discard = NULL;
+    static size_t discard_cap = 0;
+
+    if (samples == 0)
+        return;
+
+    if (discard_cap < samples)
+    {
+        int32_t *new_discard = (int32_t *)realloc(discard, samples * sizeof(int32_t));
+        if (!new_discard)
+            return;
+        discard = new_discard;
+        discard_cap = samples;
+    }
+
+    read_buffer(capture_buffer, (uint8_t *)discard, samples * sizeof(int32_t));
 }
 
 int run_tests_tx(generic_modem_t *g_modem)
@@ -859,14 +880,15 @@ void *rx_thread(void *g_modem)
             data_size = frame_bytes;
         }
 
-        // Always drain modem input, but ignore decoded frames while local TX is active.
-        receive_modulated_data(modem, data, &nbytes_out);
-
         if (arq_policy_ready && arq_snapshot.trx == TX)
         {
-            usleep(1000);
+            // Half-duplex local TX: drain capture at low cost and skip demod work.
+            drain_capture_buffer_fast(RX_TX_DRAIN_SAMPLES);
             continue;
         }
+
+        // Always drain modem input, but ignore decoded frames while local TX is active.
+        receive_modulated_data(modem, data, &nbytes_out);
 
         int sync = 0;
         float snr_est = 0.0f;
