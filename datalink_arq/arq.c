@@ -125,6 +125,7 @@ typedef struct {
     int control_mode;
     arq_turn_t turn_role;
     bool peer_backlog_nonzero;
+    time_t last_peer_payload_rx;
     bool pending_flow_hint;
     bool flow_hint_value;
     int last_flow_hint_sent;
@@ -201,6 +202,7 @@ enum {
 #define ARQ_MODE_SWITCH_HYST_COUNT 1
 #define ARQ_BACKLOG_MIN_DATAC3 56
 #define ARQ_BACKLOG_MIN_DATAC1 126
+#define ARQ_PEER_PAYLOAD_HOLD_S 6
 /* Re-enable negotiated payload upgrades once ACK path is stabilized. */
 #define ARQ_ENABLE_MODE_UPGRADE 1
 
@@ -1018,6 +1020,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
     arq_ctx.turn_role = ARQ_TURN_NONE;
     arq_ctx.peer_backlog_nonzero = false;
+    arq_ctx.last_peer_payload_rx = 0;
     arq_ctx.pending_flow_hint = false;
     arq_ctx.flow_hint_value = false;
     arq_ctx.last_flow_hint_sent = -1;
@@ -1127,6 +1130,7 @@ static void enter_connected_locked(void)
     arq_ctx.pending_flow_hint = false;
     arq_ctx.last_flow_hint_sent = -1;
     arq_ctx.peer_backlog_nonzero = (arq_ctx.role == ARQ_ROLE_CALLEE);
+    arq_ctx.last_peer_payload_rx = 0;
     arq_ctx.turn_role = (arq_ctx.role == ARQ_ROLE_CALLER) ? ARQ_TURN_ISS : ARQ_TURN_IRS;
     arq_ctx.gear = initial_gear_locked();
     update_connected_state_from_turn_locked();
@@ -1157,8 +1161,10 @@ static void start_outgoing_call_locked(void)
     arq_ctx.pending_keepalive_ack = false;
     arq_ctx.keepalive_waiting = false;
     arq_ctx.keepalive_misses = 0;
+    mode_fsm_reset_locked("new call");
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
+    arq_ctx.last_peer_payload_rx = 0;
     arq_ctx.last_keepalive_rx = now;
     arq_ctx.last_keepalive_tx = now;
     arq_ctx.disconnect_in_progress = false;
@@ -1817,13 +1823,24 @@ int arq_get_control_mode(void)
 int arq_get_preferred_rx_mode(void)
 {
     int mode;
+    time_t now = time(NULL);
 
     arq_lock();
-    mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+    mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
     if (!arq_ctx.initialized)
     {
         arq_unlock();
         return mode;
+    }
+
+    if (arq_ctx.turn_role == ARQ_TURN_IRS &&
+        arq_ctx.peer_backlog_nonzero &&
+        !arq_ctx.payload_start_pending &&
+        arq_ctx.last_peer_payload_rx > 0 &&
+        (now - arq_ctx.last_peer_payload_rx) > ARQ_PEER_PAYLOAD_HOLD_S)
+    {
+        arq_ctx.peer_backlog_nonzero = false;
+        fprintf(stderr, "ARQ peer backlog timeout -> control\n");
     }
 
     bool control_phase =
@@ -1850,14 +1867,14 @@ int arq_get_preferred_rx_mode(void)
         else if (arq_ctx.turn_role == ARQ_TURN_ISS)
         {
             if (!arq_ctx.waiting_ack && arq_ctx.app_tx_len > 0)
-                mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+                mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
             else
                 mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
         else if (arq_ctx.turn_role == ARQ_TURN_IRS &&
                  (arq_ctx.payload_start_pending || arq_ctx.peer_backlog_nonzero))
         {
-            mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+            mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
         }
         else
         {
@@ -2075,6 +2092,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         if (arq_ctx.turn_role == ARQ_TURN_IRS)
         {
             arq_ctx.peer_backlog_nonzero = false;
+            arq_ctx.last_peer_payload_rx = 0;
             arq_ctx.pending_turn_ack = true;
             arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
             arq_fsm.current = state_turn_negotiating;
@@ -2092,6 +2110,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.turn_req_in_flight = false;
         arq_ctx.turn_req_retries_left = 0;
         arq_ctx.peer_backlog_nonzero = payload_len > 0 && payload[0] != 0;
+        arq_ctx.last_peer_payload_rx = arq_ctx.peer_backlog_nonzero ? now : 0;
         if (arq_ctx.peer_backlog_nonzero)
             become_irs_locked("turn ack");
         else
@@ -2105,7 +2124,10 @@ static void handle_control_frame_locked(uint8_t subtype,
         if (session_id != arq_ctx.session_id)
             return;
         if (payload_len > 0)
+        {
             arq_ctx.peer_backlog_nonzero = payload[0] != 0;
+            arq_ctx.last_peer_payload_rx = arq_ctx.peer_backlog_nonzero ? now : 0;
+        }
         mark_link_activity_locked(now);
         return;
 
@@ -2158,6 +2180,7 @@ static void handle_data_frame_locked(uint8_t session_id,
     {
         mark_link_activity_locked(now);
         arq_ctx.peer_backlog_nonzero = true;
+        arq_ctx.last_peer_payload_rx = now;
         write_buffer(data_rx_buffer_arq, (uint8_t *)payload, payload_len);
         arq_ctx.rx_expected_seq++;
         if (arq_ctx.payload_start_pending)
@@ -2176,6 +2199,7 @@ static void handle_data_frame_locked(uint8_t session_id,
     {
         mark_link_activity_locked(now);
         arq_ctx.peer_backlog_nonzero = true;
+        arq_ctx.last_peer_payload_rx = now;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         if (arq_ctx.next_role_tx_at < now + ARQ_ACK_GUARD_S)
@@ -2242,6 +2266,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
             arq_ctx.pending_turn_ack = false;
             arq_ctx.turn_promote_after_ack = false;
             arq_ctx.peer_backlog_nonzero = false;
+            arq_ctx.last_peer_payload_rx = 0;
             arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
             arq_ctx.remote_busy_until = now + ARQ_CHANNEL_GUARD_S;
         }
