@@ -136,6 +136,8 @@ typedef struct {
     time_t mode_req_deadline;
     int mode_candidate_mode;
     int mode_candidate_hits;
+    bool mode_apply_pending;
+    uint8_t mode_apply_mode;
 } arq_ctx_t;
 
 static arq_ctx_t arq_ctx;
@@ -317,6 +319,8 @@ static void become_iss_locked(const char *reason)
     arq_ctx.mode_req_in_flight = false;
     arq_ctx.pending_mode_req = false;
     arq_ctx.pending_mode_ack = false;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
     update_connected_state_from_turn_locked();
     fprintf(stderr, "ARQ turn -> ISS (%s)\n", reason ? reason : "role change");
 }
@@ -327,6 +331,8 @@ static void become_irs_locked(const char *reason)
     arq_ctx.waiting_ack = false;
     arq_ctx.outstanding_frame_len = 0;
     arq_ctx.outstanding_app_len = 0;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
     update_connected_state_from_turn_locked();
     fprintf(stderr, "ARQ turn -> IRS (%s)\n", reason ? reason : "role change");
 }
@@ -375,6 +381,39 @@ static void apply_payload_mode_locked(int new_mode, const char *reason)
     fprintf(stderr, "ARQ payload mode -> %s (%s)\n",
             mode_name(new_mode),
             reason ? reason : "negotiated");
+}
+
+static void request_payload_mode_locked(int new_mode, const char *reason)
+{
+    if (!is_payload_mode(new_mode))
+        return;
+
+    if (arq_ctx.waiting_ack && arq_ctx.outstanding_frame_len > 0)
+    {
+        arq_ctx.mode_apply_pending = true;
+        arq_ctx.mode_apply_mode = (uint8_t)new_mode;
+        fprintf(stderr, "ARQ payload mode defer -> %s (waiting ack)\n", mode_name(new_mode));
+        return;
+    }
+
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
+    apply_payload_mode_locked(new_mode, reason);
+}
+
+static void apply_deferred_payload_mode_locked(void)
+{
+    int mode;
+
+    if (!arq_ctx.mode_apply_pending)
+        return;
+    if (arq_ctx.waiting_ack && arq_ctx.outstanding_frame_len > 0)
+        return;
+
+    mode = arq_ctx.mode_apply_mode;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
+    apply_payload_mode_locked(mode, "deferred");
 }
 
 static int desired_payload_mode_locked(void)
@@ -915,6 +954,8 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.mode_req_deadline = 0;
     arq_ctx.mode_candidate_mode = 0;
     arq_ctx.mode_candidate_hits = 0;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
 
     arq_conn.TRX = RX;
     arq_conn.encryption = false;
@@ -969,6 +1010,8 @@ static void enter_connected_locked(void)
     arq_ctx.pending_keepalive_ack = false;
     arq_ctx.keepalive_waiting = false;
     arq_ctx.keepalive_misses = 0;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
     arq_ctx.last_keepalive_rx = now;
     arq_ctx.last_keepalive_tx = now;
     arq_ctx.last_phy_activity = now;
@@ -988,6 +1031,8 @@ static void enter_connected_locked(void)
     arq_ctx.mode_req_deadline = 0;
     arq_ctx.mode_candidate_mode = 0;
     arq_ctx.mode_candidate_hits = 0;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
     arq_ctx.pending_turn_req = false;
     arq_ctx.turn_req_in_flight = false;
     arq_ctx.turn_req_retries_left = 0;
@@ -1027,6 +1072,8 @@ static void start_outgoing_call_locked(void)
     arq_ctx.pending_keepalive_ack = false;
     arq_ctx.keepalive_waiting = false;
     arq_ctx.keepalive_misses = 0;
+    arq_ctx.mode_apply_pending = false;
+    arq_ctx.mode_apply_mode = 0;
     arq_ctx.last_keepalive_rx = now;
     arq_ctx.last_keepalive_tx = now;
     arq_ctx.disconnect_in_progress = false;
@@ -1097,6 +1144,7 @@ static bool do_slot_tx_locked(time_t now)
         return false;
     if (defer_tx_if_busy_locked(now))
         return false;
+    apply_deferred_payload_mode_locked();
 
     if (arq_ctx.pending_disconnect)
     {
@@ -1215,7 +1263,7 @@ static bool do_slot_tx_locked(time_t now)
     {
         if (send_mode_change_locked(ARQ_SUBTYPE_MODE_ACK, arq_ctx.pending_mode) == 0)
         {
-            apply_payload_mode_locked(arq_ctx.pending_mode, "mode ack tx");
+            request_payload_mode_locked(arq_ctx.pending_mode, "mode ack tx");
             arq_ctx.pending_mode_ack = false;
             schedule_next_tx_locked(now, false);
             return true;
@@ -1869,6 +1917,7 @@ static void handle_control_frame_locked(uint8_t subtype,
 
         fprintf(stderr, "ARQ ack rx seq=%u\n", ack);
         arq_ctx.waiting_ack = false;
+        apply_deferred_payload_mode_locked();
         if (arq_ctx.payload_start_pending)
             arq_ctx.payload_start_pending = false;
         if (arq_ctx.outstanding_app_len <= arq_ctx.app_tx_len)
@@ -1913,7 +1962,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.mode_req_in_flight = false;
         arq_ctx.mode_req_retries_left = 0;
         arq_ctx.mode_candidate_hits = 0;
-        apply_payload_mode_locked(payload[0], "peer ack");
+        request_payload_mode_locked(payload[0], "peer ack");
         mark_link_activity_locked(now);
         return;
 
