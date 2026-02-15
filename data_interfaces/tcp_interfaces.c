@@ -40,6 +40,7 @@
 #include "fsm.h"
 #include "defines_modem.h"
 #include "kiss.h"
+#include "freedv_api.h"
 
 static pthread_t tid[7];
 static int arq_tcp_base_port_cfg = 0;
@@ -48,6 +49,7 @@ static size_t broadcast_frame_size_cfg = 0;
 static float last_sn_value = 0.0f;
 static uint32_t last_bitrate_sl = 0;
 static uint32_t last_bitrate_bps = 0;
+static int last_bitrate_mode = 0;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -381,7 +383,7 @@ void *control_worker_thread_rx(void *conn)
 
         if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
         {
-            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps);
+            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps, last_bitrate_mode);
             continue;
         }
 
@@ -666,12 +668,14 @@ void tnc_send_sn(float snr)
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
-void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
+void tnc_send_bitrate(uint32_t speed_level, uint32_t bps, int payload_mode)
 {
-    char buffer[64];
+    char buffer[96];
     last_bitrate_sl = speed_level;
     last_bitrate_bps = bps;
-    snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
+    last_bitrate_mode = payload_mode;
+    snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS MODE %s\r",
+             speed_level, bps, bitrate_mode_name(payload_mode));
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
@@ -716,4 +720,20 @@ void interfaces_shutdown()
     pthread_join(tid[4], NULL);
     pthread_join(tid[5], NULL);
     pthread_join(tid[6], NULL);
+}
+static const char *bitrate_mode_name(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1:
+        return "DATAC1";
+    case FREEDV_MODE_DATAC3:
+        return "DATAC3";
+    case FREEDV_MODE_DATAC4:
+        return "DATAC4";
+    case FREEDV_MODE_DATAC13:
+        return "DATAC13";
+    default:
+        return "OTHER";
+    }
 }

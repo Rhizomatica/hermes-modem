@@ -836,7 +836,7 @@ void *rx_thread(void *g_modem)
                 continue;
 
             tnc_send_sn(snr_est);
-            tnc_send_bitrate(0, bitrate_bps);
+            tnc_send_bitrate(0, bitrate_bps, arq_get_payload_mode());
 
             int frame_type = parse_frame_header(data, payload_nbytes);
             if (frame_type == PACKET_TYPE_ARQ_DATA &&

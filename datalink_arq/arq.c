@@ -510,6 +510,17 @@ static int max_gear_for_frame_size(size_t frame_size)
     return 0;
 }
 
+static int payload_mode_for_frame_size(size_t frame_size)
+{
+    if (frame_size >= 510)
+        return FREEDV_MODE_DATAC1;
+    if (frame_size >= 126)
+        return FREEDV_MODE_DATAC3;
+    if (frame_size >= 56)
+        return FREEDV_MODE_DATAC4;
+    return 0;
+}
+
 static size_t chunk_size_for_gear_locked(void)
 {
     size_t cap = arq_conn.frame_size - ARQ_PAYLOAD_OFFSET;
@@ -1316,16 +1327,30 @@ static bool do_slot_tx_locked(time_t now)
             arq_ctx.waiting_ack &&
             now >= arq_ctx.ack_deadline)
         {
-            if (arq_ctx.data_retries_left > 0 && arq_ctx.outstanding_frame_len == arq_conn.frame_size)
+            if (arq_ctx.data_retries_left > 0 && arq_ctx.outstanding_frame_len > 0)
             {
+                int retry_mode = payload_mode_for_frame_size(arq_ctx.outstanding_frame_len);
+                if (is_payload_mode(retry_mode) && retry_mode != arq_ctx.payload_mode)
+                    apply_payload_mode_locked(retry_mode, "retry realign");
                 queue_frame_locked(arq_ctx.outstanding_frame, arq_ctx.outstanding_frame_len, false);
                 arq_ctx.data_retries_left--;
                 arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s;
                 mark_failure_locked();
+                fprintf(stderr, "ARQ data retry seq=%u left=%d frame=%zu active=%zu\n",
+                        arq_ctx.outstanding_seq,
+                        arq_ctx.data_retries_left,
+                        arq_ctx.outstanding_frame_len,
+                        arq_conn.frame_size);
                 schedule_next_tx_locked(now, true);
                 return true;
             }
 
+            fprintf(stderr, "ARQ data timeout disconnect seq=%u retries=%d frame=%zu active=%zu waiting=%d\n",
+                    arq_ctx.outstanding_seq,
+                    arq_ctx.data_retries_left,
+                    arq_ctx.outstanding_frame_len,
+                    arq_conn.frame_size,
+                    arq_ctx.waiting_ack ? 1 : 0);
             start_disconnect_locked(false);
             return true;
         }
@@ -1611,7 +1636,12 @@ void arq_tick_1hz(void)
             arq_ctx.keepalive_misses++;
             fprintf(stderr, "ARQ keepalive miss=%d\n", arq_ctx.keepalive_misses);
             if (arq_ctx.keepalive_misses >= arq_ctx.keepalive_miss_limit)
+            {
+                fprintf(stderr, "ARQ keepalive timeout disconnect misses=%d limit=%d\n",
+                        arq_ctx.keepalive_misses,
+                        arq_ctx.keepalive_miss_limit);
                 start_disconnect_locked(false);
+            }
         }
 
         if (link_idle &&
