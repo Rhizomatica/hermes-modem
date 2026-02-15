@@ -671,19 +671,28 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
+        arq_runtime_snapshot_t arq_snapshot;
+        memset(&arq_snapshot, 0, sizeof(arq_snapshot));
+        bool have_arq_snapshot = arq_get_runtime_snapshot(&arq_snapshot);
+
         size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
         size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
-        int pending_arq_app = arq_get_tx_backlog_bytes();
+        int pending_arq_app = have_arq_snapshot ? arq_snapshot.tx_backlog_bytes
+                                                : arq_get_tx_backlog_bytes();
         bool local_tx_queued =
             (pending_arq_app > 0) ||
             (pending_arq_data > 0) ||
             (pending_arq_control > 0) ||
             (pending_broadcast > 0);
-        if (arq_conn.TRX != TX && arq_ready_for_mode_policy())
+        if ((have_arq_snapshot ? arq_snapshot.trx : arq_conn.TRX) != TX &&
+            arq_ready_for_mode_policy())
         {
-            int desired_mode = local_tx_queued ? arq_get_preferred_tx_mode()
-                                               : arq_get_preferred_rx_mode();
+            int desired_mode = local_tx_queued
+                                   ? (have_arq_snapshot ? arq_snapshot.preferred_tx_mode
+                                                        : arq_get_preferred_tx_mode())
+                                   : (have_arq_snapshot ? arq_snapshot.preferred_rx_mode
+                                                        : arq_get_preferred_rx_mode());
             if (desired_mode >= 0)
                 maybe_switch_modem_mode(modem, desired_mode);
         }
@@ -733,7 +742,9 @@ void *tx_thread(void *g_modem)
         if (have_action)
         {
             cbuf_handle_t action_buffer = NULL;
-            if (action.mode >= 0 && arq_conn.TRX != TX && arq_ready_for_mode_policy())
+            if (action.mode >= 0 &&
+                (have_arq_snapshot ? arq_snapshot.trx : arq_conn.TRX) != TX &&
+                arq_ready_for_mode_policy())
                 maybe_switch_modem_mode(modem, action.mode);
 
             if (action.type == ARQ_ACTION_TX_CONTROL)
@@ -798,13 +809,25 @@ void *rx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        int payload_mode = payload_mode_for_bitrate(arq_get_payload_mode());
+        arq_runtime_snapshot_t arq_snapshot;
+        memset(&arq_snapshot, 0, sizeof(arq_snapshot));
+        bool have_arq_snapshot = arq_get_runtime_snapshot(&arq_snapshot);
+        int payload_mode = payload_mode_for_bitrate(have_arq_snapshot ? arq_snapshot.payload_mode
+                                                                       : arq_get_payload_mode());
         int pref_rx_mode = -1;
         int pref_tx_mode = -1;
         if (arq_ready_for_mode_policy())
         {
-            pref_rx_mode = arq_get_preferred_rx_mode();
-            pref_tx_mode = arq_get_preferred_tx_mode();
+            if (have_arq_snapshot)
+            {
+                pref_rx_mode = arq_snapshot.preferred_rx_mode;
+                pref_tx_mode = arq_snapshot.preferred_tx_mode;
+            }
+            else
+            {
+                pref_rx_mode = arq_get_preferred_rx_mode();
+                pref_tx_mode = arq_get_preferred_tx_mode();
+            }
             if (pref_rx_mode != last_pref_rx_mode || pref_tx_mode != last_pref_tx_mode)
             {
                 fprintf(stderr, "ARQ preferred modes: rx=%d tx=%d\n", pref_rx_mode, pref_tx_mode);

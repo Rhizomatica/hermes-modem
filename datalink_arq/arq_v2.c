@@ -37,6 +37,7 @@
 #define arq_update_link_metrics arq_v2_update_link_metrics
 #define arq_try_dequeue_action arq_v2_try_dequeue_action
 #define arq_wait_dequeue_action arq_v2_wait_dequeue_action
+#define arq_get_runtime_snapshot arq_v2_get_runtime_snapshot
 #define clear_connection_data arq_v2_clear_connection_data
 #define reset_arq_info arq_v2_reset_arq_info
 #define call_remote arq_v2_call_remote
@@ -340,6 +341,8 @@ static void arq_action_queue_clear_locked(void);
 static bool arq_action_queue_push_locked(const arq_action_t *action);
 static bool arq_action_queue_pop_locked(arq_action_t *action);
 static size_t frame_size_for_payload_mode(int mode);
+static int preferred_rx_mode_locked(time_t now);
+static int preferred_tx_mode_locked(time_t now);
 
 static inline void arq_lock(void)
 {
@@ -2382,18 +2385,13 @@ int arq_get_control_mode(void)
     return mode;
 }
 
-int arq_get_preferred_rx_mode(void)
+static int preferred_rx_mode_locked(time_t now)
 {
-    int mode;
-    time_t now = time(NULL);
+    int mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
+    bool control_phase;
 
-    arq_lock();
-    mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
     if (!arq_ctx.initialized)
-    {
-        arq_unlock();
         return mode;
-    }
 
     if (arq_ctx.turn_role == ARQ_TURN_IRS &&
         arq_ctx.peer_backlog_nonzero &&
@@ -2405,7 +2403,7 @@ int arq_get_preferred_rx_mode(void)
         fprintf(stderr, "ARQ peer backlog timeout -> control\n");
     }
 
-    bool control_phase =
+    control_phase =
         arq_fsm.current == state_listen ||
         arq_fsm.current == state_calling_wait_accept ||
         arq_fsm.current == state_turn_negotiating ||
@@ -2447,24 +2445,18 @@ int arq_get_preferred_rx_mode(void)
     {
         mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
-    arq_unlock();
     return mode;
 }
 
-int arq_get_preferred_tx_mode(void)
+static int preferred_tx_mode_locked(time_t now)
 {
-    int mode;
-    time_t now = time(NULL);
+    int mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : arq_conn.mode;
+    bool must_control_tx;
 
-    arq_lock();
-    mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
     if (!arq_ctx.initialized)
-    {
-        arq_unlock();
         return mode;
-    }
 
-    bool must_control_tx =
+    must_control_tx =
         arq_fsm.current == state_listen ||
         arq_fsm.current == state_calling_wait_accept ||
         arq_fsm.current == state_turn_negotiating ||
@@ -2501,8 +2493,68 @@ int arq_get_preferred_tx_mode(void)
     {
         mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
+    return mode;
+}
+
+int arq_get_preferred_rx_mode(void)
+{
+    int mode;
+    time_t now = time(NULL);
+
+    arq_lock();
+    mode = preferred_rx_mode_locked(now);
     arq_unlock();
     return mode;
+}
+
+int arq_get_preferred_tx_mode(void)
+{
+    int mode;
+    time_t now = time(NULL);
+
+    arq_lock();
+    mode = preferred_tx_mode_locked(now);
+    arq_unlock();
+    return mode;
+}
+
+bool arq_v2_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
+{
+    size_t pending = 0;
+    int gear = 0;
+    time_t now = time(NULL);
+
+    if (!snapshot)
+        return false;
+
+    memset(snapshot, 0, sizeof(*snapshot));
+
+    arq_lock();
+    snapshot->initialized = arq_ctx.initialized;
+    snapshot->connected = arq_ctx.initialized && is_connected_state_locked();
+    snapshot->trx = arq_conn.TRX;
+
+    if (arq_ctx.initialized)
+    {
+        pending = arq_ctx.app_tx_len;
+        gear = arq_ctx.gear;
+    }
+
+    if (pending > (size_t)INT_MAX)
+        snapshot->tx_backlog_bytes = INT_MAX;
+    else
+        snapshot->tx_backlog_bytes = (int)pending;
+
+    if (gear < 0)
+        gear = 0;
+    snapshot->speed_level = gear;
+    snapshot->payload_mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
+    snapshot->control_mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
+    snapshot->preferred_rx_mode = preferred_rx_mode_locked(now);
+    snapshot->preferred_tx_mode = preferred_tx_mode_locked(now);
+    arq_unlock();
+
+    return snapshot->initialized;
 }
 
 static void arq_set_active_modem_mode_locked(int mode, size_t frame_size)

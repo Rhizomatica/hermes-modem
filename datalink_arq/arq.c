@@ -102,6 +102,11 @@ bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms)
     return arq_v2_wait_dequeue_action(action, timeout_ms);
 }
 
+bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
+{
+    return arq_v2_get_runtime_snapshot(snapshot);
+}
+
 void clear_connection_data(void)
 {
     arq_v2_clear_connection_data();

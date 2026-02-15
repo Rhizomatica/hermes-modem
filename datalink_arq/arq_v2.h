@@ -32,6 +32,7 @@ void arq_v2_handle_incoming_frame(uint8_t *data, size_t frame_size);
 void arq_v2_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 bool arq_v2_try_dequeue_action(arq_action_t *action);
 bool arq_v2_wait_dequeue_action(arq_action_t *action, int timeout_ms);
+bool arq_v2_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot);
 void arq_v2_clear_connection_data(void);
 void arq_v2_reset_arq_info(arq_info *arq_conn_i);
 void arq_v2_call_remote(void);

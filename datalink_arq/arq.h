@@ -67,6 +67,19 @@ typedef struct
     size_t frame_size;
 } arq_action_t;
 
+typedef struct
+{
+    bool initialized;
+    bool connected;
+    int trx;
+    int tx_backlog_bytes;
+    int speed_level;
+    int payload_mode;
+    int control_mode;
+    int preferred_rx_mode;
+    int preferred_tx_mode;
+} arq_runtime_snapshot_t;
+
 extern arq_info arq_conn;
 extern fsm_handle arq_fsm;
 
@@ -89,6 +102,7 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 bool arq_try_dequeue_action(arq_action_t *action);
 bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms);
+bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot);
 
 // auxiliary functions
 void clear_connection_data();
