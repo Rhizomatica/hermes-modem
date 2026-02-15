@@ -177,6 +177,7 @@ typedef struct {
     size_t action_head;
     size_t action_tail;
     size_t action_count;
+    size_t pending_payload_actions;
 } arq_ctx_t;
 
 static arq_ctx_t arq_ctx;
@@ -188,7 +189,8 @@ typedef enum {
     ARQ_EVENT_RX_FRAME = 2,
     ARQ_EVENT_RX_CONNECT_FRAME = 3,
     ARQ_EVENT_LINK_METRICS = 4,
-    ARQ_EVENT_APP_TX = 5
+    ARQ_EVENT_APP_TX = 5,
+    ARQ_EVENT_ACTIVE_MODE = 6
 } arq_event_type_t;
 
 typedef struct {
@@ -221,12 +223,18 @@ typedef struct {
 } arq_event_app_tx_payload_t;
 
 typedef struct {
+    int mode;
+    size_t frame_size;
+} arq_event_active_mode_payload_t;
+
+typedef struct {
     arq_event_type_t type;
     union {
         arq_event_fsm_payload_t fsm;
         arq_event_rx_frame_payload_t rx_frame;
         arq_event_link_metrics_payload_t link_metrics;
         arq_event_app_tx_payload_t app_tx;
+        arq_event_active_mode_payload_t active_mode;
     } u;
 } arq_event_t;
 
@@ -316,12 +324,14 @@ static void arq_event_loop_enqueue_frame(const uint8_t *data, size_t frame_size)
 static void arq_event_loop_enqueue_connect_frame(const uint8_t *data, size_t frame_size);
 static void arq_event_loop_enqueue_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 static void arq_event_loop_enqueue_app_tx(const uint8_t *data, size_t data_len, arq_event_app_tx_result_t *result);
+static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size);
 static bool arq_event_loop_enqueue_internal(const arq_event_t *event_item);
 static void arq_process_event(const arq_event_t *event_item);
 static void *arq_event_loop_worker(void *arg);
 static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t frame_size);
 static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_size);
 static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, bool frame_decoded, time_t now);
+static void arq_set_active_modem_mode_locked(int mode, size_t frame_size);
 static int arq_queue_app_data_locked(const uint8_t *data, size_t len);
 static void arq_event_app_tx_result_complete(arq_event_app_tx_result_t *result, int queued);
 static void arq_action_queue_clear_locked(void);
@@ -411,6 +421,7 @@ static void arq_action_queue_clear_locked(void)
     arq_ctx.action_head = 0;
     arq_ctx.action_tail = 0;
     arq_ctx.action_count = 0;
+    arq_ctx.pending_payload_actions = 0;
 }
 
 static bool arq_action_queue_push_locked(const arq_action_t *action)
@@ -424,6 +435,8 @@ static bool arq_action_queue_push_locked(const arq_action_t *action)
     arq_ctx.action_queue[arq_ctx.action_tail] = *action;
     arq_ctx.action_tail = (arq_ctx.action_tail + 1) % ARQ_ACTION_QUEUE_CAPACITY;
     arq_ctx.action_count++;
+    if (action->type == ARQ_ACTION_TX_PAYLOAD)
+        arq_ctx.pending_payload_actions++;
     return true;
 }
 
@@ -485,6 +498,13 @@ static void arq_process_event(const arq_event_t *event_item)
         arq_event_app_tx_result_complete(event_item->u.app_tx.result, queued);
         return;
     }
+
+    case ARQ_EVENT_ACTIVE_MODE:
+        arq_lock();
+        arq_set_active_modem_mode_locked(event_item->u.active_mode.mode,
+                                         event_item->u.active_mode.frame_size);
+        arq_unlock();
+        return;
 
     default:
         return;
@@ -564,6 +584,21 @@ static void arq_event_loop_enqueue_app_tx(const uint8_t *data, size_t data_len, 
     event_item.u.app_tx.data_len = data_len;
     event_item.u.app_tx.result = result;
     memcpy(event_item.u.app_tx.data, data, data_len);
+    if (!arq_event_loop_enqueue_internal(&event_item))
+        arq_process_event(&event_item);
+}
+
+static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size)
+{
+    arq_event_t event_item;
+
+    if (frame_size == 0 || frame_size > INT_BUFFER_SIZE)
+        return;
+
+    memset(&event_item, 0, sizeof(event_item));
+    event_item.type = ARQ_EVENT_ACTIVE_MODE;
+    event_item.u.active_mode.mode = mode;
+    event_item.u.active_mode.frame_size = frame_size;
     if (!arq_event_loop_enqueue_internal(&event_item))
         arq_process_event(&event_item);
 }
@@ -2429,7 +2464,7 @@ int arq_get_preferred_tx_mode(void)
     {
         if (arq_ctx.turn_role == ARQ_TURN_ISS && !must_control_tx)
         {
-            if (arq_ctx.waiting_ack && size_buffer(data_tx_buffer_arq) > 0)
+            if (arq_ctx.waiting_ack && arq_ctx.pending_payload_actions > 0)
                 mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
             else if (arq_ctx.waiting_ack && now < arq_ctx.ack_deadline)
                 mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
@@ -2451,9 +2486,8 @@ int arq_get_preferred_tx_mode(void)
     return mode;
 }
 
-void arq_set_active_modem_mode(int mode, size_t frame_size)
+static void arq_set_active_modem_mode_locked(int mode, size_t frame_size)
 {
-    arq_lock();
     arq_conn.mode = mode;
     arq_conn.frame_size = frame_size;
     if (mode == FREEDV_MODE_DATAC1 ||
@@ -2464,6 +2498,21 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
         if (arq_ctx.gear > arq_ctx.max_gear)
             arq_ctx.gear = arq_ctx.max_gear;
     }
+}
+
+void arq_set_active_modem_mode(int mode, size_t frame_size)
+{
+    if (frame_size == 0 || frame_size > INT_BUFFER_SIZE)
+        return;
+
+    if (arq_event_loop.started)
+    {
+        arq_event_loop_enqueue_active_mode(mode, frame_size);
+        return;
+    }
+
+    arq_lock();
+    arq_set_active_modem_mode_locked(mode, frame_size);
     arq_unlock();
 }
 
@@ -2934,6 +2983,8 @@ bool arq_v2_try_dequeue_action(arq_action_t *action)
     *action = arq_ctx.action_queue[arq_ctx.action_head];
     arq_ctx.action_head = (arq_ctx.action_head + 1) % ARQ_ACTION_QUEUE_CAPACITY;
     arq_ctx.action_count--;
+    if (action->type == ARQ_ACTION_TX_PAYLOAD && arq_ctx.pending_payload_actions > 0)
+        arq_ctx.pending_payload_actions--;
     arq_unlock();
     return true;
 }
