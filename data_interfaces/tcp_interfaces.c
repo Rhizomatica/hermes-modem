@@ -111,7 +111,7 @@ void *server_worker_thread_ctl(void *port)
             continue;
         }
 
-        fsm_dispatch(&arq_fsm, EV_CLIENT_CONNECT);
+        arq_post_event(EV_CLIENT_CONNECT);
         
         // TODO: pthread wait here?
         while (status_ctl == NET_CONNECTED)
@@ -121,7 +121,7 @@ void *server_worker_thread_ctl(void *port)
         if (status_data == NET_CONNECTED)
             status_data = NET_RESTART;
 
-        fsm_dispatch(&arq_fsm, EV_CLIENT_DISCONNECT);
+        arq_post_event(EV_CLIENT_DISCONNECT);
         
         tcp_close(CTL_TCP_PORT);
     }
@@ -259,8 +259,6 @@ void *control_worker_thread_tx(void *conn)
             last_buffer_report = buffered;
         }
 
-        arq_tick_1hz();
-
         sleep(1);
         counter++;
     }
@@ -337,11 +335,11 @@ void *control_worker_thread_rx(void *conn)
             sscanf(buffer,"LISTEN %15s", temp);
             if (temp[1] == 'N') // ON
             {
-                fsm_dispatch(&arq_fsm, EV_START_LISTEN);
+                arq_post_event(EV_START_LISTEN);
             }
             if (temp[1] == 'F') // OFF
             {
-                fsm_dispatch(&arq_fsm, EV_STOP_LISTEN);
+                arq_post_event(EV_STOP_LISTEN);
             }
 
             goto send_ok;
@@ -394,13 +392,13 @@ void *control_worker_thread_rx(void *conn)
         if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
         {
             sscanf(buffer,"CONNECT %15s %15s", arq_conn.src_addr, arq_conn.dst_addr);
-            fsm_dispatch(&arq_fsm, EV_LINK_CALL_REMOTE);
+            arq_post_event(EV_LINK_CALL_REMOTE);
             goto send_ok;
         }
 
         if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
         {   
-            fsm_dispatch(&arq_fsm, EV_LINK_DISCONNECT);
+            arq_post_event(EV_LINK_DISCONNECT);
             goto send_ok;
         }
 

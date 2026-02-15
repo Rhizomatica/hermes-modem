@@ -588,7 +588,6 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     int input_size = 0;
 
     static int frames_received = 0;
-    static int debug_counter = 0;
     static int16_t *demod_in = NULL;
     static int32_t *buffer_in = NULL;
     static int buffer_size = 0;
@@ -613,7 +612,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     // Safety check: nin should not be larger than buffer
     if (nin > (size_t)input_size)
     {
-        printf("[DEBUG RX] ERROR: nin=%zu exceeds input_size=%d\n", nin, input_size);
+        fprintf(stderr, "RX error: nin=%zu exceeds input_size=%d\n", nin, input_size);
         *nbytes_out = 0;
         return -1;
     }
@@ -623,22 +622,6 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     if (nin > 0)
     {
         read_buffer(capture_buffer, (uint8_t *) buffer_in, sizeof(int32_t) * nin);
-
-        // Debug: print signal level every ~1 second (8000 samples/sec)
-        debug_counter += nin;
-        if (debug_counter >= 8000)
-        {
-            int32_t max_val = 0;
-            int32_t min_val = 0;
-            for (size_t i = 0; i < nin; i++)
-            {
-                if (buffer_in[i] > max_val) max_val = buffer_in[i];
-                if (buffer_in[i] < min_val) min_val = buffer_in[i];
-            }
-            printf("[DEBUG RX] buffer size: %zu, nin: %zu, signal range: [%d, %d]\n",
-                   size_buffer(capture_buffer), nin, min_val, max_val);
-            debug_counter = 0;
-        }
 
         // converting from s32le to s16le
         for (size_t i = 0; i < nin; i++)
@@ -658,32 +641,10 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     // ALWAYS call freedv_rawdatarx - even when nin==0, it processes internal buffers
     *nbytes_out = freedv_rawdatarx(freedv, bytes_out, demod_in);
 
-    // Check modem state and RX status
     int sync = 0;
     float snr_est = 0.0;
     freedv_get_modem_stats(freedv, &sync, &snr_est);
-    int rx_status = freedv_get_rx_status(freedv);
-
-    // Debug: show RX status flags
-    // FREEDV_RX_SYNC = 0x1, FREEDV_RX_BITS = 0x2, FREEDV_RX_BIT_ERRORS = 0x4
-    static int sync_count = 0;
-    static int last_rx_status = 0;
-
-    if (rx_status != last_rx_status || (sync && sync_count % 50 == 0))
-    {
-        printf("[DEBUG RX STATUS] rx_status=0x%x (SYNC=%d BITS=%d BIT_ERRORS=%d) sync=%d snr=%.1f nbytes=%zu\n",
-               rx_status,
-               (rx_status & 0x1) ? 1 : 0,   // FREEDV_RX_SYNC
-               (rx_status & 0x2) ? 1 : 0,   // FREEDV_RX_BITS
-               (rx_status & 0x4) ? 1 : 0,   // FREEDV_RX_BIT_ERRORS
-               sync, snr_est, *nbytes_out);
-        last_rx_status = rx_status;
-    }
-
-    if (sync)
-        sync_count++;
-    else
-        sync_count = 0;
+    (void)sync;
 
     if (*nbytes_out > 0)
     {
@@ -758,8 +719,33 @@ void *tx_thread(void *g_modem)
             data_size = required;
         }
 
+        bool sent_from_action = false;
+        arq_action_t action = {0};
+        if (arq_try_dequeue_action(&action))
+        {
+            cbuf_handle_t action_buffer = NULL;
+            if (action.mode >= 0 && arq_conn.TRX != TX && arq_ready_for_mode_policy())
+                maybe_switch_modem_mode(modem, action.mode);
+
+            if (action.type == ARQ_ACTION_TX_CONTROL)
+                action_buffer = data_tx_buffer_arq_control;
+            else if (action.type == ARQ_ACTION_TX_PAYLOAD)
+                action_buffer = data_tx_buffer_arq;
+            else if (action.type == ARQ_ACTION_MODE_SWITCH)
+                sent_from_action = true;
+
+            if (action_buffer &&
+                action.frame_size == payload_bytes_per_modem_frame &&
+                size_buffer(action_buffer) >= payload_bytes_per_modem_frame)
+            {
+                read_buffer(action_buffer, data, payload_bytes_per_modem_frame);
+                send_modulated_data(modem, data, 1);
+                sent_from_action = true;
+            }
+        }
+
         cbuf_handle_t arq_tx_buffer = (payload_bytes_per_modem_frame == 14) ? data_tx_buffer_arq_control : data_tx_buffer_arq;
-        if (size_buffer(arq_tx_buffer) >= required)
+        if (!sent_from_action && size_buffer(arq_tx_buffer) >= required)
         {
             for (int i = 0; i < tx_frames_per_burst; i++)
             {
@@ -777,7 +763,8 @@ void *tx_thread(void *g_modem)
             send_modulated_data(modem, data, tx_frames_per_burst);
         }
 
-        if (size_buffer(data_tx_buffer_arq) < required &&
+        if (!sent_from_action &&
+            size_buffer(data_tx_buffer_arq) < required &&
             size_buffer(data_tx_buffer_arq_control) < required &&
             size_buffer(data_tx_buffer_broadcast) < required)
         {

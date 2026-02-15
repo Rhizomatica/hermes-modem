@@ -52,21 +52,6 @@ typedef struct
     int mode;
 } arq_info;
 
-typedef enum
-{
-    ARQ_ACTION_NONE = 0,
-    ARQ_ACTION_TX_CONTROL = 1,
-    ARQ_ACTION_TX_PAYLOAD = 2,
-    ARQ_ACTION_MODE_SWITCH = 3
-} arq_action_type_t;
-
-typedef struct
-{
-    arq_action_type_t type;
-    int mode;
-    size_t frame_size;
-} arq_action_t;
-
 extern arq_info arq_conn;
 extern fsm_handle arq_fsm;
 
@@ -87,7 +72,6 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
-bool arq_try_dequeue_action(arq_action_t *action);
 
 // auxiliary functions
 void clear_connection_data();

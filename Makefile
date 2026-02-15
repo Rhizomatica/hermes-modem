@@ -51,7 +51,7 @@ all: mercury
 
 mercury: internal_deps main.o 
 	$(CC) -o mercury  \
-		main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
+		main.o datalink_arq/arq.o datalink_arq/arq_v2.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
 		modem/framer.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \
 		common/crc6.o data_interfaces/tcp_interfaces.o data_interfaces/net.o $(LDFLAGS)
 
