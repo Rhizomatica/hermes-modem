@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "modem.h"
 #include "ring_buffer_posix.h"
@@ -61,6 +62,7 @@ cbuf_handle_t data_rx_buffer_broadcast;
 pthread_t tx_thread_tid, rx_thread_tid;
 static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t modem_freedv_epoch = 1;
+static uint64_t modem_last_switch_ms = 0;
 
 typedef struct {
     struct freedv *datac1;
@@ -74,6 +76,13 @@ typedef struct {
 } modem_mode_pool_t;
 
 static modem_mode_pool_t modem_mode_pool = {0};
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+}
 
 static bool arq_ready_for_mode_policy(void)
 {
@@ -208,6 +217,12 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
         pthread_mutex_unlock(&modem_freedv_lock);
         return 0;
     }
+    uint64_t now_ms = monotonic_ms();
+    if (modem_last_switch_ms != 0 && (now_ms - modem_last_switch_ms) < 250)
+    {
+        pthread_mutex_unlock(&modem_freedv_lock);
+        return 0;
+    }
     size_t payload_bytes_per_modem_frame = 0;
     struct freedv *new_freedv = pooled_freedv_for_mode_locked(target_mode, &payload_bytes_per_modem_frame);
     if (!new_freedv)
@@ -219,6 +234,7 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
     g_modem->mode = target_mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     modem_freedv_epoch++;
+    modem_last_switch_ms = now_ms;
     pthread_mutex_unlock(&modem_freedv_lock);
     arq_set_active_modem_mode(target_mode, payload_bytes_per_modem_frame);
 
@@ -665,29 +681,15 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
+        size_t pending_arq = size_buffer(data_tx_buffer_arq) + size_buffer(data_tx_buffer_arq_control);
+        size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
         if (arq_conn.TRX != TX &&
-            arq_ready_for_mode_policy())
+            arq_ready_for_mode_policy() &&
+            (pending_arq > 0 || pending_broadcast > 0))
         {
             int pref_tx_mode = arq_get_preferred_tx_mode();
             if (pref_tx_mode >= 0)
-            {
-                size_t pref_payload_bytes = 0;
-                int pref_frames_per_burst = 1;
-                pthread_mutex_lock(&modem_freedv_lock);
-                (void)pooled_freedv_for_mode_locked(pref_tx_mode, &pref_payload_bytes);
-                if (modem->freedv)
-                    pref_frames_per_burst = freedv_get_frames_per_burst(modem->freedv);
-                pthread_mutex_unlock(&modem_freedv_lock);
-
-                if (pref_payload_bytes > 0)
-                {
-                    size_t pref_required = pref_payload_bytes * (size_t)pref_frames_per_burst;
-                    cbuf_handle_t pref_tx_buffer =
-                        (pref_tx_mode == FREEDV_MODE_DATAC13) ? data_tx_buffer_arq_control : data_tx_buffer_arq;
-                    if (size_buffer(pref_tx_buffer) >= pref_required)
-                        maybe_switch_modem_mode(modem, pref_tx_mode);
-                }
-            }
+                maybe_switch_modem_mode(modem, pref_tx_mode);
         }
 
         size_t payload_bytes_per_modem_frame = 0;
@@ -774,16 +776,8 @@ void *rx_thread(void *g_modem)
                 last_pref_tx_mode = pref_tx_mode;
             }
 
-            size_t queued_arq_data = size_buffer(data_tx_buffer_arq);
-            size_t queued_arq_control = size_buffer(data_tx_buffer_arq_control);
-            size_t queued_broadcast = size_buffer(data_tx_buffer_broadcast);
-            bool local_tx_queued =
-                (queued_arq_data > 0) ||
-                (queued_arq_control > 0) ||
-                (queued_broadcast > 0);
             if (arq_conn.TRX != TX &&
-                pref_rx_mode >= 0 &&
-                !local_tx_queued)
+                pref_rx_mode >= 0)
                 maybe_switch_modem_mode(modem, pref_rx_mode);
         }
 
