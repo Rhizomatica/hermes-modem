@@ -498,9 +498,6 @@ static int desired_payload_mode_locked(void)
     int desired_rank;
     size_t effective_backlog = arq_ctx.app_tx_len;
 
-    if (arq_ctx.turn_role == ARQ_TURN_IRS && arq_ctx.peer_backlog_nonzero)
-        effective_backlog = ARQ_BACKLOG_MIN_DATAC1;
-
     if (arq_ctx.snr_ema == 0.0f)
         return current;
 
@@ -532,6 +529,8 @@ static void update_payload_mode_locked(void)
     if (!is_connected_state_locked())
         return;
     if (!is_payload_mode(arq_ctx.payload_mode))
+        return;
+    if (arq_ctx.turn_role != ARQ_TURN_ISS || arq_ctx.app_tx_len == 0)
         return;
 
     int desired = desired_payload_mode_locked();

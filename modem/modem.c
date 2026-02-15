@@ -728,13 +728,17 @@ void *tx_thread(void *g_modem)
 
         size_t payload_bytes_per_modem_frame = 0;
         int frames_per_burst = 1;
+        int tx_frames_per_burst = 1;
         pthread_mutex_lock(&modem_freedv_lock);
         payload_bytes_per_modem_frame = modem->payload_bytes_per_modem_frame;
         if (modem->freedv)
             frames_per_burst = freedv_get_frames_per_burst(modem->freedv);
         pthread_mutex_unlock(&modem_freedv_lock);
 
-        size_t required = payload_bytes_per_modem_frame * (size_t)frames_per_burst;
+        if (payload_bytes_per_modem_frame != 14)
+            tx_frames_per_burst = frames_per_burst;
+
+        size_t required = payload_bytes_per_modem_frame * (size_t)tx_frames_per_burst;
         if (required == 0)
         {
             usleep(100000);
@@ -757,20 +761,20 @@ void *tx_thread(void *g_modem)
         cbuf_handle_t arq_tx_buffer = (payload_bytes_per_modem_frame == 14) ? data_tx_buffer_arq_control : data_tx_buffer_arq;
         if (size_buffer(arq_tx_buffer) >= required)
         {
-            for (int i = 0; i < frames_per_burst; i++)
+            for (int i = 0; i < tx_frames_per_burst; i++)
             {
                 read_buffer(arq_tx_buffer, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
-            send_modulated_data(modem, data, frames_per_burst);
+            send_modulated_data(modem, data, tx_frames_per_burst);
         }
 
         if (size_buffer(data_tx_buffer_broadcast) >= required)
         {
-            for (int i = 0; i < frames_per_burst; i++)
+            for (int i = 0; i < tx_frames_per_burst; i++)
             {
                 read_buffer(data_tx_buffer_broadcast, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
-            send_modulated_data(modem, data, frames_per_burst);
+            send_modulated_data(modem, data, tx_frames_per_burst);
         }
 
         if (size_buffer(data_tx_buffer_arq) < required &&
@@ -849,7 +853,10 @@ void *rx_thread(void *g_modem)
         receive_modulated_data(modem, data, &nbytes_out);
 
         if (arq_conn.TRX == TX)
+        {
+            usleep(1000);
             continue;
+        }
 
         int sync = 0;
         float snr_est = 0.0f;
