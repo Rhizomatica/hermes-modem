@@ -180,7 +180,7 @@ enum {
 #define ARQ_DATA_RETRY_SLOTS 6
 #define ARQ_CONNECT_GRACE_SLOTS 2
 #define ARQ_CHANNEL_GUARD_S 1
-#define ARQ_ACK_GUARD_S 2
+#define ARQ_ACK_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
 #define ARQ_KEEPALIVE_INTERVAL_S 10
@@ -191,8 +191,8 @@ enum {
 #define ARQ_MODE_SWITCH_HYST_COUNT 3
 #define ARQ_BACKLOG_MIN_DATAC3 120
 #define ARQ_BACKLOG_MIN_DATAC1 500
-/* Stability hotfix: keep payload on DATAC4 until split-mode negotiation is hardened. */
-#define ARQ_ENABLE_MODE_UPGRADE 0
+/* Re-enable negotiated payload upgrades once ACK path is stabilized. */
+#define ARQ_ENABLE_MODE_UPGRADE 1
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
