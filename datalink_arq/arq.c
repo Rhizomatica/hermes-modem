@@ -180,6 +180,7 @@ enum {
 #define ARQ_DATA_RETRY_SLOTS 6
 #define ARQ_CONNECT_GRACE_SLOTS 2
 #define ARQ_CHANNEL_GUARD_S 1
+#define ARQ_ACK_GUARD_S 2
 #define ARQ_CONNECT_BUSY_EXT_S 2
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
 #define ARQ_KEEPALIVE_INTERVAL_S 10
@@ -1973,8 +1974,8 @@ static void handle_data_frame_locked(uint8_t session_id,
             arq_ctx.payload_start_pending = false;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
-        if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
-            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
+        if (arq_ctx.next_role_tx_at < now + ARQ_ACK_GUARD_S)
+            arq_ctx.next_role_tx_at = now + ARQ_ACK_GUARD_S;
         mark_success_locked();
         schedule_flow_hint_locked();
         update_payload_mode_locked();
@@ -1987,8 +1988,8 @@ static void handle_data_frame_locked(uint8_t session_id,
         arq_ctx.peer_backlog_nonzero = true;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
-        if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
-            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
+        if (arq_ctx.next_role_tx_at < now + ARQ_ACK_GUARD_S)
+            arq_ctx.next_role_tx_at = now + ARQ_ACK_GUARD_S;
     }
 }
 
