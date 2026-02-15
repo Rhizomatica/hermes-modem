@@ -262,6 +262,21 @@ static int mode_slot_len_s(int mode)
     }
 }
 
+static int ack_timeout_s_for_mode(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1:
+        return 12;
+    case FREEDV_MODE_DATAC3:
+        return 10;
+    case FREEDV_MODE_DATAC4:
+        return 9;
+    default:
+        return 6;
+    }
+}
+
 static const char *mode_name(int mode)
 {
     switch (mode)
@@ -356,7 +371,7 @@ static void apply_payload_mode_locked(int new_mode, const char *reason)
     arq_ctx.payload_mode = new_mode;
     arq_ctx.slot_len_s = mode_slot_len_s(new_mode);
     arq_ctx.tx_period_s = arq_ctx.slot_len_s;
-    arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
+    arq_ctx.ack_timeout_s = ack_timeout_s_for_mode(new_mode);
     fprintf(stderr, "ARQ payload mode -> %s (%s)\n",
             mode_name(new_mode),
             reason ? reason : "negotiated");
@@ -1459,7 +1474,7 @@ int arq_init(size_t frame_size, int mode)
     arq_ctx.max_call_retries = ARQ_CALL_RETRY_SLOTS;
     arq_ctx.max_accept_retries = ARQ_ACCEPT_RETRY_SLOTS;
     arq_ctx.max_data_retries = ARQ_DATA_RETRY_SLOTS;
-    arq_ctx.ack_timeout_s = (arq_ctx.slot_len_s * 2) + ARQ_CHANNEL_GUARD_S;
+    arq_ctx.ack_timeout_s = ack_timeout_s_for_mode(arq_ctx.payload_mode);
     arq_ctx.connect_timeout_s =
         (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 2)) +
         ARQ_CONNECT_GRACE_SLOTS;
