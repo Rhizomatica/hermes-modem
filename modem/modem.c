@@ -681,15 +681,19 @@ void *tx_thread(void *g_modem)
 
     while (!shutdown_)
     {
-        size_t pending_arq = size_buffer(data_tx_buffer_arq) + size_buffer(data_tx_buffer_arq_control);
+        size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
+        size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
         size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
-        if (arq_conn.TRX != TX &&
-            arq_ready_for_mode_policy() &&
-            (pending_arq > 0 || pending_broadcast > 0))
+        bool local_tx_queued =
+            (pending_arq_data > 0) ||
+            (pending_arq_control > 0) ||
+            (pending_broadcast > 0);
+        if (arq_conn.TRX != TX && arq_ready_for_mode_policy())
         {
-            int pref_tx_mode = arq_get_preferred_tx_mode();
-            if (pref_tx_mode >= 0)
-                maybe_switch_modem_mode(modem, pref_tx_mode);
+            int desired_mode = local_tx_queued ? arq_get_preferred_tx_mode()
+                                               : arq_get_preferred_rx_mode();
+            if (desired_mode >= 0)
+                maybe_switch_modem_mode(modem, desired_mode);
         }
 
         size_t payload_bytes_per_modem_frame = 0;
@@ -776,9 +780,6 @@ void *rx_thread(void *g_modem)
                 last_pref_tx_mode = pref_tx_mode;
             }
 
-            if (arq_conn.TRX != TX &&
-                pref_rx_mode >= 0)
-                maybe_switch_modem_mode(modem, pref_rx_mode);
         }
 
         uint32_t bitrate_bps = 0;
