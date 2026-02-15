@@ -712,7 +712,9 @@ void *tx_thread(void *g_modem)
         size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
         size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
+        int pending_arq_app = arq_get_tx_backlog_bytes();
         bool local_tx_queued =
+            (pending_arq_app > 0) ||
             (pending_arq_data > 0) ||
             (pending_arq_control > 0) ||
             (pending_broadcast > 0);
