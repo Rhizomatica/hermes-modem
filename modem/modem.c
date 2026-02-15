@@ -85,9 +85,9 @@ static uint64_t monotonic_ms(void)
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 }
 
-static bool arq_ready_for_mode_policy(void)
+static bool arq_mode_policy_ready_snapshot(bool have_snapshot, const arq_runtime_snapshot_t *snapshot)
 {
-    return arq_fsm.current != NULL && arq_conn.frame_size > 0;
+    return have_snapshot && snapshot && snapshot->initialized;
 }
 
 static bool is_supported_split_mode(int mode)
@@ -232,11 +232,11 @@ static int payload_mode_for_bitrate(int mode)
     }
 }
 
-static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode)
+static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode, int arq_trx)
 {
     if (!is_supported_split_mode(target_mode))
         return 0;
-    if (arq_conn.TRX == TX)
+    if (arq_trx == TX)
         return 0;
 
     pthread_mutex_lock(&modem_freedv_lock);
@@ -674,27 +674,24 @@ void *tx_thread(void *g_modem)
         arq_runtime_snapshot_t arq_snapshot;
         memset(&arq_snapshot, 0, sizeof(arq_snapshot));
         bool have_arq_snapshot = arq_get_runtime_snapshot(&arq_snapshot);
+        bool arq_policy_ready = arq_mode_policy_ready_snapshot(have_arq_snapshot, &arq_snapshot);
 
         size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
         size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
-        int pending_arq_app = have_arq_snapshot ? arq_snapshot.tx_backlog_bytes
-                                                : arq_get_tx_backlog_bytes();
+        int pending_arq_app = have_arq_snapshot ? arq_snapshot.tx_backlog_bytes : 0;
         bool local_tx_queued =
             (pending_arq_app > 0) ||
             (pending_arq_data > 0) ||
             (pending_arq_control > 0) ||
             (pending_broadcast > 0);
-        if ((have_arq_snapshot ? arq_snapshot.trx : arq_conn.TRX) != TX &&
-            arq_ready_for_mode_policy())
+        if (arq_policy_ready && arq_snapshot.trx != TX)
         {
             int desired_mode = local_tx_queued
-                                   ? (have_arq_snapshot ? arq_snapshot.preferred_tx_mode
-                                                        : arq_get_preferred_tx_mode())
-                                   : (have_arq_snapshot ? arq_snapshot.preferred_rx_mode
-                                                        : arq_get_preferred_rx_mode());
+                                   ? arq_snapshot.preferred_tx_mode
+                                   : arq_snapshot.preferred_rx_mode;
             if (desired_mode >= 0)
-                maybe_switch_modem_mode(modem, desired_mode);
+                maybe_switch_modem_mode(modem, desired_mode, arq_snapshot.trx);
         }
 
         size_t payload_bytes_per_modem_frame = 0;
@@ -743,9 +740,9 @@ void *tx_thread(void *g_modem)
         {
             cbuf_handle_t action_buffer = NULL;
             if (action.mode >= 0 &&
-                (have_arq_snapshot ? arq_snapshot.trx : arq_conn.TRX) != TX &&
-                arq_ready_for_mode_policy())
-                maybe_switch_modem_mode(modem, action.mode);
+                arq_policy_ready &&
+                arq_snapshot.trx != TX)
+                maybe_switch_modem_mode(modem, action.mode, arq_snapshot.trx);
 
             if (action.type == ARQ_ACTION_TX_CONTROL)
                 action_buffer = data_tx_buffer_arq_control;
@@ -812,22 +809,15 @@ void *rx_thread(void *g_modem)
         arq_runtime_snapshot_t arq_snapshot;
         memset(&arq_snapshot, 0, sizeof(arq_snapshot));
         bool have_arq_snapshot = arq_get_runtime_snapshot(&arq_snapshot);
+        bool arq_policy_ready = arq_mode_policy_ready_snapshot(have_arq_snapshot, &arq_snapshot);
         int payload_mode = payload_mode_for_bitrate(have_arq_snapshot ? arq_snapshot.payload_mode
-                                                                       : arq_get_payload_mode());
+                                                                       : FREEDV_MODE_DATAC4);
         int pref_rx_mode = -1;
         int pref_tx_mode = -1;
-        if (arq_ready_for_mode_policy())
+        if (arq_policy_ready)
         {
-            if (have_arq_snapshot)
-            {
-                pref_rx_mode = arq_snapshot.preferred_rx_mode;
-                pref_tx_mode = arq_snapshot.preferred_tx_mode;
-            }
-            else
-            {
-                pref_rx_mode = arq_get_preferred_rx_mode();
-                pref_tx_mode = arq_get_preferred_tx_mode();
-            }
+            pref_rx_mode = arq_snapshot.preferred_rx_mode;
+            pref_tx_mode = arq_snapshot.preferred_tx_mode;
             if (pref_rx_mode != last_pref_rx_mode || pref_tx_mode != last_pref_tx_mode)
             {
                 fprintf(stderr, "ARQ preferred modes: rx=%d tx=%d\n", pref_rx_mode, pref_tx_mode);
@@ -872,7 +862,7 @@ void *rx_thread(void *g_modem)
         // Always drain modem input, but ignore decoded frames while local TX is active.
         receive_modulated_data(modem, data, &nbytes_out);
 
-        if (arq_conn.TRX == TX)
+        if (arq_policy_ready && arq_snapshot.trx == TX)
         {
             usleep(1000);
             continue;
@@ -888,7 +878,7 @@ void *rx_thread(void *g_modem)
             freedv_get_modem_stats(modem->freedv, &sync, &snr_est);
         }
         pthread_mutex_unlock(&modem_freedv_lock);
-        if (arq_ready_for_mode_policy())
+        if (arq_policy_ready)
             arq_update_link_metrics(sync, snr_est, rx_status, nbytes_out > 0);
 
         if (nbytes_out > 0)
@@ -903,7 +893,7 @@ void *rx_thread(void *g_modem)
             int frame_type = parse_frame_header(data, payload_nbytes);
             if (frame_type == PACKET_TYPE_ARQ_DATA &&
                 payload_nbytes == 14 &&
-                arq_ready_for_mode_policy() &&
+                arq_policy_ready &&
                 arq_handle_incoming_connect_frame(data, payload_nbytes))
             {
                 printf("Received %zu payload bytes, packet type %d, frame_bytes: %zu\n",
@@ -917,7 +907,7 @@ void *rx_thread(void *g_modem)
             {
             case PACKET_TYPE_ARQ_CONTROL:
             case PACKET_TYPE_ARQ_DATA:
-                if (arq_ready_for_mode_policy())
+                if (arq_policy_ready)
                     arq_handle_incoming_frame(data, payload_nbytes);
                 break;
             case PACKET_TYPE_BROADCAST_CONTROL:

@@ -184,6 +184,7 @@ typedef struct {
 
 static arq_ctx_t arq_ctx;
 static pthread_cond_t arq_action_cond = PTHREAD_COND_INITIALIZER;
+static bool arq_fsm_lock_ready = false;
 
 #define ARQ_EVENT_QUEUE_CAPACITY 128
 
@@ -2098,6 +2099,7 @@ int arq_init(size_t frame_size, int mode)
         return EXIT_FAILURE;
     }
 
+    arq_fsm_lock_ready = false;
     memset(&arq_conn, 0, sizeof(arq_conn));
     memset(&arq_ctx, 0, sizeof(arq_ctx));
     init_model();
@@ -2128,8 +2130,10 @@ int arq_init(size_t frame_size, int mode)
     arq_ctx.keepalive_miss_limit = ARQ_KEEPALIVE_MISS_LIMIT;
 
     fsm_init(&arq_fsm, state_no_connected_client);
+    arq_fsm_lock_ready = true;
     if (arq_event_loop_start() != 0)
     {
+        arq_fsm_lock_ready = false;
         fsm_destroy(&arq_fsm);
         arq_ctx.initialized = false;
         return EXIT_FAILURE;
@@ -2139,21 +2143,28 @@ int arq_init(size_t frame_size, int mode)
 
 void arq_shutdown(void)
 {
-    if (!arq_ctx.initialized)
+    if (!arq_fsm_lock_ready)
         return;
 
-    arq_event_loop_stop();
+    if (arq_ctx.initialized)
+    {
+        arq_event_loop_stop();
 
-    arq_lock();
-    arq_action_queue_clear_locked();
-    arq_ctx.initialized = false;
-    arq_unlock();
+        arq_lock();
+        arq_action_queue_clear_locked();
+        arq_ctx.initialized = false;
+        arq_unlock();
+    }
+    arq_fsm_lock_ready = false;
     fsm_destroy(&arq_fsm);
 }
 
 bool arq_is_link_connected(void)
 {
     bool connected;
+
+    if (!arq_fsm_lock_ready)
+        return false;
 
     arq_lock();
     connected = arq_ctx.initialized && is_connected_state_locked();
@@ -2163,12 +2174,18 @@ bool arq_is_link_connected(void)
 
 void arq_post_event(int event)
 {
+    if (!arq_fsm_lock_ready)
+        return;
+
     arq_event_loop_enqueue_fsm(event);
 }
 
 void arq_tick_1hz(void)
 {
     time_t now = time(NULL);
+
+    if (!arq_fsm_lock_ready)
+        return;
 
     arq_lock();
     if (!arq_ctx.initialized)
@@ -2265,7 +2282,7 @@ int arq_queue_data(const uint8_t *data, size_t len)
 {
     size_t total_queued = 0;
 
-    if (!data || len == 0)
+    if (!arq_fsm_lock_ready || !data || len == 0)
         return 0;
 
     if (!arq_event_loop.started)
@@ -2338,6 +2355,9 @@ int arq_get_tx_backlog_bytes(void)
 {
     size_t pending = 0;
 
+    if (!arq_fsm_lock_ready)
+        return 0;
+
     arq_lock();
     if (arq_ctx.initialized)
     {
@@ -2355,6 +2375,9 @@ int arq_get_speed_level(void)
 {
     int gear = 0;
 
+    if (!arq_fsm_lock_ready)
+        return 0;
+
     arq_lock();
     if (arq_ctx.initialized)
         gear = arq_ctx.gear;
@@ -2369,6 +2392,9 @@ int arq_get_payload_mode(void)
 {
     int mode;
 
+    if (!arq_fsm_lock_ready)
+        return FREEDV_MODE_DATAC4;
+
     arq_lock();
     mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
     arq_unlock();
@@ -2378,6 +2404,9 @@ int arq_get_payload_mode(void)
 int arq_get_control_mode(void)
 {
     int mode;
+
+    if (!arq_fsm_lock_ready)
+        return FREEDV_MODE_DATAC13;
 
     arq_lock();
     mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
@@ -2501,6 +2530,9 @@ int arq_get_preferred_rx_mode(void)
     int mode;
     time_t now = time(NULL);
 
+    if (!arq_fsm_lock_ready)
+        return FREEDV_MODE_DATAC4;
+
     arq_lock();
     mode = preferred_rx_mode_locked(now);
     arq_unlock();
@@ -2511,6 +2543,9 @@ int arq_get_preferred_tx_mode(void)
 {
     int mode;
     time_t now = time(NULL);
+
+    if (!arq_fsm_lock_ready)
+        return FREEDV_MODE_DATAC4;
 
     arq_lock();
     mode = preferred_tx_mode_locked(now);
@@ -2525,6 +2560,8 @@ bool arq_v2_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     time_t now = time(NULL);
 
     if (!snapshot)
+        return false;
+    if (!arq_fsm_lock_ready)
         return false;
 
     memset(snapshot, 0, sizeof(*snapshot));
@@ -2573,7 +2610,7 @@ static void arq_set_active_modem_mode_locked(int mode, size_t frame_size)
 
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
-    if (frame_size == 0 || frame_size > INT_BUFFER_SIZE)
+    if (!arq_fsm_lock_ready || frame_size == 0 || frame_size > INT_BUFFER_SIZE)
         return;
 
     if (arq_event_loop.started)
@@ -2911,6 +2948,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 {
     if (!data || frame_size != ARQ_CONTROL_FRAME_SIZE)
         return false;
+    if (!arq_fsm_lock_ready)
+        return false;
 
     if (!decode_connect_callsign_payload(data + ARQ_CONNECT_PAYLOAD_IDX,
                                          (char[(CALLSIGN_MAX_SIZE * 2) + 2]){0}))
@@ -2976,6 +3015,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 {
     if (!data || frame_size < HEADER_SIZE)
         return;
+    if (!arq_fsm_lock_ready)
+        return;
 
     if (arq_event_loop.started)
     {
@@ -3026,6 +3067,9 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
+    if (!arq_fsm_lock_ready)
+        return;
+
     if (arq_event_loop.started)
     {
         arq_event_loop_enqueue_metrics(sync, snr, rx_status, frame_decoded);
@@ -3043,7 +3087,7 @@ bool arq_v2_try_dequeue_action(arq_action_t *action)
 {
     bool ok;
 
-    if (!action)
+    if (!arq_fsm_lock_ready || !action)
         return false;
 
     arq_lock();
@@ -3063,7 +3107,7 @@ bool arq_v2_wait_dequeue_action(arq_action_t *action, int timeout_ms)
     int rc = 0;
     bool ok = false;
 
-    if (!action)
+    if (!arq_fsm_lock_ready || !action)
         return false;
 
     arq_lock();
@@ -3104,6 +3148,9 @@ bool arq_v2_wait_dequeue_action(arq_action_t *action, int timeout_ms)
 
 void clear_connection_data(void)
 {
+    if (!arq_fsm_lock_ready)
+        return;
+
     arq_lock();
     if (arq_ctx.initialized)
         reset_runtime_locked(true);
@@ -3129,6 +3176,9 @@ void reset_arq_info(arq_info *arq_conn_i)
 
 void call_remote(void)
 {
+    if (!arq_fsm_lock_ready)
+        return;
+
     arq_lock();
     if (!arq_ctx.initialized)
     {
@@ -3149,6 +3199,9 @@ void call_remote(void)
 
 void callee_accept_connection(void)
 {
+    if (!arq_fsm_lock_ready)
+        return;
+
     arq_lock();
     if (arq_ctx.initialized && arq_conn.my_call_sign[0] != 0 && arq_conn.dst_addr[0] != 0)
     {

@@ -64,7 +64,6 @@ extern cbuf_handle_t data_rx_buffer_broadcast;
 extern bool shutdown_;
 
 extern arq_info arq_conn;
-extern fsm_handle arq_fsm;
 
 // For now, we turn on verbosity for debugging purposes
 #define DEBUG
@@ -84,6 +83,19 @@ static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
     }
 
     return (ssize_t)total_sent;
+}
+
+static int arq_buffered_bytes_snapshot(void)
+{
+    arq_runtime_snapshot_t snapshot;
+    int buffered = 0;
+
+    if (arq_get_runtime_snapshot(&snapshot))
+        buffered = snapshot.tx_backlog_bytes;
+
+    if (buffered < 0)
+        buffered = 0;
+    return buffered;
 }
 
 /********** ARQ TCP ports INTERFACES **********/
@@ -216,9 +228,7 @@ void *data_worker_thread_rx(void *conn)
             fprintf(stderr, "Failed to queue ARQ data frame(s)\n");
         else
         {
-            int buffered = arq_get_tx_backlog_bytes();
-            if (buffered < 0)
-                buffered = 0;
+            int buffered = arq_buffered_bytes_snapshot();
             tnc_send_buffer((uint32_t)buffered);
         }
     }
@@ -250,9 +260,7 @@ void *control_worker_thread_tx(void *conn)
 
         }
 
-        int buffered = arq_get_tx_backlog_bytes();
-        if (buffered < 0)
-            buffered = 0;
+        int buffered = arq_buffered_bytes_snapshot();
         if (buffered != last_buffer_report)
         {
             tnc_send_buffer((uint32_t)buffered);
@@ -364,9 +372,7 @@ void *control_worker_thread_rx(void *conn)
 
         if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
         {
-            int buffered = arq_get_tx_backlog_bytes();
-            if (buffered < 0)
-                buffered = 0;
+            int buffered = arq_buffered_bytes_snapshot();
             tnc_send_buffer((uint32_t)buffered);
             continue;
         }
