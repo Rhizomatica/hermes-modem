@@ -188,9 +188,9 @@ enum {
 #define ARQ_SNR_HYST_DB 1.0f
 #define ARQ_TURN_REQ_RETRIES 2
 #define ARQ_MODE_REQ_RETRIES 2
-#define ARQ_MODE_SWITCH_HYST_COUNT 3
-#define ARQ_BACKLOG_MIN_DATAC3 120
-#define ARQ_BACKLOG_MIN_DATAC1 500
+#define ARQ_MODE_SWITCH_HYST_COUNT 1
+#define ARQ_BACKLOG_MIN_DATAC3 56
+#define ARQ_BACKLOG_MIN_DATAC1 126
 /* Re-enable negotiated payload upgrades once ACK path is stabilized. */
 #define ARQ_ENABLE_MODE_UPGRADE 1
 
@@ -383,6 +383,10 @@ static int desired_payload_mode_locked(void)
     int desired;
     int current_rank;
     int desired_rank;
+    size_t effective_backlog = arq_ctx.app_tx_len;
+
+    if (arq_ctx.turn_role == ARQ_TURN_IRS && arq_ctx.peer_backlog_nonzero)
+        effective_backlog = ARQ_BACKLOG_MIN_DATAC1;
 
     if (arq_ctx.snr_ema == 0.0f)
         return current;
@@ -393,9 +397,9 @@ static int desired_payload_mode_locked(void)
 
     if (desired_rank > current_rank)
     {
-        if (desired == FREEDV_MODE_DATAC1 && arq_ctx.app_tx_len < ARQ_BACKLOG_MIN_DATAC1)
+        if (desired == FREEDV_MODE_DATAC1 && effective_backlog < ARQ_BACKLOG_MIN_DATAC1)
             return current;
-        if (desired == FREEDV_MODE_DATAC3 && arq_ctx.app_tx_len < ARQ_BACKLOG_MIN_DATAC3)
+        if (desired == FREEDV_MODE_DATAC3 && effective_backlog < ARQ_BACKLOG_MIN_DATAC3)
             return current;
     }
 
@@ -413,8 +417,6 @@ static void update_payload_mode_locked(void)
     if (arq_ctx.mode_req_in_flight || arq_ctx.pending_mode_req || arq_ctx.pending_mode_ack)
         return;
     if (!is_connected_state_locked())
-        return;
-    if (arq_ctx.turn_role != ARQ_TURN_ISS)
         return;
     if (!is_payload_mode(arq_ctx.payload_mode))
         return;
@@ -1217,8 +1219,7 @@ static bool do_slot_tx_locked(time_t now)
         }
     }
 
-    if (arq_ctx.turn_role == ARQ_TURN_ISS &&
-        arq_ctx.pending_mode_req &&
+    if (arq_ctx.pending_mode_req &&
         !arq_ctx.mode_req_in_flight)
     {
         if (send_mode_change_locked(ARQ_SUBTYPE_MODE_REQ, arq_ctx.pending_mode) == 0)
@@ -1886,8 +1887,6 @@ static void handle_control_frame_locked(uint8_t subtype,
         if (!is_connected_state_locked())
             return;
         if (session_id != arq_ctx.session_id)
-            return;
-        if (arq_ctx.turn_role != ARQ_TURN_IRS)
             return;
         if (payload_len < 1 || !is_payload_mode(payload[0]))
             return;
