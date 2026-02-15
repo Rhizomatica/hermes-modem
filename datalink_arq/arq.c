@@ -433,12 +433,15 @@ static void update_payload_mode_locked(void)
     {
         arq_ctx.mode_candidate_mode = desired;
         arq_ctx.mode_candidate_hits = 1;
-        return;
+        if (arq_ctx.mode_candidate_hits < ARQ_MODE_SWITCH_HYST_COUNT)
+            return;
     }
-
-    arq_ctx.mode_candidate_hits++;
-    if (arq_ctx.mode_candidate_hits < ARQ_MODE_SWITCH_HYST_COUNT)
-        return;
+    else
+    {
+        arq_ctx.mode_candidate_hits++;
+        if (arq_ctx.mode_candidate_hits < ARQ_MODE_SWITCH_HYST_COUNT)
+            return;
+    }
 
     arq_ctx.pending_mode = (uint8_t)desired;
     arq_ctx.pending_mode_req = true;
