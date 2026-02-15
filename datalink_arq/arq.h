@@ -88,6 +88,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 bool arq_try_dequeue_action(arq_action_t *action);
+bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms);
 
 // auxiliary functions
 void clear_connection_data();

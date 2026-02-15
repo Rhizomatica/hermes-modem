@@ -97,6 +97,11 @@ bool arq_try_dequeue_action(arq_action_t *action)
     return arq_v2_try_dequeue_action(action);
 }
 
+bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms)
+{
+    return arq_v2_wait_dequeue_action(action, timeout_ms);
+}
+
 void clear_connection_data(void)
 {
     arq_v2_clear_connection_data();

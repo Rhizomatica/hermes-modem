@@ -63,6 +63,7 @@ pthread_t tx_thread_tid, rx_thread_tid;
 static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
+#define ARQ_ACTION_WAIT_MS 100
 
 typedef struct {
     struct freedv *datac1;
@@ -720,8 +721,16 @@ void *tx_thread(void *g_modem)
         }
 
         bool sent_from_action = false;
+        bool waited_for_action = false;
         arq_action_t action = {0};
-        if (arq_try_dequeue_action(&action))
+        bool have_action = arq_try_dequeue_action(&action);
+        if (!have_action && !local_tx_queued)
+        {
+            waited_for_action = true;
+            have_action = arq_wait_dequeue_action(&action, ARQ_ACTION_WAIT_MS);
+        }
+
+        if (have_action)
         {
             cbuf_handle_t action_buffer = NULL;
             if (action.mode >= 0 && arq_conn.TRX != TX && arq_ready_for_mode_policy())
@@ -766,7 +775,8 @@ void *tx_thread(void *g_modem)
         if (!sent_from_action &&
             size_buffer(data_tx_buffer_arq) < required &&
             size_buffer(data_tx_buffer_arq_control) < required &&
-            size_buffer(data_tx_buffer_broadcast) < required)
+            size_buffer(data_tx_buffer_broadcast) < required &&
+            !waited_for_action)
         {
             usleep(100000); // sleep for 100ms if there is no data to send
         }

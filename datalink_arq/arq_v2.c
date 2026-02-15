@@ -36,6 +36,7 @@
 #define arq_handle_incoming_frame arq_v2_handle_incoming_frame
 #define arq_update_link_metrics arq_v2_update_link_metrics
 #define arq_try_dequeue_action arq_v2_try_dequeue_action
+#define arq_wait_dequeue_action arq_v2_wait_dequeue_action
 #define clear_connection_data arq_v2_clear_connection_data
 #define reset_arq_info arq_v2_reset_arq_info
 #define call_remote arq_v2_call_remote
@@ -181,6 +182,7 @@ typedef struct {
 } arq_ctx_t;
 
 static arq_ctx_t arq_ctx;
+static pthread_cond_t arq_action_cond = PTHREAD_COND_INITIALIZER;
 
 #define ARQ_EVENT_QUEUE_CAPACITY 128
 
@@ -336,6 +338,7 @@ static int arq_queue_app_data_locked(const uint8_t *data, size_t len);
 static void arq_event_app_tx_result_complete(arq_event_app_tx_result_t *result, int queued);
 static void arq_action_queue_clear_locked(void);
 static bool arq_action_queue_push_locked(const arq_action_t *action);
+static bool arq_action_queue_pop_locked(arq_action_t *action);
 static size_t frame_size_for_payload_mode(int mode);
 
 static inline void arq_lock(void)
@@ -422,6 +425,7 @@ static void arq_action_queue_clear_locked(void)
     arq_ctx.action_tail = 0;
     arq_ctx.action_count = 0;
     arq_ctx.pending_payload_actions = 0;
+    pthread_cond_broadcast(&arq_action_cond);
 }
 
 static bool arq_action_queue_push_locked(const arq_action_t *action)
@@ -437,6 +441,20 @@ static bool arq_action_queue_push_locked(const arq_action_t *action)
     arq_ctx.action_count++;
     if (action->type == ARQ_ACTION_TX_PAYLOAD)
         arq_ctx.pending_payload_actions++;
+    pthread_cond_signal(&arq_action_cond);
+    return true;
+}
+
+static bool arq_action_queue_pop_locked(arq_action_t *action)
+{
+    if (!action || arq_ctx.action_count == 0)
+        return false;
+
+    *action = arq_ctx.action_queue[arq_ctx.action_head];
+    arq_ctx.action_head = (arq_ctx.action_head + 1) % ARQ_ACTION_QUEUE_CAPACITY;
+    arq_ctx.action_count--;
+    if (action->type == ARQ_ACTION_TX_PAYLOAD && arq_ctx.pending_payload_actions > 0)
+        arq_ctx.pending_payload_actions--;
     return true;
 }
 
@@ -2124,6 +2142,7 @@ void arq_shutdown(void)
     arq_event_loop_stop();
 
     arq_lock();
+    arq_action_queue_clear_locked();
     arq_ctx.initialized = false;
     arq_unlock();
     fsm_destroy(&arq_fsm);
@@ -2970,23 +2989,65 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
 
 bool arq_v2_try_dequeue_action(arq_action_t *action)
 {
+    bool ok;
+
     if (!action)
         return false;
 
     arq_lock();
-    if (!arq_ctx.initialized || arq_ctx.action_count == 0)
+    if (!arq_ctx.initialized)
     {
         arq_unlock();
         return false;
     }
 
-    *action = arq_ctx.action_queue[arq_ctx.action_head];
-    arq_ctx.action_head = (arq_ctx.action_head + 1) % ARQ_ACTION_QUEUE_CAPACITY;
-    arq_ctx.action_count--;
-    if (action->type == ARQ_ACTION_TX_PAYLOAD && arq_ctx.pending_payload_actions > 0)
-        arq_ctx.pending_payload_actions--;
+    ok = arq_action_queue_pop_locked(action);
     arq_unlock();
-    return true;
+    return ok;
+}
+
+bool arq_v2_wait_dequeue_action(arq_action_t *action, int timeout_ms)
+{
+    int rc = 0;
+    bool ok = false;
+
+    if (!action)
+        return false;
+
+    arq_lock();
+    if (!arq_ctx.initialized)
+    {
+        arq_unlock();
+        return false;
+    }
+
+    if (timeout_ms <= 0)
+    {
+        ok = arq_action_queue_pop_locked(action);
+        arq_unlock();
+        return ok;
+    }
+
+    if (arq_ctx.action_count == 0)
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += timeout_ms / 1000;
+        ts.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+        if (ts.tv_nsec >= 1000000000L)
+        {
+            ts.tv_sec += 1;
+            ts.tv_nsec -= 1000000000L;
+        }
+
+        while (arq_ctx.initialized && arq_ctx.action_count == 0 && rc == 0)
+            rc = pthread_cond_timedwait(&arq_action_cond, &arq_fsm.lock, &ts);
+    }
+
+    if (arq_ctx.initialized && rc != ETIMEDOUT)
+        ok = arq_action_queue_pop_locked(action);
+    arq_unlock();
+    return ok;
 }
 
 void clear_connection_data(void)
