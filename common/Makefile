@@ -2,7 +2,7 @@ include ../config.mk
 
 CFLAGS = $(COMMON_CFLAGS)
 
-all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o
+all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o
 
 os_interop.o: os_interop.c
 	$(CC) $(CFLAGS) -c os_interop.c
@@ -15,6 +15,9 @@ shm_posix.o: shm_posix.c
 
 crc6.o: crc6.c
 	$(CC) $(CFLAGS) -c crc6.c
+
+hermes_log.o: hermes_log.c hermes_log.h
+	$(CC) $(CFLAGS) -c hermes_log.c
 
 .PHONY: all clean
 

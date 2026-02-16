@@ -38,6 +38,8 @@
 #define arq_try_dequeue_action arq_v2_try_dequeue_action
 #define arq_wait_dequeue_action arq_v2_wait_dequeue_action
 #define arq_get_runtime_snapshot arq_v2_get_runtime_snapshot
+#define arq_submit_tcp_cmd arq_v2_submit_tcp_cmd
+#define arq_submit_tcp_payload arq_v2_submit_tcp_payload
 #define clear_connection_data arq_v2_clear_connection_data
 #define reset_arq_info arq_v2_reset_arq_info
 #define call_remote arq_v2_call_remote
@@ -57,6 +59,8 @@
 #include "freedv_api.h"
 #include "ring_buffer_posix.h"
 #include "tcp_interfaces.h"
+#include "arq_channels.h"
+#include "hermes_log.h"
 
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_tx_buffer_arq_control;
@@ -126,6 +130,7 @@ typedef struct {
     bool pending_keepalive;
     bool pending_keepalive_ack;
     uint8_t pending_ack_seq;
+    uint64_t pending_ack_set_ms;
     bool keepalive_waiting;
     int keepalive_misses;
     int keepalive_interval_s;
@@ -185,6 +190,11 @@ typedef struct {
 static arq_ctx_t arq_ctx;
 static pthread_cond_t arq_action_cond = PTHREAD_COND_INITIALIZER;
 static bool arq_fsm_lock_ready = false;
+static arq_channel_bus_t arq_bus;
+static pthread_t arq_cmd_bridge_tid;
+static pthread_t arq_payload_bridge_tid;
+static bool arq_cmd_bridge_started = false;
+static bool arq_payload_bridge_started = false;
 
 #define ARQ_EVENT_QUEUE_CAPACITY 128
 
@@ -252,7 +262,6 @@ typedef struct {
     size_t head;
     size_t tail;
     size_t count;
-    time_t last_tick_at;
 } arq_event_loop_t;
 
 static arq_event_loop_t arq_event_loop;
@@ -332,6 +341,7 @@ static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size);
 static bool arq_event_loop_enqueue_internal(const arq_event_t *event_item);
 static void arq_process_event(const arq_event_t *event_item);
 static void *arq_event_loop_worker(void *arg);
+static int arq_event_loop_timeout_s(void);
 static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t frame_size);
 static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_size);
 static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, bool frame_decoded, time_t now);
@@ -342,8 +352,19 @@ static void arq_action_queue_clear_locked(void);
 static bool arq_action_queue_push_locked(const arq_action_t *action);
 static bool arq_action_queue_pop_locked(arq_action_t *action);
 static size_t frame_size_for_payload_mode(int mode);
+static bool is_connected_state_locked(void);
 static int preferred_rx_mode_locked(time_t now);
 static int preferred_tx_mode_locked(time_t now);
+static void *arq_cmd_bridge_worker(void *arg);
+static void *arq_payload_bridge_worker(void *arg);
+static void arq_handle_tcp_cmd_msg(const arq_cmd_msg_t *cmd);
+
+static uint64_t arq_monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+}
 
 static inline void arq_lock(void)
 {
@@ -371,8 +392,6 @@ static int arq_event_loop_start(void)
 
     arq_event_loop.running = true;
     arq_event_loop.started = true;
-    arq_event_loop.last_tick_at = time(NULL);
-
     if (pthread_create(&arq_event_loop.thread, NULL, arq_event_loop_worker, NULL) != 0)
     {
         arq_event_loop.running = false;
@@ -625,6 +644,79 @@ static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size)
         arq_process_event(&event_item);
 }
 
+static void arq_consider_deadline(time_t deadline, time_t *next_deadline)
+{
+    if (!next_deadline || deadline <= 0)
+        return;
+    if (*next_deadline == 0 || deadline < *next_deadline)
+        *next_deadline = deadline;
+}
+
+static int arq_event_loop_timeout_s(void)
+{
+    time_t now;
+    time_t next_deadline = 0;
+
+    if (!arq_fsm_lock_ready)
+        return 1;
+
+    now = time(NULL);
+    arq_lock();
+    if (!arq_ctx.initialized)
+    {
+        arq_unlock();
+        return -1;
+    }
+
+    if (arq_fsm.current == state_calling_wait_accept)
+        arq_consider_deadline(arq_ctx.connect_deadline, &next_deadline);
+
+    if (arq_fsm.current == state_disconnecting)
+        arq_consider_deadline(arq_ctx.disconnect_deadline, &next_deadline);
+
+    if (arq_ctx.role != ARQ_ROLE_NONE)
+    {
+        if (arq_ctx.next_role_tx_at > 0)
+            arq_consider_deadline(arq_ctx.next_role_tx_at, &next_deadline);
+        else
+            arq_consider_deadline(now, &next_deadline);
+    }
+
+    if (is_connected_state_locked())
+    {
+        if (arq_ctx.waiting_ack)
+            arq_consider_deadline(arq_ctx.ack_deadline, &next_deadline);
+        if (arq_ctx.turn_req_in_flight)
+            arq_consider_deadline(arq_ctx.turn_req_deadline, &next_deadline);
+        if (arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT)
+            arq_consider_deadline(arq_ctx.mode_req_deadline, &next_deadline);
+
+        if (arq_ctx.keepalive_waiting)
+        {
+            arq_consider_deadline(arq_ctx.keepalive_deadline, &next_deadline);
+        }
+        else if (arq_ctx.role == ARQ_ROLE_CALLER && arq_ctx.keepalive_interval_s > 0)
+        {
+            time_t last_link_activity = arq_ctx.last_keepalive_tx;
+            if (arq_ctx.last_keepalive_rx > last_link_activity)
+                last_link_activity = arq_ctx.last_keepalive_rx;
+            if (arq_ctx.last_phy_activity > last_link_activity)
+                last_link_activity = arq_ctx.last_phy_activity;
+            arq_consider_deadline(last_link_activity + arq_ctx.keepalive_interval_s, &next_deadline);
+        }
+    }
+
+    arq_unlock();
+
+    if (next_deadline == 0)
+        return -1;
+    if (next_deadline <= now)
+        return 0;
+    if ((next_deadline - now) > INT_MAX)
+        return INT_MAX;
+    return (int)(next_deadline - now);
+}
+
 static void *arq_event_loop_worker(void *arg)
 {
     (void)arg;
@@ -632,17 +724,24 @@ static void *arq_event_loop_worker(void *arg)
     for (;;)
     {
         arq_event_t event_item;
+        int timeout_s = arq_event_loop_timeout_s();
         bool have_event = false;
         bool should_exit = false;
 
         pthread_mutex_lock(&arq_event_loop.lock);
-        while (arq_event_loop.running && arq_event_loop.count == 0)
+        if (arq_event_loop.running && arq_event_loop.count == 0)
         {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 1;
-            if (pthread_cond_timedwait(&arq_event_loop.cond, &arq_event_loop.lock, &ts) == ETIMEDOUT)
-                break;
+            if (timeout_s < 0)
+            {
+                (void)pthread_cond_wait(&arq_event_loop.cond, &arq_event_loop.lock);
+            }
+            else if (timeout_s > 0)
+            {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                ts.tv_sec += timeout_s;
+                (void)pthread_cond_timedwait(&arq_event_loop.cond, &arq_event_loop.lock, &ts);
+            }
         }
 
         if (arq_event_loop.count > 0)
@@ -663,13 +762,8 @@ static void *arq_event_loop_worker(void *arg)
 
         if (have_event)
             arq_process_event(&event_item);
-
-        time_t now = time(NULL);
-        while (now > arq_event_loop.last_tick_at)
-        {
+        if (have_event || timeout_s >= 0)
             arq_tick_1hz();
-            arq_event_loop.last_tick_at++;
-        }
     }
 
     return NULL;
@@ -790,10 +884,10 @@ static void mode_fsm_set_locked(arq_mode_fsm_t next, const char *reason)
     if (arq_ctx.mode_fsm == next)
         return;
 
-    fprintf(stderr, "ARQ mode fsm %s -> %s (%s)\n",
-            mode_fsm_name(arq_ctx.mode_fsm),
-            mode_fsm_name(next),
-            reason ? reason : "event");
+    HLOGD("arq", "Mode FSM %s -> %s (%s)",
+          mode_fsm_name(arq_ctx.mode_fsm),
+          mode_fsm_name(next),
+          reason ? reason : "event");
     arq_ctx.mode_fsm = next;
 }
 
@@ -854,7 +948,7 @@ static void become_iss_locked(const char *reason)
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
     update_connected_state_from_turn_locked();
-    fprintf(stderr, "ARQ turn -> ISS (%s)\n", reason ? reason : "role change");
+    HLOGD("arq", "Turn -> ISS (%s)", reason ? reason : "role change");
 }
 
 static void become_irs_locked(const char *reason)
@@ -867,7 +961,7 @@ static void become_irs_locked(const char *reason)
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
     update_connected_state_from_turn_locked();
-    fprintf(stderr, "ARQ turn -> IRS (%s)\n", reason ? reason : "role change");
+    HLOGD("arq", "Turn -> IRS (%s)", reason ? reason : "role change");
 }
 
 static int payload_mode_from_snr(float snr)
@@ -913,9 +1007,9 @@ static void apply_payload_mode_locked(int new_mode, const char *reason)
     arq_ctx.slot_len_s = mode_slot_len_s(new_mode);
     arq_ctx.tx_period_s = arq_ctx.slot_len_s;
     arq_ctx.ack_timeout_s = ack_timeout_s_for_mode(new_mode);
-    fprintf(stderr, "ARQ payload mode -> %s (%s)\n",
-            mode_name(new_mode),
-            reason ? reason : "negotiated");
+    HLOGD("arq", "Payload mode -> %s (%s)",
+          mode_name(new_mode),
+          reason ? reason : "negotiated");
 
     action.type = ARQ_ACTION_MODE_SWITCH;
     action.mode = new_mode;
@@ -932,7 +1026,7 @@ static void request_payload_mode_locked(int new_mode, const char *reason)
     {
         arq_ctx.mode_apply_pending = true;
         arq_ctx.mode_apply_mode = (uint8_t)new_mode;
-        fprintf(stderr, "ARQ payload mode defer -> %s (waiting ack)\n", mode_name(new_mode));
+        HLOGD("arq", "Payload mode defer -> %s (waiting ack)", mode_name(new_mode));
         return;
     }
 
@@ -1023,8 +1117,8 @@ static void update_payload_mode_locked(void)
 
     mode_fsm_queue_req_locked((uint8_t)desired, "snr/backlog");
     arq_ctx.mode_candidate_hits = 0;
-    fprintf(stderr, "ARQ mode req -> %s (snr=%.1f backlog=%zu)\n",
-            mode_name(desired), arq_ctx.snr_ema, arq_ctx.app_tx_len);
+    HLOGD("arq", "Mode req -> %s (snr=%.1f backlog=%zu)",
+          mode_name(desired), arq_ctx.snr_ema, arq_ctx.app_tx_len);
 }
 
 static void schedule_flow_hint_locked(void)
@@ -1113,7 +1207,7 @@ static void maybe_gear_up_locked(void)
 
     arq_ctx.gear++;
     arq_ctx.success_streak = 0;
-    fprintf(stderr, "ARQ gear up -> %d\n", arq_ctx.gear);
+    HLOGD("arq", "Gear up -> %d", arq_ctx.gear);
 }
 
 static void maybe_gear_down_locked(void)
@@ -1129,7 +1223,7 @@ static void maybe_gear_down_locked(void)
     arq_ctx.gear--;
     arq_ctx.failure_streak = 0;
     arq_ctx.success_streak = 0;
-    fprintf(stderr, "ARQ gear down -> %d\n", arq_ctx.gear);
+    HLOGD("arq", "Gear down -> %d", arq_ctx.gear);
 }
 
 static void mark_success_locked(void)
@@ -1172,8 +1266,40 @@ static void schedule_next_tx_locked(time_t now, bool with_jitter)
     arq_ctx.next_role_tx_at = now + compute_inter_frame_interval_locked(now, with_jitter);
 }
 
+static bool has_urgent_control_tx_locked(void)
+{
+    return arq_ctx.pending_ack ||
+           arq_ctx.pending_accept ||
+           arq_ctx.pending_keepalive_ack ||
+           arq_ctx.pending_turn_ack ||
+           arq_ctx.pending_disconnect ||
+           arq_ctx.mode_fsm == ARQ_MODE_FSM_ACK_PENDING;
+}
+
+static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
+{
+    bool adjusted = false;
+
+    if (arq_ctx.next_role_tx_at == 0 || arq_ctx.next_role_tx_at > now)
+    {
+        arq_ctx.next_role_tx_at = now;
+        adjusted = true;
+    }
+    if (arq_ctx.remote_busy_until > now)
+    {
+        arq_ctx.remote_busy_until = now;
+        adjusted = true;
+    }
+
+    if (adjusted)
+        HLOGD("arq", "Immediate control reply (%s)", reason ? reason : "rx");
+}
+
 static bool defer_tx_if_busy_locked(time_t now)
 {
+    if (has_urgent_control_tx_locked())
+        return false;
+
     if (now >= arq_ctx.remote_busy_until)
         return false;
 
@@ -1492,6 +1618,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.pending_keepalive = false;
     arq_ctx.pending_keepalive_ack = false;
     arq_ctx.pending_ack_seq = 0;
+    arq_ctx.pending_ack_set_ms = 0;
     arq_ctx.keepalive_waiting = false;
     arq_ctx.keepalive_misses = 0;
     arq_ctx.keepalive_interval_s = ARQ_KEEPALIVE_INTERVAL_S;
@@ -1559,7 +1686,7 @@ static void finalize_disconnect_locked(void)
     fsm_state next_state = arq_ctx.disconnect_to_no_client ?
                            state_no_connected_client :
                            idle_or_listen_state_locked();
-    fprintf(stderr, "ARQ disconnect finalized\n");
+    HLOGI("arq", "Disconnect finalized");
     notify_disconnected_locked();
     arq_fsm.current = next_state;
 }
@@ -1575,7 +1702,7 @@ static void start_disconnect_locked(bool to_no_client)
     arq_ctx.disconnect_deadline = now + (arq_ctx.slot_len_s * 2) + 2;
     arq_ctx.next_role_tx_at = now;
     arq_fsm.current = state_disconnecting;
-    fprintf(stderr, "ARQ disconnect start (to_no_client=%d)\n", to_no_client ? 1 : 0);
+    HLOGI("arq", "Disconnect start (to_no_client=%d)", to_no_client ? 1 : 0);
 }
 
 static void enter_connected_locked(void)
@@ -1650,6 +1777,7 @@ static void start_outgoing_call_locked(void)
     arq_ctx.turn_role = ARQ_TURN_NONE;
     arq_ctx.pending_accept = false;
     arq_ctx.pending_ack = false;
+    arq_ctx.pending_ack_set_ms = 0;
     arq_ctx.pending_disconnect = false;
     arq_ctx.pending_keepalive = false;
     arq_ctx.pending_keepalive_ack = false;
@@ -1743,7 +1871,7 @@ static bool do_slot_tx_locked(time_t now)
             return false;
         }
         send_disconnect_locked();
-        fprintf(stderr, "ARQ disconnect tx retry=%d\n", arq_ctx.disconnect_retries_left);
+        HLOGD("arq", "Disconnect tx retry=%d", arq_ctx.disconnect_retries_left);
         arq_ctx.disconnect_retries_left--;
         if (arq_ctx.disconnect_retries_left <= 0)
             arq_ctx.pending_disconnect = false;
@@ -1777,9 +1905,16 @@ static bool do_slot_tx_locked(time_t now)
 
     if (arq_ctx.pending_ack)
     {
+        uint64_t ack_wait_ms = 0;
+        uint64_t now_ms = arq_monotonic_ms();
+        if (arq_ctx.pending_ack_set_ms > 0 && now_ms >= arq_ctx.pending_ack_set_ms)
+            ack_wait_ms = now_ms - arq_ctx.pending_ack_set_ms;
         send_ack_locked(arq_ctx.pending_ack_seq);
-        fprintf(stderr, "ARQ ack tx seq=%u\n", arq_ctx.pending_ack_seq);
+        HLOGD("arq", "ACK tx seq=%u wait=%llums",
+              arq_ctx.pending_ack_seq,
+              (unsigned long long)ack_wait_ms);
         arq_ctx.pending_ack = false;
+        arq_ctx.pending_ack_set_ms = 0;
         schedule_next_tx_locked(now, false);
         return true;
     }
@@ -1787,7 +1922,7 @@ static bool do_slot_tx_locked(time_t now)
     if (arq_ctx.pending_keepalive_ack)
     {
         send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE_ACK);
-        fprintf(stderr, "ARQ keepalive ack tx\n");
+        HLOGD("arq", "Keepalive ACK tx");
         arq_ctx.pending_keepalive_ack = false;
         arq_ctx.last_keepalive_tx = now;
         schedule_next_tx_locked(now, false);
@@ -1891,7 +2026,7 @@ static bool do_slot_tx_locked(time_t now)
     if (arq_ctx.pending_keepalive)
     {
         send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE);
-        fprintf(stderr, "ARQ keepalive tx\n");
+        HLOGD("arq", "Keepalive tx");
         arq_ctx.pending_keepalive = false;
         arq_ctx.keepalive_waiting = true;
         arq_ctx.keepalive_deadline = now + arq_ctx.keepalive_interval_s;
@@ -1915,21 +2050,21 @@ static bool do_slot_tx_locked(time_t now)
                 arq_ctx.data_retries_left--;
                 arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s;
                 mark_failure_locked();
-                fprintf(stderr, "ARQ data retry seq=%u left=%d frame=%zu active=%zu\n",
-                        arq_ctx.outstanding_seq,
-                        arq_ctx.data_retries_left,
-                        arq_ctx.outstanding_frame_len,
-                        arq_conn.frame_size);
+                HLOGW("arq", "Data retry seq=%u left=%d frame=%zu active=%zu",
+                      arq_ctx.outstanding_seq,
+                      arq_ctx.data_retries_left,
+                      arq_ctx.outstanding_frame_len,
+                      arq_conn.frame_size);
                 schedule_next_tx_locked(now, true);
                 return true;
             }
 
-            fprintf(stderr, "ARQ data timeout disconnect seq=%u retries=%d frame=%zu active=%zu waiting=%d\n",
-                    arq_ctx.outstanding_seq,
-                    arq_ctx.data_retries_left,
-                    arq_ctx.outstanding_frame_len,
-                    arq_conn.frame_size,
-                    arq_ctx.waiting_ack ? 1 : 0);
+            HLOGW("arq", "Data timeout disconnect seq=%u retries=%d frame=%zu active=%zu waiting=%d",
+                  arq_ctx.outstanding_seq,
+                  arq_ctx.data_retries_left,
+                  arq_ctx.outstanding_frame_len,
+                  arq_conn.frame_size,
+                  arq_ctx.waiting_ack ? 1 : 0);
             start_disconnect_locked(false);
             return true;
         }
@@ -2105,14 +2240,21 @@ int arq_init(size_t frame_size, int mode)
 {
     if (frame_size < ARQ_PAYLOAD_OFFSET + 8 || frame_size > INT_BUFFER_SIZE)
     {
-        fprintf(stderr, "ARQ init failed: unsupported frame size %zu\n", frame_size);
+        HLOGE("arq", "Init failed: unsupported frame size %zu", frame_size);
         return EXIT_FAILURE;
     }
 
     arq_fsm_lock_ready = false;
+    arq_cmd_bridge_started = false;
+    arq_payload_bridge_started = false;
     memset(&arq_conn, 0, sizeof(arq_conn));
     memset(&arq_ctx, 0, sizeof(arq_ctx));
     init_model();
+    if (arq_channel_bus_init(&arq_bus) < 0)
+    {
+        HLOGE("arq", "Init failed: channel bus init");
+        return EXIT_FAILURE;
+    }
 
     arq_conn.frame_size = frame_size;
     arq_conn.mode = mode;
@@ -2146,15 +2288,67 @@ int arq_init(size_t frame_size, int mode)
         arq_fsm_lock_ready = false;
         fsm_destroy(&arq_fsm);
         arq_ctx.initialized = false;
+        arq_channel_bus_dispose(&arq_bus);
         return EXIT_FAILURE;
     }
+
+    if (pthread_create(&arq_cmd_bridge_tid, NULL, arq_cmd_bridge_worker, NULL) != 0)
+    {
+        arq_event_loop_stop();
+        arq_fsm_lock_ready = false;
+        fsm_destroy(&arq_fsm);
+        arq_ctx.initialized = false;
+        arq_channel_bus_dispose(&arq_bus);
+        return EXIT_FAILURE;
+    }
+    arq_cmd_bridge_started = true;
+
+    if (pthread_create(&arq_payload_bridge_tid, NULL, arq_payload_bridge_worker, NULL) != 0)
+    {
+        arq_channel_bus_close(&arq_bus);
+        pthread_join(arq_cmd_bridge_tid, NULL);
+        arq_cmd_bridge_started = false;
+        arq_event_loop_stop();
+        arq_fsm_lock_ready = false;
+        fsm_destroy(&arq_fsm);
+        arq_ctx.initialized = false;
+        arq_channel_bus_dispose(&arq_bus);
+        return EXIT_FAILURE;
+    }
+    arq_payload_bridge_started = true;
     return EXIT_SUCCESS;
 }
 
 void arq_shutdown(void)
 {
     if (!arq_fsm_lock_ready)
+    {
+        arq_channel_bus_close(&arq_bus);
+        if (arq_cmd_bridge_started)
+        {
+            pthread_join(arq_cmd_bridge_tid, NULL);
+            arq_cmd_bridge_started = false;
+        }
+        if (arq_payload_bridge_started)
+        {
+            pthread_join(arq_payload_bridge_tid, NULL);
+            arq_payload_bridge_started = false;
+        }
+        arq_channel_bus_dispose(&arq_bus);
         return;
+    }
+
+    arq_channel_bus_close(&arq_bus);
+    if (arq_cmd_bridge_started)
+    {
+        pthread_join(arq_cmd_bridge_tid, NULL);
+        arq_cmd_bridge_started = false;
+    }
+    if (arq_payload_bridge_started)
+    {
+        pthread_join(arq_payload_bridge_tid, NULL);
+        arq_payload_bridge_started = false;
+    }
 
     if (arq_ctx.initialized)
     {
@@ -2167,6 +2361,7 @@ void arq_shutdown(void)
     }
     arq_fsm_lock_ready = false;
     fsm_destroy(&arq_fsm);
+    arq_channel_bus_dispose(&arq_bus);
 }
 
 bool arq_is_link_connected(void)
@@ -2242,12 +2437,12 @@ void arq_tick_1hz(void)
         {
             arq_ctx.keepalive_waiting = false;
             arq_ctx.keepalive_misses++;
-            fprintf(stderr, "ARQ keepalive miss=%d\n", arq_ctx.keepalive_misses);
+            HLOGW("arq", "Keepalive miss=%d", arq_ctx.keepalive_misses);
             if (arq_ctx.keepalive_misses >= arq_ctx.keepalive_miss_limit)
             {
-                fprintf(stderr, "ARQ keepalive timeout disconnect misses=%d limit=%d\n",
-                        arq_ctx.keepalive_misses,
-                        arq_ctx.keepalive_miss_limit);
+                HLOGW("arq", "Keepalive timeout disconnect misses=%d limit=%d",
+                      arq_ctx.keepalive_misses,
+                      arq_ctx.keepalive_miss_limit);
                 start_disconnect_locked(false);
             }
         }
@@ -2361,6 +2556,97 @@ int arq_queue_data(const uint8_t *data, size_t len)
     return (int)total_queued;
 }
 
+static void arq_handle_tcp_cmd_msg(const arq_cmd_msg_t *cmd)
+{
+    if (!cmd || !arq_fsm_lock_ready)
+        return;
+
+    switch (cmd->type)
+    {
+    case ARQ_CMD_CLIENT_CONNECT:
+        arq_event_loop_enqueue_fsm(EV_CLIENT_CONNECT);
+        break;
+    case ARQ_CMD_CLIENT_DISCONNECT:
+        arq_event_loop_enqueue_fsm(EV_CLIENT_DISCONNECT);
+        break;
+    case ARQ_CMD_LISTEN_ON:
+        arq_event_loop_enqueue_fsm(EV_START_LISTEN);
+        break;
+    case ARQ_CMD_LISTEN_OFF:
+        arq_event_loop_enqueue_fsm(EV_STOP_LISTEN);
+        break;
+    case ARQ_CMD_CONNECT:
+        arq_lock();
+        snprintf(arq_conn.src_addr, sizeof(arq_conn.src_addr), "%s", cmd->arg0);
+        snprintf(arq_conn.dst_addr, sizeof(arq_conn.dst_addr), "%s", cmd->arg1);
+        arq_unlock();
+        arq_event_loop_enqueue_fsm(EV_LINK_CALL_REMOTE);
+        break;
+    case ARQ_CMD_DISCONNECT:
+        arq_event_loop_enqueue_fsm(EV_LINK_DISCONNECT);
+        break;
+    case ARQ_CMD_SET_CALLSIGN:
+        arq_lock();
+        snprintf(arq_conn.my_call_sign, sizeof(arq_conn.my_call_sign), "%s", cmd->arg0);
+        arq_unlock();
+        break;
+    case ARQ_CMD_SET_PUBLIC:
+        arq_lock();
+        arq_conn.encryption = cmd->flag ? false : true;
+        arq_unlock();
+        break;
+    case ARQ_CMD_SET_BANDWIDTH:
+        arq_lock();
+        arq_conn.bw = cmd->value;
+        arq_unlock();
+        break;
+    case ARQ_CMD_NONE:
+    default:
+        break;
+    }
+}
+
+static void *arq_cmd_bridge_worker(void *arg)
+{
+    arq_cmd_msg_t msg;
+
+    (void)arg;
+    while (arq_channel_bus_recv_cmd(&arq_bus, &msg) == 0)
+        arq_handle_tcp_cmd_msg(&msg);
+
+    return NULL;
+}
+
+static void *arq_payload_bridge_worker(void *arg)
+{
+    arq_bytes_msg_t payload;
+
+    (void)arg;
+    while (arq_channel_bus_recv_payload(&arq_bus, &payload) == 0)
+    {
+        if (payload.len > 0 && payload.len <= INT_BUFFER_SIZE)
+            arq_event_loop_enqueue_app_tx(payload.data, payload.len, NULL);
+    }
+
+    return NULL;
+}
+
+int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
+{
+    if (!cmd || !arq_fsm_lock_ready)
+        return -1;
+
+    return arq_channel_bus_try_send_cmd(&arq_bus, cmd);
+}
+
+int arq_submit_tcp_payload(const uint8_t *data, size_t len)
+{
+    if (!data || len == 0 || len > INT_BUFFER_SIZE || !arq_fsm_lock_ready)
+        return -1;
+
+    return arq_channel_bus_try_send_payload(&arq_bus, data, len);
+}
+
 int arq_get_tx_backlog_bytes(void)
 {
     size_t pending = 0;
@@ -2440,7 +2726,7 @@ static int preferred_rx_mode_locked(time_t now)
         (now - arq_ctx.last_peer_payload_rx) > peer_payload_hold_s_locked())
     {
         arq_ctx.peer_backlog_nonzero = false;
-        fprintf(stderr, "ARQ peer backlog timeout -> control\n");
+        HLOGD("arq", "Peer backlog timeout -> control");
     }
 
     control_phase =
@@ -2669,8 +2955,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.pending_accept = true;
         arq_ctx.accept_retries_left = 1;
-        arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
-        arq_ctx.remote_busy_until = now + ARQ_CHANNEL_GUARD_S;
+        schedule_immediate_control_tx_locked(now, "call");
         return;
 
     case ARQ_SUBTYPE_ACCEPT:
@@ -2693,25 +2978,25 @@ static void handle_control_frame_locked(uint8_t subtype,
     case ARQ_SUBTYPE_ACK:
         if (!is_connected_state_locked() || !arq_ctx.waiting_ack)
         {
-            fprintf(stderr, "ARQ ack drop: not waiting (connected=%d waiting=%d)\n",
-                    is_connected_state_locked() ? 1 : 0,
-                    arq_ctx.waiting_ack ? 1 : 0);
+            HLOGD("arq", "ACK drop: not waiting (connected=%d waiting=%d)",
+                  is_connected_state_locked() ? 1 : 0,
+                  arq_ctx.waiting_ack ? 1 : 0);
             return;
         }
         if (session_id != arq_ctx.session_id)
         {
-            fprintf(stderr, "ARQ ack drop: session mismatch got=%u expect=%u\n",
-                    session_id, arq_ctx.session_id);
+            HLOGD("arq", "ACK drop: session mismatch got=%u expect=%u",
+                  session_id, arq_ctx.session_id);
             return;
         }
         if (ack != arq_ctx.outstanding_seq)
         {
-            fprintf(stderr, "ARQ ack drop: seq mismatch got=%u expect=%u\n",
-                    ack, arq_ctx.outstanding_seq);
+            HLOGD("arq", "ACK drop: seq mismatch got=%u expect=%u",
+                  ack, arq_ctx.outstanding_seq);
             return;
         }
 
-        fprintf(stderr, "ARQ ack rx seq=%u\n", ack);
+        HLOGD("arq", "ACK rx seq=%u", ack);
         arq_ctx.waiting_ack = false;
         apply_deferred_payload_mode_locked();
         if (arq_ctx.payload_start_pending)
@@ -2744,6 +3029,7 @@ static void handle_control_frame_locked(uint8_t subtype,
             arq_ctx.last_peer_payload_rx = now;
         }
         mode_fsm_queue_ack_locked(payload[0], "peer req");
+        schedule_immediate_control_tx_locked(now, "mode req");
         arq_ctx.mode_candidate_hits = 0;
         mark_link_activity_locked(now);
         return;
@@ -2777,6 +3063,7 @@ static void handle_control_frame_locked(uint8_t subtype,
             arq_ctx.pending_turn_ack = true;
             arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
             arq_fsm.current = state_turn_negotiating;
+            schedule_immediate_control_tx_locked(now, "turn req");
         }
         mark_link_activity_locked(now);
         return;
@@ -2828,8 +3115,7 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
         mark_link_activity_locked(now);
         arq_ctx.pending_keepalive_ack = true;
-        if (arq_ctx.next_role_tx_at < now + ARQ_CHANNEL_GUARD_S)
-            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
+        schedule_immediate_control_tx_locked(now, "keepalive");
         return;
 
     case ARQ_SUBTYPE_KEEPALIVE_ACK:
@@ -2868,8 +3154,8 @@ static void handle_data_frame_locked(uint8_t session_id,
             arq_ctx.payload_start_pending = false;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
-        if (arq_ctx.next_role_tx_at < now + ARQ_ACK_GUARD_S)
-            arq_ctx.next_role_tx_at = now + ARQ_ACK_GUARD_S;
+        arq_ctx.pending_ack_set_ms = arq_monotonic_ms();
+        schedule_immediate_control_tx_locked(now, "data ack");
         mark_success_locked();
         schedule_flow_hint_locked();
         update_payload_mode_locked();
@@ -2883,8 +3169,8 @@ static void handle_data_frame_locked(uint8_t session_id,
         arq_ctx.last_peer_payload_rx = now;
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
-        if (arq_ctx.next_role_tx_at < now + ARQ_ACK_GUARD_S)
-            arq_ctx.next_role_tx_at = now + ARQ_ACK_GUARD_S;
+        arq_ctx.pending_ack_set_ms = arq_monotonic_ms();
+        schedule_immediate_control_tx_locked(now, "dup ack");
     }
 }
 
@@ -2941,8 +3227,7 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
             arq_ctx.turn_promote_after_ack = false;
             arq_ctx.peer_backlog_nonzero = false;
             arq_ctx.last_peer_payload_rx = 0;
-            arq_ctx.next_role_tx_at = now + ARQ_CHANNEL_GUARD_S;
-            arq_ctx.remote_busy_until = now + ARQ_CHANNEL_GUARD_S;
+            schedule_immediate_control_tx_locked(now, "connect call");
         }
         return true;
     }

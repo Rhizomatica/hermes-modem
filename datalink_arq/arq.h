@@ -38,6 +38,7 @@
 #include <stdint.h>
 
 #include "fsm.h"
+#include "arq_events.h"
 
 typedef struct
 {
@@ -103,6 +104,8 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
 bool arq_try_dequeue_action(arq_action_t *action);
 bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms);
 bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot);
+int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd);
+int arq_submit_tcp_payload(const uint8_t *data, size_t len);
 
 // auxiliary functions
 void clear_connection_data();

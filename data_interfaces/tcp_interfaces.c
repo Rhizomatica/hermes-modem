@@ -25,7 +25,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -38,16 +40,21 @@
 #include "net.h"
 #include "arq.h"
 #include "fsm.h"
+#include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
+#include "hermes_log.h"
 
 static pthread_t tid[7];
+static bool tid_started[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
 static size_t broadcast_frame_size_cfg = 0;
 static float last_sn_value = 0.0f;
 static uint32_t last_bitrate_sl = 0;
 static uint32_t last_bitrate_bps = 0;
+static chan_t *tnc_tx_chan = NULL;
+static atomic_ulong tnc_tx_drop_count = 0;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -64,9 +71,6 @@ extern cbuf_handle_t data_rx_buffer_broadcast;
 extern bool shutdown_;
 
 extern arq_info arq_conn;
-
-// For now, we turn on verbosity for debugging purposes
-#define DEBUG
 
 static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
@@ -85,6 +89,108 @@ static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
     return (ssize_t)total_sent;
 }
 
+typedef struct
+{
+    size_t len;
+    uint8_t data[128];
+} tnc_tx_msg_t;
+
+static int tnc_queue_line(const char *line)
+{
+    chan_t *send_chans[1];
+    void *send_msgs[1];
+    tnc_tx_msg_t *msg;
+    size_t len;
+    int rc;
+
+    if (!line || !tnc_tx_chan)
+        return -1;
+
+    len = strlen(line);
+    if (len == 0 || len >= sizeof(((tnc_tx_msg_t *)0)->data))
+        return -1;
+
+    msg = (tnc_tx_msg_t *)calloc(1, sizeof(*msg));
+    if (!msg)
+        return -1;
+
+    msg->len = len;
+    memcpy(msg->data, line, len);
+    send_chans[0] = tnc_tx_chan;
+    send_msgs[0] = msg;
+    rc = chan_select(NULL, 0, NULL, send_chans, 1, send_msgs);
+    if (rc != 0)
+    {
+        free(msg);
+        atomic_fetch_add_explicit(&tnc_tx_drop_count, 1, memory_order_relaxed);
+        return -1;
+    }
+
+    return 0;
+}
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+}
+
+static int set_nonblocking(int fd)
+{
+    int flags;
+    if (fd < 0)
+        return -1;
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        return -1;
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        return -1;
+    return 0;
+}
+
+static int open_listener_socket(int port, int port_type, const char *tag)
+{
+    int fd;
+    int opt = 1;
+    struct sockaddr_in local_addr;
+
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+        return -1;
+
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    {
+        close(fd);
+        return -1;
+    }
+
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_addr.s_addr = INADDR_ANY;
+    local_addr.sin_port = htons(port);
+
+    if (bind(fd, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0)
+    {
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 1) < 0)
+    {
+        close(fd);
+        return -1;
+    }
+    if (set_nonblocking(fd) < 0)
+    {
+        close(fd);
+        return -1;
+    }
+
+    net_set_status(port_type, NET_LISTENING);
+    HLOGI(tag, "Listening on TCP port %d", port);
+    return fd;
+}
+
 static int arq_buffered_bytes_snapshot(void)
 {
     arq_runtime_snapshot_t snapshot;
@@ -98,327 +204,495 @@ static int arq_buffered_bytes_snapshot(void)
     return buffered;
 }
 
-/********** ARQ TCP ports INTERFACES **********/
-void *server_worker_thread_ctl(void *port)
+static void execute_control_command(char *buffer)
 {
-    int tcp_base_port = *((int *) port);
-    int socket;
-    
-    while(!shutdown_)
+    arq_cmd_msg_t cmd;
+    char temp[16] = {0};
+
+    if (!buffer)
+        return;
+
+    HLOGD("tcp-ctl", "Command received: %s", buffer);
+
+    if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
     {
-        int ret = tcp_open(tcp_base_port, CTL_TCP_PORT);
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_SET_CALLSIGN;
+        if (sscanf(buffer, "MYCALL %15s", cmd.arg0) == 1 &&
+            arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
 
-        if (ret < 0)
-        {
-            fprintf(stderr, "Could not open TCP port %d\n", tcp_base_port);
-            shutdown_ = true;
-        }
-        
-        socket = listen4connection(CTL_TCP_PORT);
+    if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        sscanf(buffer, "LISTEN %15s", temp);
+        if (temp[1] == 'N')
+            cmd.type = ARQ_CMD_LISTEN_ON;
+        if (temp[1] == 'F')
+            cmd.type = ARQ_CMD_LISTEN_OFF;
+        if (cmd.type != ARQ_CMD_NONE && arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
 
-        if (socket < 0)
+    if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_SET_PUBLIC;
+        sscanf(buffer, "PUBLIC %15s", temp);
+        if (temp[1] == 'N')
+            cmd.flag = true;
+        if (temp[1] == 'F')
+            cmd.flag = false;
+        if (arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    if (!memcmp(buffer, "BW", strlen("BW")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_SET_BANDWIDTH;
+        if (sscanf(buffer, "BW%d", &cmd.value) == 1 &&
+            arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
+    {
+        int buffered = arq_buffered_bytes_snapshot();
+        tnc_send_buffer((uint32_t)buffered);
+        return;
+    }
+
+    if (!memcmp(buffer, "SN", strlen("SN")))
+    {
+        tnc_send_sn(last_sn_value);
+        return;
+    }
+
+    if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
+    {
+        tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps);
+        return;
+    }
+
+    if (!memcmp(buffer, "P2P", strlen("P2P")))
+    {
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_CONNECT;
+        if (sscanf(buffer, "CONNECT %15s %15s", cmd.arg0, cmd.arg1) == 2 &&
+            arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_DISCONNECT;
+        if (arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    HLOGW("tcp-ctl", "Unknown command: %s", buffer);
+    tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+}
+
+static void process_control_bytes(char *line_buf, int *line_len, const uint8_t *data, ssize_t len)
+{
+    ssize_t i;
+
+    if (!line_buf || !line_len || !data || len <= 0)
+        return;
+
+    for (i = 0; i < len; i++)
+    {
+        if (data[i] == '\r')
         {
-            status_ctl = NET_RESTART;
-            tcp_close(CTL_TCP_PORT);
+            line_buf[*line_len] = 0;
+            execute_control_command(line_buf);
+            *line_len = 0;
             continue;
         }
 
-        arq_post_event(EV_CLIENT_CONNECT);
-        
-        // TODO: pthread wait here?
-        while (status_ctl == NET_CONNECTED)
-            sleep(1);
+        if (*line_len >= TCP_BLOCK_SIZE)
+        {
+            *line_len = 0;
+            HLOGW("tcp-ctl", "ERROR in command parsing: line too long");
+            continue;
+        }
 
-        // inform the data thread
-        if (status_data == NET_CONNECTED)
-            status_data = NET_RESTART;
+        line_buf[*line_len] = (char)data[i];
+        (*line_len)++;
+    }
+}
 
-        arq_post_event(EV_CLIENT_DISCONNECT);
-        
-        tcp_close(CTL_TCP_PORT);
+static void close_data_client(int *data_client_fd)
+{
+    if (!data_client_fd || *data_client_fd < 0)
+        return;
+
+    close(*data_client_fd);
+    *data_client_fd = -1;
+    cli_data_sockfd = -1;
+    net_set_status(DATA_TCP_PORT, NET_LISTENING);
+    HLOGI("tcp-data", "Data client disconnected");
+}
+
+static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notify_arq)
+{
+    if (!ctl_client_fd || *ctl_client_fd < 0)
+        return;
+
+    close(*ctl_client_fd);
+    *ctl_client_fd = -1;
+    cli_ctl_sockfd = -1;
+    net_set_status(CTL_TCP_PORT, NET_LISTENING);
+    HLOGI("tcp-ctl", "Control client disconnected");
+
+    if (notify_arq)
+    {
+        arq_cmd_msg_t cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_CLIENT_DISCONNECT;
+        (void)arq_submit_tcp_cmd(&cmd);
     }
 
+    close_data_client(data_client_fd);
+}
+
+static void drain_tnc_queue_to_ctl(void)
+{
+    chan_t *recv_chans[1];
+    void *raw = NULL;
+
+    if (!tnc_tx_chan)
+        return;
+
+    recv_chans[0] = tnc_tx_chan;
+    while (chan_select(recv_chans, 1, &raw, NULL, 0, NULL) == 0)
+    {
+        tnc_tx_msg_t *msg = (tnc_tx_msg_t *)raw;
+        if (msg)
+        {
+            ssize_t sent = tcp_write(CTL_TCP_PORT, msg->data, msg->len);
+            if (sent < (ssize_t)msg->len)
+                atomic_fetch_add_explicit(&tnc_tx_drop_count, 1, memory_order_relaxed);
+            free(msg);
+        }
+        raw = NULL;
+    }
+}
+
+static void dispose_tnc_tx_queue(void)
+{
+    chan_t *recv_chans[1];
+    void *raw = NULL;
+
+    if (!tnc_tx_chan)
+        return;
+
+    chan_close(tnc_tx_chan);
+    recv_chans[0] = tnc_tx_chan;
+    while (chan_select(recv_chans, 1, &raw, NULL, 0, NULL) == 0)
+    {
+        free(raw);
+        raw = NULL;
+    }
+    chan_dispose(tnc_tx_chan);
+    tnc_tx_chan = NULL;
+    atomic_store_explicit(&tnc_tx_drop_count, 0, memory_order_relaxed);
+}
+
+static void *arq_reactor_thread(void *port)
+{
+    int tcp_base_port = *((int *)port);
+    int ctl_listener = -1;
+    int data_listener = -1;
+    int ctl_client = -1;
+    int data_client = -1;
+    char ctl_line[TCP_BLOCK_SIZE + 1] = {0};
+    int ctl_len = 0;
+    int last_buffer_report = -1;
+    uint64_t next_keepalive_ms = 0;
+    uint64_t next_buffer_report_ms = 0;
+    uint8_t rx_buf[TCP_BLOCK_SIZE];
+    uint8_t tx_buf[DATA_TX_BUFFER_SIZE];
+
+    ctl_listener = open_listener_socket(tcp_base_port, CTL_TCP_PORT, "tcp-ctl");
+    if (ctl_listener < 0)
+    {
+        HLOGE("tcp-ctl", "Could not open TCP port %d", tcp_base_port);
+        shutdown_ = true;
+        return NULL;
+    }
+
+    data_listener = open_listener_socket(tcp_base_port + 1, DATA_TCP_PORT, "tcp-data");
+    if (data_listener < 0)
+    {
+        HLOGE("tcp-data", "Could not open TCP port %d", tcp_base_port + 1);
+        close(ctl_listener);
+        net_set_status(CTL_TCP_PORT, NET_NONE);
+        shutdown_ = true;
+        return NULL;
+    }
+
+    while (!shutdown_)
+    {
+        struct pollfd pfds[4];
+        int nfds = 0;
+        uint64_t now_ms;
+
+        drain_tnc_queue_to_ctl();
+        memset(pfds, 0, sizeof(pfds));
+        pfds[nfds].fd = ctl_listener;
+        pfds[nfds].events = POLLIN;
+        nfds++;
+
+        pfds[nfds].fd = data_listener;
+        pfds[nfds].events = POLLIN;
+        nfds++;
+
+        if (ctl_client >= 0)
+        {
+            pfds[nfds].fd = ctl_client;
+            pfds[nfds].events = POLLIN | POLLERR | POLLHUP;
+            nfds++;
+        }
+
+        if (data_client >= 0)
+        {
+            pfds[nfds].fd = data_client;
+            pfds[nfds].events = POLLIN | POLLERR | POLLHUP;
+            nfds++;
+        }
+
+        (void)poll(pfds, (nfds_t)nfds, 100);
+        now_ms = monotonic_ms();
+
+        if (pfds[0].revents & POLLIN)
+        {
+            int fd = accept(ctl_listener, NULL, NULL);
+            if (fd >= 0)
+            {
+                if (set_nonblocking(fd) < 0)
+                {
+                    close(fd);
+                }
+                else
+                {
+                    arq_cmd_msg_t cmd;
+                    if (ctl_client >= 0)
+                        close_ctl_client(&ctl_client, &data_client, true);
+                    ctl_client = fd;
+                    cli_ctl_sockfd = fd;
+                    net_set_status(CTL_TCP_PORT, NET_CONNECTED);
+                    memset(&cmd, 0, sizeof(cmd));
+                    cmd.type = ARQ_CMD_CLIENT_CONNECT;
+                    (void)arq_submit_tcp_cmd(&cmd);
+                    next_keepalive_ms = now_ms + 60000ULL;
+                    next_buffer_report_ms = now_ms + 1000ULL;
+                    last_buffer_report = -1;
+                    ctl_len = 0;
+                    HLOGI("tcp-ctl", "Control client connected");
+                }
+            }
+        }
+
+        if (pfds[1].revents & POLLIN)
+        {
+            int fd = accept(data_listener, NULL, NULL);
+            if (fd >= 0)
+            {
+                if (set_nonblocking(fd) < 0)
+                {
+                    close(fd);
+                }
+                else
+                {
+                    if (data_client >= 0)
+                        close_data_client(&data_client);
+                    data_client = fd;
+                    cli_data_sockfd = fd;
+                    net_set_status(DATA_TCP_PORT, NET_CONNECTED);
+                    HLOGI("tcp-data", "Data client connected");
+                }
+            }
+        }
+
+        if (ctl_client >= 0)
+        {
+            short events = pfds[(data_client >= 0) ? 2 : 2].revents;
+            if (events & (POLLERR | POLLHUP | POLLNVAL))
+            {
+                close_ctl_client(&ctl_client, &data_client, true);
+            }
+            else if (events & POLLIN)
+            {
+                ssize_t n = recv(ctl_client, rx_buf, sizeof(rx_buf), 0);
+                if (n > 0)
+                {
+                    process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
+                }
+                else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+                {
+                    close_ctl_client(&ctl_client, &data_client, true);
+                }
+            }
+        }
+
+        if (data_client >= 0)
+        {
+            short events = pfds[(ctl_client >= 0) ? 3 : 2].revents;
+            if (events & (POLLERR | POLLHUP | POLLNVAL))
+            {
+                close_data_client(&data_client);
+            }
+            else if (events & POLLIN)
+            {
+                ssize_t n = recv(data_client, rx_buf, sizeof(rx_buf), 0);
+                if (n > 0)
+                {
+                    int queued = arq_submit_tcp_payload(rx_buf, (size_t)n);
+                    if (queued < 0)
+                        HLOGW("tcp-data", "Failed to queue ARQ data frame(s)");
+                    else
+                        tnc_send_buffer((uint32_t)arq_buffered_bytes_snapshot());
+                }
+                else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR))
+                {
+                    close_data_client(&data_client);
+                }
+            }
+        }
+
+        if (ctl_client >= 0)
+        {
+            if (net_get_status(CTL_TCP_PORT) != NET_CONNECTED)
+                close_ctl_client(&ctl_client, &data_client, true);
+            else
+            {
+                unsigned long dropped =
+                    atomic_exchange_explicit(&tnc_tx_drop_count, 0, memory_order_relaxed);
+                if (dropped > 0)
+                    HLOGW("tcp-ctl", "Dropped %lu queued control messages", dropped);
+                if (now_ms >= next_keepalive_ms)
+                {
+                    char imalive[] = "IAMALIVE\r";
+                    (void)tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
+                    next_keepalive_ms = now_ms + 60000ULL;
+                }
+                if (now_ms >= next_buffer_report_ms)
+                {
+                    int buffered = arq_buffered_bytes_snapshot();
+                    if (buffered != last_buffer_report)
+                    {
+                        tnc_send_buffer((uint32_t)buffered);
+                        last_buffer_report = buffered;
+                    }
+                    next_buffer_report_ms = now_ms + 1000ULL;
+                }
+            }
+        }
+
+        if (data_client >= 0)
+        {
+            if (net_get_status(DATA_TCP_PORT) != NET_CONNECTED)
+                close_data_client(&data_client);
+            else
+            {
+                size_t available = size_buffer(data_rx_buffer_arq);
+                if (available > DATA_TX_BUFFER_SIZE)
+                    available = DATA_TX_BUFFER_SIZE;
+                if (available > 0)
+                {
+                    if (read_buffer(data_rx_buffer_arq, tx_buf, available) == 0)
+                    {
+                        ssize_t sent = tcp_write(DATA_TCP_PORT, tx_buf, available);
+                        if (sent < (ssize_t)available)
+                            HLOGW("tcp-data", "Partial DATA write (%zd/%zu)", sent, available);
+                    }
+                }
+            }
+        }
+    }
+
+    close_ctl_client(&ctl_client, &data_client, true);
+    close_data_client(&data_client);
+    drain_tnc_queue_to_ctl();
+    if (ctl_listener >= 0)
+        close(ctl_listener);
+    if (data_listener >= 0)
+        close(data_listener);
+    net_set_status(CTL_TCP_PORT, NET_NONE);
+    net_set_status(DATA_TCP_PORT, NET_NONE);
     return NULL;
-    
+}
+
+/********** ARQ TCP ports INTERFACES **********/
+void *server_worker_thread_ctl(void *port)
+{
+    HLOGW("tcp", "server_worker_thread_ctl now runs unified ARQ reactor");
+    return arq_reactor_thread(port);
 }
 
 void *server_worker_thread_data(void *port)
 {
-    int tcp_base_port = *((int *) port);
-    int socket;
-
-    while(!shutdown_)
-    {
-        int ret = tcp_open(tcp_base_port+1, DATA_TCP_PORT);
-
-        if (ret < 0)
-        {
-            fprintf(stderr, "Could not open TCP port %d\n", tcp_base_port+1);
-            shutdown_ = true;
-        }
-        
-        socket = listen4connection(DATA_TCP_PORT);
-
-        if (socket < 0)
-        {
-            status_data = NET_RESTART;
-            tcp_close(DATA_TCP_PORT);
-            continue;
-        }
-
-        // pthread wait here?
-        while (status_data == NET_CONNECTED)
-            sleep(1);
-
-        tcp_close(DATA_TCP_PORT);
-    }
-    
+    (void)port;
+    HLOGW("tcp", "server_worker_thread_data is deprecated (reactor owns DATA socket)");
     return NULL;
 }
 
 // tx to tcp socket the received data from the modem
 void *data_worker_thread_tx(void *conn)
 {
-    uint8_t *buffer = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
-    
-    while(!shutdown_)
-    {
-        if (status_data != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-        size_t n = read_buffer_all(data_rx_buffer_arq, buffer);
-
-        ssize_t i = tcp_write(DATA_TCP_PORT, buffer, n);
-
-        if (i < (ssize_t) n)
-            fprintf(stderr, "Problems in data_worker_thread_tx!\n");
-    }
-
-    free(buffer);
-    
+    (void)conn;
+    HLOGW("tcp", "data_worker_thread_tx is deprecated (reactor owns DATA TX)");
     return NULL;
 }
 
 // rx from tcp socket and send to trasmit by the modem
 void *data_worker_thread_rx(void *conn)
 {
-    uint8_t *buffer = (uint8_t *) malloc(TCP_BLOCK_SIZE);
-
-    while(!shutdown_)
-    {
-        if (status_data != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-        int n = tcp_read(DATA_TCP_PORT, buffer, TCP_BLOCK_SIZE);
-        if (n <= 0)
-        {
-            if (n == 0)
-                status_data = NET_RESTART;
-            continue;
-        }
-
-        int queued = arq_queue_data(buffer, (size_t)n);
-        if (queued < 0)
-            fprintf(stderr, "Failed to queue ARQ data frame(s)\n");
-        else
-        {
-            int buffered = arq_buffered_bytes_snapshot();
-            tnc_send_buffer((uint32_t)buffered);
-        }
-    }
-
-    free(buffer);
+    (void)conn;
+    HLOGW("tcp", "data_worker_thread_rx is deprecated (reactor owns DATA RX)");
     return NULL;
 }
 
 void *control_worker_thread_tx(void *conn)
 {
-    int counter = 0;
-    int last_buffer_report = -1;
-    char imalive[] = "IAMALIVE\r";
-
-    while(!shutdown_)
-    {
-        if (status_ctl != NET_CONNECTED)
-        {
-            last_buffer_report = -1;
-            sleep(1);
-            continue;
-        }
-
-        // ok ok ... this is not a good way to do this, but whatever, nobody is syncing clock with this info
-        if (counter == 60)
-        {
-            counter = 0;
-            tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
-
-        }
-
-        int buffered = arq_buffered_bytes_snapshot();
-        if (buffered != last_buffer_report)
-        {
-            tnc_send_buffer((uint32_t)buffered);
-            last_buffer_report = buffered;
-        }
-
-        sleep(1);
-        counter++;
-    }
-    
+    (void)conn;
+    HLOGW("tcp", "control_worker_thread_tx is deprecated (reactor owns CTL TX)");
     return NULL;
 }
 
 void *control_worker_thread_rx(void *conn)
 {
-    char *buffer = (char *) malloc(TCP_BLOCK_SIZE+1);
-    char temp[16];
-    int count = 0;
-
-    memset(buffer, 0, TCP_BLOCK_SIZE+1);
-
-    while(!shutdown_)
-    {
-        if (status_ctl != NET_CONNECTED)
-        {
-            sleep(1);
-            continue;
-        }
-
-        if (count >= TCP_BLOCK_SIZE)
-        {
-            count = 0;
-            fprintf(stderr, "ERROR in command parsing: line too long\n");
-            continue;
-        }
-
-        int n = tcp_read(CTL_TCP_PORT, (uint8_t *)buffer + count, 1);
-
-        if (n <= 0)
-        {
-            count = 0;
-            if (n < 0)
-                fprintf(stderr, "ERROR ctl socket reading\n");
-            else
-                fprintf(stderr, "Control client disconnected\n");
-            status_ctl = NET_RESTART;
-            continue;
-        }
-
-        if (buffer[count] != '\r')
-        {
-            count++;
-            continue;
-        }
-
-        // we found the '\r'
-        buffer[count] = 0;
-
-        if (count >= TCP_BLOCK_SIZE)
-        {
-            count = 0;
-            fprintf(stderr, "ERROR in command parsing\n");
-            continue;
-        }
-
-        count = 0;
-#ifdef DEBUG
-        fprintf(stderr,"Command received: %s\n", buffer);  
-#endif
-        
-        // now we parse the commands
-        if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
-        {
-            sscanf(buffer,"MYCALL %15s", arq_conn.my_call_sign);
-            goto send_ok;
-        }
-        
-        if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
-        {
-            sscanf(buffer,"LISTEN %15s", temp);
-            if (temp[1] == 'N') // ON
-            {
-                arq_post_event(EV_START_LISTEN);
-            }
-            if (temp[1] == 'F') // OFF
-            {
-                arq_post_event(EV_STOP_LISTEN);
-            }
-
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
-        {
-            sscanf(buffer,"PUBLIC %15s", temp);
-            if (temp[1] == 'N') // ON
-                arq_conn.encryption = false;
-            if (temp[1] == 'F') // OFF
-               arq_conn.encryption = true;
-            
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "BW", strlen("BW")))
-        {
-            sscanf(buffer,"BW%d", &arq_conn.bw);
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
-        {
-            int buffered = arq_buffered_bytes_snapshot();
-            tnc_send_buffer((uint32_t)buffered);
-            continue;
-        }
-
-        if (!memcmp(buffer, "SN", strlen("SN")))
-        {
-            tnc_send_sn(last_sn_value);
-            continue;
-        }
-
-        if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
-        {
-            tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps);
-            continue;
-        }
-
-        if (!memcmp(buffer, "P2P", strlen("P2P")))
-        {
-            // VARA compatibility no-op.
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
-        {
-            sscanf(buffer,"CONNECT %15s %15s", arq_conn.src_addr, arq_conn.dst_addr);
-            arq_post_event(EV_LINK_CALL_REMOTE);
-            goto send_ok;
-        }
-
-        if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
-        {   
-            arq_post_event(EV_LINK_DISCONNECT);
-            goto send_ok;
-        }
-
-        fprintf(stderr, "Unknown command\n");
-        tcp_write(CTL_TCP_PORT, (uint8_t *) "WRONG\r", 6);
-        continue;
-        
-    send_ok:
-        tcp_write(CTL_TCP_PORT, (uint8_t *) "OK\r", 3);
-
-    }
-
-    free(buffer);
-
+    (void)conn;
+    HLOGW("tcp", "control_worker_thread_rx is deprecated (reactor owns CTL RX)");
     return NULL;
 }
 
@@ -605,25 +879,12 @@ void *tcp_server_thread(void *port_ptr)
 }
 
 /*********** TNC / radio functions ***********/
-char *get_timestamp()
-{
-    static char buffer[32];
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    struct tm *tm = localtime(&tv.tv_sec);
-    snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d.%03ld\n", tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec / 1000);
-    return buffer;
-}
-
 void ptt_on()
 {
     char buffer[] = "PTT ON\r";
     arq_conn.TRX = TX;
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    // print timestamp with miliseconds precision
-#ifdef DEBUG
-    printf("PTT ON %s", get_timestamp());
-#endif
+    HLOGD("radio", "PTT ON");
 }
 
 void ptt_off()
@@ -631,35 +892,30 @@ void ptt_off()
     char buffer[] = "PTT OFF\r";
     arq_conn.TRX = RX;
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    // print timestamp with miliseconds precision
-#ifdef DEBUG
-    printf("PTT OFF %s", get_timestamp());
-#endif
+    HLOGD("radio", "PTT OFF");
 }
 
 void tnc_send_connected()
 {
     char buffer[128];
     sprintf(buffer, "CONNECTED %s %s %d\r", arq_conn.my_call_sign, arq_conn.dst_addr, 2300);
-    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    if (i < 0)
-        printf("Error sending connected message: %s\n", strerror(errno));
+    if (tnc_queue_line(buffer) < 0)
+        HLOGW("tcp-ctl", "Error queuing connected message");
 }
 
 void tnc_send_disconnected()
 {
     char buffer[128];
     sprintf(buffer, "DISCONNECTED\r");
-    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    if (i < 0)
-        printf("Error sending disconnected message: %s\n", strerror(errno));
+    if (tnc_queue_line(buffer) < 0)
+        HLOGW("tcp-ctl", "Error queuing disconnected message");
 }
 
 void tnc_send_buffer(uint32_t bytes)
 {
     char buffer[64];
     snprintf(buffer, sizeof(buffer), "BUFFER %u\r", bytes);
-    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    (void)tnc_queue_line(buffer);
 }
 
 void tnc_send_sn(float snr)
@@ -667,7 +923,7 @@ void tnc_send_sn(float snr)
     char buffer[64];
     last_sn_value = snr;
     snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
-    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    (void)tnc_queue_line(buffer);
 }
 
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
@@ -676,7 +932,7 @@ void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
     last_bitrate_sl = speed_level;
     last_bitrate_bps = bps;
     snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
-    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    (void)tnc_queue_line(buffer);
 }
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
@@ -684,28 +940,38 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     arq_tcp_base_port_cfg = arq_tcp_base_port;
     broadcast_tcp_port_cfg = broadcast_tcp_port;
     broadcast_frame_size_cfg = broadcast_frame_size;
+    memset(tid_started, 0, sizeof(tid_started));
 
     /*************** ARQ TCP ports *******************/
-    status_ctl = NET_NONE;
-    status_data = NET_NONE;
+    net_set_status(CTL_TCP_PORT, NET_NONE);
+    net_set_status(DATA_TCP_PORT, NET_NONE);
+    if (!tnc_tx_chan)
+    {
+        tnc_tx_chan = chan_init(256);
+        if (!tnc_tx_chan)
+        {
+            HLOGE("tcp-ctl", "Failed to init control TX queue");
+            return EXIT_FAILURE;
+        }
+    }
 
-    // here is the thread that runs the accept(), each per port, and mantains the
-    // state of the connection
-    pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &arq_tcp_base_port_cfg);
-    pthread_create(&tid[1], NULL, server_worker_thread_data, (void *) &arq_tcp_base_port_cfg);
-    
-    // control channel threads
-    pthread_create(&tid[2], NULL, control_worker_thread_rx, (void *) NULL);
-    pthread_create(&tid[3], NULL, control_worker_thread_tx, (void *) NULL);
-
-    // data channel threads
-    pthread_create(&tid[4], NULL, data_worker_thread_tx, (void *) NULL);
-    pthread_create(&tid[5], NULL, data_worker_thread_rx, (void *) NULL);
+    if (pthread_create(&tid[0], NULL, arq_reactor_thread, (void *)&arq_tcp_base_port_cfg) != 0)
+    {
+        HLOGE("tcp", "Failed to start ARQ reactor thread");
+        dispose_tnc_tx_queue();
+        return EXIT_FAILURE;
+    }
+    tid_started[0] = true;
 
 
     /*************** BROADCAST TCP ports **************/
     // Create TCP BROADCAST server thread
-    pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port_cfg);
+    if (pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port_cfg) != 0)
+    {
+        HLOGE("tcp", "Failed to start broadcast TCP thread");
+        return EXIT_FAILURE;
+    }
+    tid_started[6] = true;
 
     
     return EXIT_SUCCESS;
@@ -713,11 +979,15 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
 
 void interfaces_shutdown()
 {
-    pthread_join(tid[0], NULL);
-    pthread_join(tid[1], NULL);
-    pthread_join(tid[2], NULL);
-    pthread_join(tid[3], NULL);
-    pthread_join(tid[4], NULL);
-    pthread_join(tid[5], NULL);
-    pthread_join(tid[6], NULL);
+    int i;
+
+    for (i = 0; i < 7; i++)
+    {
+        if (tid_started[i])
+        {
+            pthread_join(tid[i], NULL);
+            tid_started[i] = false;
+        }
+    }
+    dispose_tnc_tx_queue();
 }

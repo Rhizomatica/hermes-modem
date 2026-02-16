@@ -39,6 +39,7 @@
 #include "defines_modem.h"
 #include "audioio/audioio.h"
 #include "tcp_interfaces.h"
+#include "hermes_log.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -340,6 +341,16 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }    
 
+    if (hermes_log_init(1024) == 0)
+    {
+        hermes_log_set_level(verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
+        HLOGI("main", "Async logger initialized (min_level=%s)", verbose ? "DEBUG" : "INFO");
+    }
+    else
+    {
+        fprintf(stderr, "Warning: async logger unavailable\n");
+    }
+
     generic_modem_t g_modem;
     pthread_t radio_capture, radio_playback;
     
@@ -355,6 +366,7 @@ int main(int argc, char *argv[])
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
         fprintf(stderr, "Failed to initialize ARQ subsystem.\n");
+        hermes_log_shutdown();
         return EXIT_FAILURE;
     }
 
@@ -371,6 +383,8 @@ int main(int argc, char *argv[])
     }
 
     shutdown_modem(&g_modem);
+    HLOGI("main", "Shutting down");
+    hermes_log_shutdown();
 
     return 0;
 

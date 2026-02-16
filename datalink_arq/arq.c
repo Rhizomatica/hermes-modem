@@ -107,6 +107,16 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     return arq_v2_get_runtime_snapshot(snapshot);
 }
 
+int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
+{
+    return arq_v2_submit_tcp_cmd(cmd);
+}
+
+int arq_submit_tcp_payload(const uint8_t *data, size_t len)
+{
+    return arq_v2_submit_tcp_payload(data, len);
+}
+
 void clear_connection_data(void)
 {
     arq_v2_clear_connection_data();

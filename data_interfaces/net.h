@@ -51,6 +51,11 @@ extern int cli_ctl_sockfd, cli_data_sockfd;
 
 extern atomic_int status_ctl, status_data;
 
+void net_set_status(int port_type, int status);
+int net_get_status(int port_type);
+int net_wait_for_status(int port_type, int status, int timeout_ms);
+int net_wait_while_status(int port_type, int status, int timeout_ms);
+
 int listen4connection(int port_type);
 
 int tcp_open(int portno, int port_type);

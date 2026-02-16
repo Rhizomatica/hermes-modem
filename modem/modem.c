@@ -36,6 +36,7 @@
 #include "fsk.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
+#include "hermes_log.h"
 
 #include "defines_modem.h"
 
@@ -846,7 +847,7 @@ void *rx_thread(void *g_modem)
             pref_tx_mode = arq_snapshot.preferred_tx_mode;
             if (pref_rx_mode != last_pref_rx_mode || pref_tx_mode != last_pref_tx_mode)
             {
-                fprintf(stderr, "ARQ preferred modes: rx=%d tx=%d\n", pref_rx_mode, pref_tx_mode);
+                HLOGD("modem-rx", "ARQ preferred modes: rx=%d tx=%d", pref_rx_mode, pref_tx_mode);
                 last_pref_rx_mode = pref_rx_mode;
                 last_pref_tx_mode = pref_tx_mode;
             }
@@ -923,10 +924,10 @@ void *rx_thread(void *g_modem)
                 arq_policy_ready &&
                 arq_handle_incoming_connect_frame(data, payload_nbytes))
             {
-                printf("Received %zu payload bytes, packet type %d, frame_bytes: %zu\n",
-                       payload_nbytes,
-                       PACKET_TYPE_ARQ_CONTROL,
-                       frame_bytes);
+                HLOGD("modem-rx", "Frame rx bytes=%zu type=%d frame_bytes=%zu",
+                      payload_nbytes,
+                      PACKET_TYPE_ARQ_CONTROL,
+                      frame_bytes);
                 continue;
             }
 
@@ -942,11 +943,12 @@ void *rx_thread(void *g_modem)
                 write_buffer(data_rx_buffer_broadcast, data, payload_nbytes);
                 break;
             default:
-                printf("Unknown frame type received.\n");
+                HLOGW("modem-rx", "Unknown frame type received");
                 break;
             }
             
-            printf("Received %zu payload bytes, packet type %d, frame_bytes: %zu\n", payload_nbytes, frame_type, frame_bytes);
+            HLOGD("modem-rx", "Frame rx bytes=%zu type=%d frame_bytes=%zu",
+                  payload_nbytes, frame_type, frame_bytes);
         }
     }
 
