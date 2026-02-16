@@ -154,6 +154,8 @@ typedef struct {
     int failure_streak;
     float snr_ema;
     bool payload_start_pending;
+    int startup_acks_left;
+    time_t startup_deadline;
     int payload_mode;
     int control_mode;
     arq_turn_t turn_role;
@@ -320,6 +322,11 @@ enum {
 #define ARQ_PEER_PAYLOAD_HOLD_S 15
 /* Re-enable negotiated payload upgrades once ACK path is stabilized. */
 #define ARQ_ENABLE_MODE_UPGRADE 1
+#define ARQ_EVENT_LOOP_MIN_TIMEOUT_MS 5
+#define ARQ_EVENT_LOOP_TX_BUSY_TIMEOUT_MS 20
+#define ARQ_EVENT_LOOP_SPIN_LOG_ITER_S 200
+#define ARQ_STARTUP_ACKS_REQUIRED 4
+#define ARQ_STARTUP_MAX_S 25
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -674,6 +681,7 @@ static int arq_event_loop_timeout_ms(void)
 {
     uint64_t now_ms;
     uint64_t next_deadline_ms = 0;
+    bool local_tx_active = false;
 
     if (!arq_fsm_lock_ready)
         return 1;
@@ -685,6 +693,7 @@ static int arq_event_loop_timeout_ms(void)
         arq_unlock();
         return -1;
     }
+    local_tx_active = arq_conn.TRX == TX;
 
     if (arq_fsm.current == state_calling_wait_accept)
         arq_consider_deadline_s(arq_ctx.connect_deadline, &next_deadline_ms);
@@ -729,7 +738,11 @@ static int arq_event_loop_timeout_ms(void)
     if (next_deadline_ms == 0)
         return -1;
     if (next_deadline_ms <= now_ms)
-        return 0;
+    {
+        if (local_tx_active)
+            return ARQ_EVENT_LOOP_TX_BUSY_TIMEOUT_MS;
+        return ARQ_EVENT_LOOP_MIN_TIMEOUT_MS;
+    }
     if ((next_deadline_ms - now_ms) > (uint64_t)INT_MAX)
         return INT_MAX;
     return (int)(next_deadline_ms - now_ms);
@@ -737,6 +750,9 @@ static int arq_event_loop_timeout_ms(void)
 
 static void *arq_event_loop_worker(void *arg)
 {
+    uint64_t loop_iter_count = 0;
+    uint64_t loop_window_start_ms = arq_monotonic_ms();
+
     (void)arg;
 
     for (;;)
@@ -745,6 +761,8 @@ static void *arq_event_loop_worker(void *arg)
         int timeout_ms = arq_event_loop_timeout_ms();
         bool have_event = false;
         bool should_exit = false;
+        size_t queue_depth = 0;
+        uint64_t now_ms;
 
         pthread_mutex_lock(&arq_event_loop.lock);
         if (arq_event_loop.running && arq_event_loop.count == 0)
@@ -779,6 +797,7 @@ static void *arq_event_loop_worker(void *arg)
         {
             should_exit = true;
         }
+        queue_depth = arq_event_loop.count;
         pthread_mutex_unlock(&arq_event_loop.lock);
 
         if (should_exit)
@@ -788,6 +807,21 @@ static void *arq_event_loop_worker(void *arg)
             arq_process_event(&event_item);
         if (have_event || timeout_ms >= 0)
             arq_tick_1hz();
+
+        loop_iter_count++;
+        now_ms = arq_monotonic_ms();
+        if (now_ms - loop_window_start_ms >= 1000ULL)
+        {
+            if (loop_iter_count >= ARQ_EVENT_LOOP_SPIN_LOG_ITER_S)
+            {
+                HLOGD("arq", "Event loop wakeups/s=%llu timeout=%d queue=%zu",
+                      (unsigned long long)loop_iter_count,
+                      timeout_ms,
+                      queue_depth);
+            }
+            loop_iter_count = 0;
+            loop_window_start_ms = now_ms;
+        }
     }
 
     return NULL;
@@ -975,9 +1009,13 @@ static void update_connected_state_from_turn_locked(void)
 
 static void become_iss_locked(const char *reason)
 {
+    time_t now = time(NULL);
+
     arq_ctx.turn_role = ARQ_TURN_ISS;
     arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
     arq_ctx.payload_start_pending = true;
+    arq_ctx.startup_acks_left = ARQ_STARTUP_ACKS_REQUIRED;
+    arq_ctx.startup_deadline = now + ARQ_STARTUP_MAX_S;
     mode_fsm_reset_locked("turn iss");
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
@@ -1159,6 +1197,8 @@ static void schedule_flow_hint_locked(void)
 {
     bool backlog_nonzero = arq_ctx.app_tx_len > 0;
 
+    if (arq_ctx.payload_start_pending)
+        return;
     if (arq_ctx.last_flow_hint_sent >= 0 &&
         ((arq_ctx.last_flow_hint_sent != 0) == backlog_nonzero))
         return;
@@ -1664,6 +1704,8 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.failure_streak = 0;
     arq_ctx.snr_ema = 0.0f;
     arq_ctx.payload_start_pending = false;
+    arq_ctx.startup_acks_left = 0;
+    arq_ctx.startup_deadline = 0;
     arq_ctx.payload_mode = 0;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
     arq_ctx.turn_role = ARQ_TURN_NONE;
@@ -1757,6 +1799,8 @@ static void enter_connected_locked(void)
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
     arq_ctx.payload_start_pending = true;
+    arq_ctx.startup_acks_left = ARQ_STARTUP_ACKS_REQUIRED;
+    arq_ctx.startup_deadline = now + ARQ_STARTUP_MAX_S;
     arq_ctx.pending_mode_req = false;
     arq_ctx.pending_mode_ack = false;
     arq_ctx.pending_mode = 0;
@@ -1818,6 +1862,9 @@ static void start_outgoing_call_locked(void)
     arq_ctx.last_peer_payload_rx = 0;
     arq_ctx.last_keepalive_rx = now;
     arq_ctx.last_keepalive_tx = now;
+    arq_ctx.payload_start_pending = false;
+    arq_ctx.startup_acks_left = 0;
+    arq_ctx.startup_deadline = 0;
     arq_ctx.disconnect_in_progress = false;
     arq_ctx.disconnect_to_no_client = false;
     arq_ctx.disconnect_retries_left = 0;
@@ -1964,7 +2011,7 @@ static bool do_slot_tx_locked(time_t now)
         return true;
     }
 
-    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack)
+    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack && !arq_ctx.payload_start_pending)
     {
         if (send_turn_control_locked(ARQ_SUBTYPE_FLOW_HINT, arq_ctx.flow_hint_value ? 1 : 0) == 0)
         {
@@ -1990,7 +2037,7 @@ static bool do_slot_tx_locked(time_t now)
         }
     }
 
-    if (arq_ctx.pending_turn_req && !arq_ctx.turn_req_in_flight)
+    if (arq_ctx.pending_turn_req && !arq_ctx.turn_req_in_flight && !arq_ctx.payload_start_pending)
     {
         if (send_turn_control_locked(ARQ_SUBTYPE_TURN_REQ, 1) == 0)
         {
@@ -2047,6 +2094,7 @@ static bool do_slot_tx_locked(time_t now)
     }
 
     if (!arq_ctx.waiting_ack &&
+        !arq_ctx.payload_start_pending &&
         arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT &&
         now >= arq_ctx.mode_req_deadline)
     {
@@ -2061,7 +2109,7 @@ static bool do_slot_tx_locked(time_t now)
         mode_fsm_reset_locked("req timeout");
     }
 
-    if (arq_ctx.pending_keepalive)
+    if (arq_ctx.pending_keepalive && !arq_ctx.payload_start_pending)
     {
         send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE);
         HLOGD("arq", "Keepalive tx");
@@ -2123,6 +2171,7 @@ static bool do_slot_tx_locked(time_t now)
             !arq_ctx.waiting_ack &&
             arq_ctx.app_tx_len == 0 &&
             arq_ctx.peer_backlog_nonzero &&
+            !arq_ctx.payload_start_pending &&
             !arq_ctx.pending_turn_req &&
             !arq_ctx.turn_req_in_flight &&
             !mode_fsm_busy_locked())
@@ -2471,6 +2520,17 @@ void arq_tick_1hz(void)
             !arq_ctx.pending_keepalive &&
             !arq_ctx.pending_keepalive_ack;
 
+        if (arq_ctx.payload_start_pending &&
+            arq_ctx.startup_deadline > 0 &&
+            now >= arq_ctx.startup_deadline)
+        {
+            arq_ctx.payload_start_pending = false;
+            arq_ctx.startup_acks_left = 0;
+            arq_ctx.startup_deadline = 0;
+            HLOGD("arq", "Startup gate end (timeout)");
+            schedule_flow_hint_locked();
+        }
+
         if (arq_ctx.keepalive_waiting && now >= arq_ctx.keepalive_deadline)
         {
             arq_ctx.keepalive_waiting = false;
@@ -2486,6 +2546,7 @@ void arq_tick_1hz(void)
         }
 
         if (link_idle &&
+            !arq_ctx.payload_start_pending &&
             arq_ctx.role == ARQ_ROLE_CALLER &&
             !arq_ctx.keepalive_waiting &&
             (now - last_link_activity) >= arq_ctx.keepalive_interval_s)
@@ -3036,7 +3097,17 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.waiting_ack = false;
         apply_deferred_payload_mode_locked();
         if (arq_ctx.payload_start_pending)
-            arq_ctx.payload_start_pending = false;
+        {
+            if (arq_ctx.startup_acks_left > 0)
+                arq_ctx.startup_acks_left--;
+            if (arq_ctx.startup_acks_left <= 0)
+            {
+                arq_ctx.payload_start_pending = false;
+                arq_ctx.startup_deadline = 0;
+                HLOGD("arq", "Startup gate end (ack streak)");
+                schedule_flow_hint_locked();
+            }
+        }
         if (arq_ctx.outstanding_app_len <= arq_ctx.app_tx_len)
         {
             memmove(arq_ctx.app_tx_queue,
@@ -3188,7 +3259,17 @@ static void handle_data_frame_locked(uint8_t session_id,
         write_buffer(data_rx_buffer_arq, (uint8_t *)payload, payload_len);
         arq_ctx.rx_expected_seq++;
         if (arq_ctx.payload_start_pending)
-            arq_ctx.payload_start_pending = false;
+        {
+            if (arq_ctx.startup_acks_left > 0)
+                arq_ctx.startup_acks_left--;
+            if (arq_ctx.startup_acks_left <= 0)
+            {
+                arq_ctx.payload_start_pending = false;
+                arq_ctx.startup_deadline = 0;
+                HLOGD("arq", "Startup gate end (data streak)");
+                schedule_flow_hint_locked();
+            }
+        }
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         arq_ctx.pending_ack_set_ms = arq_monotonic_ms();
