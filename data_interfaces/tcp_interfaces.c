@@ -55,6 +55,7 @@ static uint32_t last_bitrate_sl = 0;
 static uint32_t last_bitrate_bps = 0;
 static chan_t *tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
+static atomic_int tnc_last_buffer_sent = -1;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -371,6 +372,7 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
     *ctl_client_fd = -1;
     cli_ctl_sockfd = -1;
     net_set_status(CTL_TCP_PORT, NET_LISTENING);
+    atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
     HLOGI("tcp-ctl", "Control client disconnected");
 
     if (notify_arq)
@@ -425,6 +427,7 @@ static void dispose_tnc_tx_queue(void)
     chan_dispose(tnc_tx_chan);
     tnc_tx_chan = NULL;
     atomic_store_explicit(&tnc_tx_drop_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
 }
 
 static void *arq_reactor_thread(void *port)
@@ -516,6 +519,7 @@ static void *arq_reactor_thread(void *port)
                     next_keepalive_ms = now_ms + 60000ULL;
                     next_buffer_report_ms = now_ms + 1000ULL;
                     last_buffer_report = -1;
+                    atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
                     ctl_len = 0;
                     HLOGI("tcp-ctl", "Control client connected");
                 }
@@ -914,8 +918,14 @@ void tnc_send_disconnected()
 void tnc_send_buffer(uint32_t bytes)
 {
     char buffer[64];
+    int last = atomic_load_explicit(&tnc_last_buffer_sent, memory_order_relaxed);
+
+    if (last >= 0 && (uint32_t)last == bytes)
+        return;
+
     snprintf(buffer, sizeof(buffer), "BUFFER %u\r", bytes);
-    (void)tnc_queue_line(buffer);
+    if (tnc_queue_line(buffer) == 0)
+        atomic_store_explicit(&tnc_last_buffer_sent, (int)bytes, memory_order_relaxed);
 }
 
 void tnc_send_sn(float snr)
@@ -954,6 +964,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
             return EXIT_FAILURE;
         }
     }
+    atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
 
     if (pthread_create(&tid[0], NULL, arq_reactor_thread, (void *)&arq_tcp_base_port_cfg) != 0)
     {
