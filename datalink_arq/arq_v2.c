@@ -111,8 +111,8 @@ typedef struct {
     int max_data_retries;
 
     time_t connect_deadline;
-    time_t next_role_tx_at;
-    time_t remote_busy_until;
+    uint64_t next_role_tx_at;
+    uint64_t remote_busy_until;
     int call_retries_left;
     int accept_retries_left;
 
@@ -305,7 +305,7 @@ enum {
 #define ARQ_ACCEPT_RETRY_SLOTS 3
 #define ARQ_DATA_RETRY_SLOTS 6
 #define ARQ_CONNECT_GRACE_SLOTS 2
-#define ARQ_CHANNEL_GUARD_S 1
+#define ARQ_CHANNEL_GUARD_MS 200
 #define ARQ_ACK_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
@@ -341,7 +341,7 @@ static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size);
 static bool arq_event_loop_enqueue_internal(const arq_event_t *event_item);
 static void arq_process_event(const arq_event_t *event_item);
 static void *arq_event_loop_worker(void *arg);
-static int arq_event_loop_timeout_s(void);
+static int arq_event_loop_timeout_ms(void);
 static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t frame_size);
 static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_size);
 static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, bool frame_decoded, time_t now);
@@ -363,6 +363,13 @@ static uint64_t arq_monotonic_ms(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+}
+
+static uint64_t arq_realtime_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 }
 
@@ -644,23 +651,34 @@ static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size)
         arq_process_event(&event_item);
 }
 
-static void arq_consider_deadline(time_t deadline, time_t *next_deadline)
+static void arq_consider_deadline_s(time_t deadline, uint64_t *next_deadline_ms)
 {
-    if (!next_deadline || deadline <= 0)
+    uint64_t deadline_ms;
+
+    if (!next_deadline_ms || deadline <= 0)
         return;
-    if (*next_deadline == 0 || deadline < *next_deadline)
-        *next_deadline = deadline;
+    deadline_ms = (uint64_t)deadline * 1000ULL;
+    if (*next_deadline_ms == 0 || deadline_ms < *next_deadline_ms)
+        *next_deadline_ms = deadline_ms;
 }
 
-static int arq_event_loop_timeout_s(void)
+static void arq_consider_deadline_ms(uint64_t deadline_ms, uint64_t *next_deadline_ms)
 {
-    time_t now;
-    time_t next_deadline = 0;
+    if (!next_deadline_ms || deadline_ms == 0)
+        return;
+    if (*next_deadline_ms == 0 || deadline_ms < *next_deadline_ms)
+        *next_deadline_ms = deadline_ms;
+}
+
+static int arq_event_loop_timeout_ms(void)
+{
+    uint64_t now_ms;
+    uint64_t next_deadline_ms = 0;
 
     if (!arq_fsm_lock_ready)
         return 1;
 
-    now = time(NULL);
+    now_ms = arq_realtime_ms();
     arq_lock();
     if (!arq_ctx.initialized)
     {
@@ -669,31 +687,31 @@ static int arq_event_loop_timeout_s(void)
     }
 
     if (arq_fsm.current == state_calling_wait_accept)
-        arq_consider_deadline(arq_ctx.connect_deadline, &next_deadline);
+        arq_consider_deadline_s(arq_ctx.connect_deadline, &next_deadline_ms);
 
     if (arq_fsm.current == state_disconnecting)
-        arq_consider_deadline(arq_ctx.disconnect_deadline, &next_deadline);
+        arq_consider_deadline_s(arq_ctx.disconnect_deadline, &next_deadline_ms);
 
     if (arq_ctx.role != ARQ_ROLE_NONE)
     {
         if (arq_ctx.next_role_tx_at > 0)
-            arq_consider_deadline(arq_ctx.next_role_tx_at, &next_deadline);
+            arq_consider_deadline_ms(arq_ctx.next_role_tx_at, &next_deadline_ms);
         else
-            arq_consider_deadline(now, &next_deadline);
+            arq_consider_deadline_ms(now_ms, &next_deadline_ms);
     }
 
     if (is_connected_state_locked())
     {
         if (arq_ctx.waiting_ack)
-            arq_consider_deadline(arq_ctx.ack_deadline, &next_deadline);
+            arq_consider_deadline_s(arq_ctx.ack_deadline, &next_deadline_ms);
         if (arq_ctx.turn_req_in_flight)
-            arq_consider_deadline(arq_ctx.turn_req_deadline, &next_deadline);
+            arq_consider_deadline_s(arq_ctx.turn_req_deadline, &next_deadline_ms);
         if (arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT)
-            arq_consider_deadline(arq_ctx.mode_req_deadline, &next_deadline);
+            arq_consider_deadline_s(arq_ctx.mode_req_deadline, &next_deadline_ms);
 
         if (arq_ctx.keepalive_waiting)
         {
-            arq_consider_deadline(arq_ctx.keepalive_deadline, &next_deadline);
+            arq_consider_deadline_s(arq_ctx.keepalive_deadline, &next_deadline_ms);
         }
         else if (arq_ctx.role == ARQ_ROLE_CALLER && arq_ctx.keepalive_interval_s > 0)
         {
@@ -702,19 +720,19 @@ static int arq_event_loop_timeout_s(void)
                 last_link_activity = arq_ctx.last_keepalive_rx;
             if (arq_ctx.last_phy_activity > last_link_activity)
                 last_link_activity = arq_ctx.last_phy_activity;
-            arq_consider_deadline(last_link_activity + arq_ctx.keepalive_interval_s, &next_deadline);
+            arq_consider_deadline_s(last_link_activity + arq_ctx.keepalive_interval_s, &next_deadline_ms);
         }
     }
 
     arq_unlock();
 
-    if (next_deadline == 0)
+    if (next_deadline_ms == 0)
         return -1;
-    if (next_deadline <= now)
+    if (next_deadline_ms <= now_ms)
         return 0;
-    if ((next_deadline - now) > INT_MAX)
+    if ((next_deadline_ms - now_ms) > (uint64_t)INT_MAX)
         return INT_MAX;
-    return (int)(next_deadline - now);
+    return (int)(next_deadline_ms - now_ms);
 }
 
 static void *arq_event_loop_worker(void *arg)
@@ -724,22 +742,28 @@ static void *arq_event_loop_worker(void *arg)
     for (;;)
     {
         arq_event_t event_item;
-        int timeout_s = arq_event_loop_timeout_s();
+        int timeout_ms = arq_event_loop_timeout_ms();
         bool have_event = false;
         bool should_exit = false;
 
         pthread_mutex_lock(&arq_event_loop.lock);
         if (arq_event_loop.running && arq_event_loop.count == 0)
         {
-            if (timeout_s < 0)
+            if (timeout_ms < 0)
             {
                 (void)pthread_cond_wait(&arq_event_loop.cond, &arq_event_loop.lock);
             }
-            else if (timeout_s > 0)
+            else if (timeout_ms > 0)
             {
                 struct timespec ts;
                 clock_gettime(CLOCK_REALTIME, &ts);
-                ts.tv_sec += timeout_s;
+                ts.tv_sec += timeout_ms / 1000;
+                ts.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+                if (ts.tv_nsec >= 1000000000L)
+                {
+                    ts.tv_sec += 1;
+                    ts.tv_nsec -= 1000000000L;
+                }
                 (void)pthread_cond_timedwait(&arq_event_loop.cond, &arq_event_loop.lock, &ts);
             }
         }
@@ -762,7 +786,7 @@ static void *arq_event_loop_worker(void *arg)
 
         if (have_event)
             arq_process_event(&event_item);
-        if (have_event || timeout_s >= 0)
+        if (have_event || timeout_ms >= 0)
             arq_tick_1hz();
     }
 
@@ -834,7 +858,7 @@ static int ack_timeout_s_for_mode(int mode)
 
 static int connect_response_wait_s(void)
 {
-    return ack_timeout_s_for_mode(FREEDV_MODE_DATAC13) + ARQ_CHANNEL_GUARD_S;
+    return mode_slot_len_s(FREEDV_MODE_DATAC13) + ARQ_CONNECT_BUSY_EXT_S;
 }
 
 static int peer_payload_hold_s_locked(void)
@@ -1268,7 +1292,8 @@ static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
 
 static void schedule_next_tx_locked(time_t now, bool with_jitter)
 {
-    arq_ctx.next_role_tx_at = now + compute_inter_frame_interval_locked(now, with_jitter);
+    arq_ctx.next_role_tx_at =
+        arq_realtime_ms() + ((uint64_t)compute_inter_frame_interval_locked(now, with_jitter) * 1000ULL);
 }
 
 static bool has_urgent_control_tx_locked(void)
@@ -1284,7 +1309,8 @@ static bool has_urgent_control_tx_locked(void)
 static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
 {
     bool adjusted = false;
-    time_t earliest_tx = now + ARQ_CHANNEL_GUARD_S;
+    uint64_t now_ms = arq_realtime_ms();
+    uint64_t earliest_tx = now_ms + ARQ_CHANNEL_GUARD_MS;
 
     if (arq_ctx.remote_busy_until > earliest_tx)
         earliest_tx = arq_ctx.remote_busy_until;
@@ -1296,17 +1322,20 @@ static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
     }
 
     if (adjusted)
-        HLOGD("arq", "Immediate control reply (%s) at +%lds",
+        HLOGD("arq", "Immediate control reply (%s) at +%llums",
               reason ? reason : "rx",
-              (long)(arq_ctx.next_role_tx_at - now));
+              (unsigned long long)(arq_ctx.next_role_tx_at - now_ms));
 }
 
 static bool defer_tx_if_busy_locked(time_t now)
 {
+    uint64_t now_ms = arq_realtime_ms();
+    (void)now;
+
     if (has_urgent_control_tx_locked())
         return false;
 
-    if (now >= arq_ctx.remote_busy_until)
+    if (now_ms >= arq_ctx.remote_busy_until)
         return false;
 
     if (arq_ctx.next_role_tx_at < arq_ctx.remote_busy_until)
@@ -1706,7 +1735,7 @@ static void start_disconnect_locked(bool to_no_client)
     arq_ctx.disconnect_retries_left = ARQ_DISCONNECT_RETRY_SLOTS + 1;
     arq_ctx.pending_disconnect = true;
     arq_ctx.disconnect_deadline = now + (arq_ctx.slot_len_s * 2) + 2;
-    arq_ctx.next_role_tx_at = now;
+    arq_ctx.next_role_tx_at = arq_realtime_ms();
     arq_fsm.current = state_disconnecting;
     HLOGI("arq", "Disconnect start (to_no_client=%d)", to_no_client ? 1 : 0);
 }
@@ -1800,7 +1829,7 @@ static void start_outgoing_call_locked(void)
     arq_ctx.disconnect_to_no_client = false;
     arq_ctx.disconnect_retries_left = 0;
     arq_ctx.disconnect_deadline = 0;
-    arq_ctx.next_role_tx_at = now;
+    arq_ctx.next_role_tx_at = arq_realtime_ms();
     arq_ctx.remote_busy_until = 0;
     arq_ctx.connect_deadline = now + (response_wait_s * (arq_ctx.max_call_retries + 1)) + ARQ_CONNECT_GRACE_SLOTS;
     arq_fsm.current = state_calling_wait_accept;
@@ -1862,9 +1891,11 @@ static void queue_next_data_frame_locked(void)
 
 static bool do_slot_tx_locked(time_t now)
 {
+    uint64_t now_ms = arq_realtime_ms();
+
     if (arq_ctx.role == ARQ_ROLE_NONE)
         return false;
-    if (now < arq_ctx.next_role_tx_at)
+    if (now_ms < arq_ctx.next_role_tx_at)
         return false;
     if (defer_tx_if_busy_locked(now))
         return false;
@@ -1895,7 +1926,7 @@ static bool do_slot_tx_locked(time_t now)
         arq_ctx.call_retries_left--;
         if (arq_ctx.call_retries_left <= 0)
             arq_ctx.pending_call = false;
-        arq_ctx.next_role_tx_at = now + connect_response_wait_s();
+        arq_ctx.next_role_tx_at = now_ms + ((uint64_t)connect_response_wait_s() * 1000ULL);
         return true;
     }
 
@@ -3340,6 +3371,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 
 static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, bool frame_decoded, time_t now)
 {
+    uint64_t now_ms = arq_realtime_ms();
+
     if (frame_decoded && snr > -20.0f && snr < 30.0f)
     {
         if (arq_ctx.snr_ema == 0.0f)
@@ -3354,9 +3387,9 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
     if (sync || frame_decoded)
     {
         arq_ctx.last_phy_activity = now;
-        time_t busy_until = now + ARQ_CHANNEL_GUARD_S;
+        uint64_t busy_until = now_ms + ARQ_CHANNEL_GUARD_MS;
         if (sync && !frame_decoded)
-            busy_until += 1;
+            busy_until += 1000ULL;
         if (arq_ctx.remote_busy_until < busy_until)
             arq_ctx.remote_busy_until = busy_until;
         if (arq_ctx.next_role_tx_at < arq_ctx.remote_busy_until)
@@ -3516,7 +3549,7 @@ void callee_accept_connection(void)
         arq_ctx.role = ARQ_ROLE_CALLEE;
         arq_ctx.pending_accept = true;
         arq_ctx.accept_retries_left = 1;
-        arq_ctx.next_role_tx_at = time(NULL) + ARQ_CHANNEL_GUARD_S;
+        arq_ctx.next_role_tx_at = arq_realtime_ms() + ARQ_CHANNEL_GUARD_MS;
     }
     arq_unlock();
 }
