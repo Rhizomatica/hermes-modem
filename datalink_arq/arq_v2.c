@@ -1930,7 +1930,7 @@ static bool do_slot_tx_locked(time_t now)
         return true;
     }
 
-    if (arq_ctx.pending_flow_hint)
+    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack)
     {
         if (send_turn_control_locked(ARQ_SUBTYPE_FLOW_HINT, arq_ctx.flow_hint_value ? 1 : 0) == 0)
         {

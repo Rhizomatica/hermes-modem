@@ -32,6 +32,14 @@ Edit config.mk with your C compiler and appropriate flags (defaults should be fi
 make
 ```
 
+## Logging and collision tracing
+
+- Default run (`./mercury`): logger runs at **INFO** level with timestamps (`[INF]/[WRN]/[ERR]`).
+- Verbose run (`./mercury -v`): logger runs at **DEBUG** level and includes all detailed ARQ/modem traces (`[DBG]`).
+- TX state transitions are logged with timestamps at INFO level as:
+  - `TX enabled (PTT ON)`
+  - `TX disabled (PTT OFF)`
+
 ## Authors
 
 - Rafael Diniz (Rhizomatica, ARQ, Broadcast, TCP interface, etc)
