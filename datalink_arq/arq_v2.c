@@ -832,6 +832,11 @@ static int ack_timeout_s_for_mode(int mode)
     }
 }
 
+static int connect_response_wait_s(void)
+{
+    return ack_timeout_s_for_mode(FREEDV_MODE_DATAC13) + ARQ_CHANNEL_GUARD_S;
+}
+
 static int peer_payload_hold_s_locked(void)
 {
     int hold = ARQ_PEER_PAYLOAD_HOLD_S;
@@ -1764,6 +1769,7 @@ static void enter_connected_locked(void)
 static void start_outgoing_call_locked(void)
 {
     time_t now = time(NULL);
+    int response_wait_s = connect_response_wait_s();
     arq_ctx.role = ARQ_ROLE_CALLER;
     arq_ctx.session_id = (uint8_t)((arq_ctx.session_id + 1) & ARQ_CONNECT_SESSION_MASK);
     if (arq_ctx.session_id == 0)
@@ -1796,7 +1802,7 @@ static void start_outgoing_call_locked(void)
     arq_ctx.disconnect_deadline = 0;
     arq_ctx.next_role_tx_at = now;
     arq_ctx.remote_busy_until = 0;
-    arq_ctx.connect_deadline = now + arq_ctx.connect_timeout_s;
+    arq_ctx.connect_deadline = now + (response_wait_s * (arq_ctx.max_call_retries + 1)) + ARQ_CONNECT_GRACE_SLOTS;
     arq_fsm.current = state_calling_wait_accept;
 }
 
@@ -1889,7 +1895,7 @@ static bool do_slot_tx_locked(time_t now)
         arq_ctx.call_retries_left--;
         if (arq_ctx.call_retries_left <= 0)
             arq_ctx.pending_call = false;
-        schedule_next_tx_locked(now, true);
+        arq_ctx.next_role_tx_at = now + connect_response_wait_s();
         return true;
     }
 
