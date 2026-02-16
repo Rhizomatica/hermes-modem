@@ -309,7 +309,7 @@ enum {
 #define ARQ_ACK_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
-#define ARQ_KEEPALIVE_INTERVAL_S 10
+#define ARQ_KEEPALIVE_INTERVAL_S 20
 #define ARQ_KEEPALIVE_MISS_LIMIT 5
 #define ARQ_SNR_HYST_DB 1.0f
 #define ARQ_TURN_REQ_RETRIES 2
@@ -1878,7 +1878,7 @@ static void queue_next_data_frame_locked(void)
     arq_ctx.outstanding_app_len = chunk;
     arq_ctx.waiting_ack = true;
     arq_ctx.data_retries_left = arq_ctx.max_data_retries;
-    arq_ctx.ack_deadline = time(NULL) + arq_ctx.ack_timeout_s;
+    arq_ctx.ack_deadline = time(NULL) + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
     arq_ctx.tx_seq++;
 }
 
@@ -1887,6 +1887,8 @@ static bool do_slot_tx_locked(time_t now)
     uint64_t now_ms = arq_realtime_ms();
 
     if (arq_ctx.role == ARQ_ROLE_NONE)
+        return false;
+    if (arq_conn.TRX == TX)
         return false;
     if (now_ms < arq_ctx.next_role_tx_at)
         return false;
@@ -2065,7 +2067,7 @@ static bool do_slot_tx_locked(time_t now)
         HLOGD("arq", "Keepalive tx");
         arq_ctx.pending_keepalive = false;
         arq_ctx.keepalive_waiting = true;
-        arq_ctx.keepalive_deadline = now + arq_ctx.keepalive_interval_s;
+        arq_ctx.keepalive_deadline = now + arq_ctx.keepalive_interval_s + ARQ_ACK_GUARD_S;
         arq_ctx.last_keepalive_tx = now;
         schedule_next_tx_locked(now, false);
         return true;
@@ -2084,7 +2086,7 @@ static bool do_slot_tx_locked(time_t now)
                     apply_payload_mode_locked(retry_mode, "retry realign");
                 queue_frame_locked(arq_ctx.outstanding_frame, arq_ctx.outstanding_frame_len, false);
                 arq_ctx.data_retries_left--;
-                arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s;
+                arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
                 mark_failure_locked();
                 HLOGW("arq", "Data retry seq=%u left=%d frame=%zu active=%zu",
                       arq_ctx.outstanding_seq,
@@ -3158,6 +3160,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         if (session_id != arq_ctx.session_id)
             return;
         mark_link_activity_locked(now);
+        HLOGD("arq", "Keepalive ACK rx");
         return;
 
     default:
