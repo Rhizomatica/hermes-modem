@@ -1279,20 +1279,21 @@ static bool has_urgent_control_tx_locked(void)
 static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
 {
     bool adjusted = false;
+    time_t earliest_tx = now + ARQ_CHANNEL_GUARD_S;
 
-    if (arq_ctx.next_role_tx_at == 0 || arq_ctx.next_role_tx_at > now)
+    if (arq_ctx.remote_busy_until > earliest_tx)
+        earliest_tx = arq_ctx.remote_busy_until;
+
+    if (arq_ctx.next_role_tx_at != earliest_tx)
     {
-        arq_ctx.next_role_tx_at = now;
-        adjusted = true;
-    }
-    if (arq_ctx.remote_busy_until > now)
-    {
-        arq_ctx.remote_busy_until = now;
+        arq_ctx.next_role_tx_at = earliest_tx;
         adjusted = true;
     }
 
     if (adjusted)
-        HLOGD("arq", "Immediate control reply (%s)", reason ? reason : "rx");
+        HLOGD("arq", "Immediate control reply (%s) at +%lds",
+              reason ? reason : "rx",
+              (long)(arq_ctx.next_role_tx_at - now));
 }
 
 static bool defer_tx_if_busy_locked(time_t now)

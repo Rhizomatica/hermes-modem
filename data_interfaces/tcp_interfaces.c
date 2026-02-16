@@ -888,7 +888,7 @@ void ptt_on()
     char buffer[] = "PTT ON\r";
     arq_conn.TRX = TX;
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    HLOGD("radio", "PTT ON");
+    HLOGI("radio", "TX enabled (PTT ON)");
 }
 
 void ptt_off()
@@ -896,7 +896,7 @@ void ptt_off()
     char buffer[] = "PTT OFF\r";
     arq_conn.TRX = RX;
     tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
-    HLOGD("radio", "PTT OFF");
+    HLOGI("radio", "TX disabled (PTT OFF)");
 }
 
 void tnc_send_connected()
