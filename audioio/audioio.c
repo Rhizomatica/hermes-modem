@@ -172,6 +172,11 @@ void *radio_playback_thread(void *device_ptr)
     {
         ffssize n;
         size_t buffer_size = size_buffer(playback_buffer);
+        if (buffer_size == 0)
+        {
+            ffthread_sleep(period_ms ? period_ms : 5);
+            continue;
+        }
         if (buffer_size >= period_bytes_8k)
         {
             read_buffer(playback_buffer, (uint8_t *) input_buffer, period_bytes_8k);

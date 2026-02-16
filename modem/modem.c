@@ -480,6 +480,7 @@ int run_tests_rx(generic_modem_t *g_modem)
             if ((j + 1) % 16 == 0) printf("\n");
         }
         printf("\n");
+        usleep(RX_IDLE_SLEEP_US);
     }
 
     free(buffer);
@@ -684,7 +685,8 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     int sync = 0;
     float snr_est = 0.0;
     freedv_get_modem_stats(freedv, &sync, &snr_est);
-    (void)sync;
+    if (!sync)
+        *nbytes_out = 0;
 
     if (*nbytes_out > 0)
     {
