@@ -69,7 +69,7 @@ static void print_usage(const char *prog)
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
-    printf(" -s [mode_index]            Selects modem mode by index shown in \"-l\" output. Default is 0 (DATAC1)\n");
+    printf(" -s [mode_index]            Selects modem mode by index shown in \"-l\" output. Default is 1 (DATAC3)\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
-    int mod_config = FREEDV_MODE_DATAC1;
+    int mod_config = FREEDV_MODE_DATAC3;
     
     input_dev[0] = 0;
     output_dev[0] = 0;
