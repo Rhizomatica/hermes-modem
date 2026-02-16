@@ -866,20 +866,6 @@ static uint64_t control_slot_ms(int mode)
     return (uint64_t)mode_slot_len_s(mode) * 1000ULL;
 }
 
-static void schedule_accept_after_call_locked(void)
-{
-    uint64_t now_ms = arq_realtime_ms();
-    uint64_t accept_at = now_ms + control_slot_ms(FREEDV_MODE_DATAC13) + ARQ_CHANNEL_GUARD_MS;
-
-    if (arq_ctx.remote_busy_until < accept_at)
-        arq_ctx.remote_busy_until = accept_at;
-    if (arq_ctx.next_role_tx_at < accept_at)
-        arq_ctx.next_role_tx_at = accept_at;
-
-    HLOGD("arq", "CALL rx -> ACCEPT at +%llums",
-          (unsigned long long)(arq_ctx.next_role_tx_at - now_ms));
-}
-
 static int peer_payload_hold_s_locked(void)
 {
     int hold = ARQ_PEER_PAYLOAD_HOLD_S;
@@ -1818,7 +1804,7 @@ static void start_outgoing_call_locked(void)
 {
     time_t now = time(NULL);
     int response_wait_s = connect_response_wait_s();
-    int retry_interval_s = response_wait_s + mode_slot_len_s(FREEDV_MODE_DATAC13);
+    int retry_interval_s = response_wait_s + (2 * mode_slot_len_s(FREEDV_MODE_DATAC13));
     arq_ctx.role = ARQ_ROLE_CALLER;
     arq_ctx.session_id = (uint8_t)((arq_ctx.session_id + 1) & ARQ_CONNECT_SESSION_MASK);
     if (arq_ctx.session_id == 0)
@@ -1947,7 +1933,7 @@ static bool do_slot_tx_locked(time_t now)
         if (arq_ctx.call_retries_left <= 0)
             arq_ctx.pending_call = false;
         arq_ctx.next_role_tx_at = now_ms +
-                                  control_slot_ms(FREEDV_MODE_DATAC13) +
+                                  (2 * control_slot_ms(FREEDV_MODE_DATAC13)) +
                                   ((uint64_t)connect_response_wait_s() * 1000ULL);
         return true;
     }
@@ -3015,7 +3001,7 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.pending_accept = true;
         arq_ctx.accept_retries_left = 1;
-        schedule_accept_after_call_locked();
+        schedule_immediate_control_tx_locked(now, "call");
         return;
 
     case ARQ_SUBTYPE_ACCEPT:
@@ -3287,7 +3273,7 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
             arq_ctx.turn_promote_after_ack = false;
             arq_ctx.peer_backlog_nonzero = false;
             arq_ctx.last_peer_payload_rx = 0;
-            schedule_accept_after_call_locked();
+            schedule_immediate_control_tx_locked(now, "connect call");
         }
         return true;
     }
@@ -3410,8 +3396,6 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
     {
         arq_ctx.last_phy_activity = now;
         uint64_t busy_until = now_ms + ARQ_CHANNEL_GUARD_MS;
-        if (sync && !frame_decoded)
-            busy_until += 1000ULL;
         if (arq_ctx.remote_busy_until < busy_until)
             arq_ctx.remote_busy_until = busy_until;
         if (arq_ctx.next_role_tx_at < arq_ctx.remote_busy_until)
