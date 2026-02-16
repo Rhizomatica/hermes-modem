@@ -1709,9 +1709,6 @@ static void enter_connected_locked(void)
 {
     time_t now = time(NULL);
     arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
-    arq_ctx.slot_len_s = mode_slot_len_s(arq_ctx.payload_mode);
-    arq_ctx.tx_period_s = arq_ctx.slot_len_s;
-    arq_ctx.ack_timeout_s = ack_timeout_s_for_mode(arq_ctx.payload_mode);
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.pending_call = false;
@@ -1766,8 +1763,6 @@ static void enter_connected_locked(void)
 static void start_outgoing_call_locked(void)
 {
     time_t now = time(NULL);
-    int control_mode = FREEDV_MODE_DATAC13;
-    int control_slot = mode_slot_len_s(control_mode);
     arq_ctx.role = ARQ_ROLE_CALLER;
     arq_ctx.session_id = (uint8_t)((arq_ctx.session_id + 1) & ARQ_CONNECT_SESSION_MASK);
     if (arq_ctx.session_id == 0)
@@ -1798,13 +1793,9 @@ static void start_outgoing_call_locked(void)
     arq_ctx.disconnect_to_no_client = false;
     arq_ctx.disconnect_retries_left = 0;
     arq_ctx.disconnect_deadline = 0;
-    arq_ctx.slot_len_s = control_slot;
-    arq_ctx.tx_period_s = control_slot;
-    arq_ctx.ack_timeout_s = ack_timeout_s_for_mode(control_mode);
     arq_ctx.next_role_tx_at = now;
     arq_ctx.remote_busy_until = 0;
-    arq_ctx.connect_deadline =
-        now + (arq_ctx.tx_period_s * (arq_ctx.max_call_retries + 2)) + ARQ_CONNECT_GRACE_SLOTS;
+    arq_ctx.connect_deadline = now + arq_ctx.connect_timeout_s;
     arq_fsm.current = state_calling_wait_accept;
 }
 
@@ -2714,7 +2705,7 @@ int arq_get_control_mode(void)
         return FREEDV_MODE_DATAC13;
 
     arq_lock();
-    mode = FREEDV_MODE_DATAC13;
+    mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     arq_unlock();
     return mode;
 }
@@ -2757,14 +2748,14 @@ static int preferred_rx_mode_locked(time_t now)
     {
         if (control_phase)
         {
-            mode = FREEDV_MODE_DATAC13;
+            mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
         else if (arq_ctx.turn_role == ARQ_TURN_ISS)
         {
             if (!arq_ctx.waiting_ack && arq_ctx.app_tx_len > 0)
                 mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
             else
-                mode = FREEDV_MODE_DATAC13;
+                mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
         else if (arq_ctx.turn_role == ARQ_TURN_IRS &&
                  (arq_ctx.payload_start_pending || arq_ctx.peer_backlog_nonzero))
@@ -2773,12 +2764,12 @@ static int preferred_rx_mode_locked(time_t now)
         }
         else
         {
-            mode = FREEDV_MODE_DATAC13;
+            mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
     }
     else if (control_phase)
     {
-        mode = FREEDV_MODE_DATAC13;
+        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
     return mode;
 }
@@ -2812,19 +2803,21 @@ static int preferred_tx_mode_locked(time_t now)
         {
             if (arq_ctx.waiting_ack && arq_ctx.pending_payload_actions > 0)
                 mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
+            else if (arq_ctx.waiting_ack && now < arq_ctx.ack_deadline)
+                mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
             else if (arq_ctx.waiting_ack || arq_ctx.app_tx_len > 0)
                 mode = arq_ctx.payload_mode ? arq_ctx.payload_mode : arq_conn.mode;
             else
-                mode = FREEDV_MODE_DATAC13;
+                mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
         else
         {
-            mode = FREEDV_MODE_DATAC13;
+            mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
         }
     }
     else if (must_control_tx)
     {
-        mode = FREEDV_MODE_DATAC13;
+        mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     }
     return mode;
 }
@@ -2890,7 +2883,7 @@ bool arq_v2_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
         gear = 0;
     snapshot->speed_level = gear;
     snapshot->payload_mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
-    snapshot->control_mode = FREEDV_MODE_DATAC13;
+    snapshot->control_mode = arq_ctx.control_mode ? arq_ctx.control_mode : FREEDV_MODE_DATAC13;
     snapshot->preferred_rx_mode = preferred_rx_mode_locked(now);
     snapshot->preferred_tx_mode = preferred_tx_mode_locked(now);
     arq_unlock();
