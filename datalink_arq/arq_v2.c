@@ -738,6 +738,16 @@ static int ack_timeout_s_for_mode(int mode)
     }
 }
 
+static int peer_payload_hold_s_locked(void)
+{
+    int hold = ARQ_PEER_PAYLOAD_HOLD_S;
+    int mode_hold = arq_ctx.ack_timeout_s + arq_ctx.slot_len_s;
+
+    if (mode_hold > hold)
+        hold = mode_hold;
+    return hold;
+}
+
 static const char *mode_name(int mode)
 {
     switch (mode)
@@ -2427,7 +2437,7 @@ static int preferred_rx_mode_locked(time_t now)
         !arq_ctx.payload_start_pending &&
         !mode_fsm_busy_locked() &&
         arq_ctx.last_peer_payload_rx > 0 &&
-        (now - arq_ctx.last_peer_payload_rx) > ARQ_PEER_PAYLOAD_HOLD_S)
+        (now - arq_ctx.last_peer_payload_rx) > peer_payload_hold_s_locked())
     {
         arq_ctx.peer_backlog_nonzero = false;
         fprintf(stderr, "ARQ peer backlog timeout -> control\n");

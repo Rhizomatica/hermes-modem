@@ -608,6 +608,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     uint64_t epoch = 0;
     size_t nin = 0;
     int input_size = 0;
+    bool idle_spin_sleep = false;
 
     static int frames_received = 0;
     static int16_t *demod_in = NULL;
@@ -662,6 +663,8 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
 
     // ALWAYS call freedv_rawdatarx - even when nin==0, it processes internal buffers
     *nbytes_out = freedv_rawdatarx(freedv, bytes_out, demod_in);
+    if (nin == 0 && *nbytes_out == 0)
+        idle_spin_sleep = true;
 
     int sync = 0;
     float snr_est = 0.0;
@@ -676,6 +679,8 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     }
 
     pthread_mutex_unlock(&modem_freedv_lock);
+    if (idle_spin_sleep)
+        usleep(1000);
     return 0;
 }
 
