@@ -212,7 +212,7 @@ static void execute_control_command(char *buffer)
     if (!buffer)
         return;
 
-    HLOGD("tcp-ctl", "Command received: %s", buffer);
+    HLOGI("tcp-ctl", "Command received: %s", buffer);
 
     if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
     {

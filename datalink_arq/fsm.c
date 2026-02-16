@@ -23,6 +23,7 @@
 #include <pthread.h>
 
 #include "fsm.h"
+#include "hermes_log.h"
 
 const char *fsm_event_names[] = {
     "EV_CLIENT_CONNECT",
@@ -39,7 +40,7 @@ const char *fsm_event_names[] = {
 // Initialize the FSM
 void fsm_init(fsm_handle* fsm, fsm_state initial_state)
 {
-    printf("Initializing FSM\n");
+    HLOGI("fsm", "Initializing FSM");
     
     if (!fsm)
         return;
@@ -51,10 +52,14 @@ void fsm_init(fsm_handle* fsm, fsm_state initial_state)
 // Dispatch an event (thread-safe)
 void fsm_dispatch(fsm_handle* fsm, int event)
 {
+    const char *event_name = "UNKNOWN";
+
     if (!fsm)
         return;
 
-    printf("Dispatching event %s\n", fsm_event_names[event]);
+    if (event >= EV_CLIENT_CONNECT && event <= EV_LINK_ESTABLISHED)
+        event_name = fsm_event_names[event];
+    HLOGI("fsm", "Dispatching event %s", event_name);
     
     pthread_mutex_lock(&fsm->lock);
     if (fsm->current)
@@ -69,7 +74,7 @@ void fsm_destroy(fsm_handle* fsm)
     if (!fsm)
         return;
 
-    printf("Destroying FSM\n");
+    HLOGI("fsm", "Destroying FSM");
     
     pthread_mutex_destroy(&fsm->lock);
     fsm->current = NULL;

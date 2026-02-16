@@ -269,8 +269,8 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode, in
     pthread_mutex_unlock(&modem_freedv_lock);
     arq_set_active_modem_mode(target_mode, payload_bytes_per_modem_frame);
 
-    fprintf(stderr, "Switched modem mode to %d (%s), payload=%zu\n",
-            target_mode, mode_name_from_enum(target_mode), payload_bytes_per_modem_frame);
+    HLOGI("modem", "Switched modem mode to %d (%s), payload=%zu",
+          target_mode, mode_name_from_enum(target_mode), payload_bytes_per_modem_frame);
     return 1;
 }
 
@@ -766,10 +766,15 @@ void *tx_thread(void *g_modem)
         if (have_action)
         {
             cbuf_handle_t action_buffer = NULL;
+            size_t action_frame_size = payload_bytes_per_modem_frame;
             if (action.mode >= 0 &&
                 arq_policy_ready &&
                 arq_snapshot.trx != TX)
                 maybe_switch_modem_mode(modem, action.mode, arq_snapshot.trx);
+
+            pthread_mutex_lock(&modem_freedv_lock);
+            action_frame_size = modem->payload_bytes_per_modem_frame;
+            pthread_mutex_unlock(&modem_freedv_lock);
 
             if (action.type == ARQ_ACTION_TX_CONTROL)
                 action_buffer = data_tx_buffer_arq_control;
@@ -779,10 +784,21 @@ void *tx_thread(void *g_modem)
                 sent_from_action = true;
 
             if (action_buffer &&
-                action.frame_size == payload_bytes_per_modem_frame &&
-                size_buffer(action_buffer) >= payload_bytes_per_modem_frame)
+                action.frame_size == action_frame_size &&
+                size_buffer(action_buffer) >= action_frame_size)
             {
-                read_buffer(action_buffer, data, payload_bytes_per_modem_frame);
+                if (data_size < action_frame_size)
+                {
+                    uint8_t *new_data = (uint8_t *)realloc(data, action_frame_size);
+                    if (!new_data)
+                    {
+                        HLOGE("modem-tx", "Failed to allocate memory for action TX data");
+                        continue;
+                    }
+                    data = new_data;
+                    data_size = action_frame_size;
+                }
+                read_buffer(action_buffer, data, action_frame_size);
                 send_modulated_data(modem, data, 1);
                 sent_from_action = true;
             }
