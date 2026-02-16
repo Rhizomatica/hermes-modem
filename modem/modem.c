@@ -944,6 +944,11 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         if (nbytes_out > 0)
         {
+            HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
+                  state->mode,
+                  mode_name_from_enum(state->mode),
+                  nbytes_out,
+                  snr_est);
             process_received_frame(state->bytes_out,
                                    nbytes_out,
                                    state->bytes_cap,

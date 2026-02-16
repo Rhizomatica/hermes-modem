@@ -1301,16 +1301,6 @@ static void schedule_next_tx_locked(time_t now, bool with_jitter)
         arq_realtime_ms() + ((uint64_t)compute_inter_frame_interval_locked(now, with_jitter) * 1000ULL);
 }
 
-static bool has_urgent_control_tx_locked(void)
-{
-    return arq_ctx.pending_ack ||
-           arq_ctx.pending_accept ||
-           arq_ctx.pending_keepalive_ack ||
-           arq_ctx.pending_turn_ack ||
-           arq_ctx.pending_disconnect ||
-           arq_ctx.mode_fsm == ARQ_MODE_FSM_ACK_PENDING;
-}
-
 static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
 {
     bool adjusted = false;
@@ -1336,9 +1326,6 @@ static bool defer_tx_if_busy_locked(time_t now)
 {
     uint64_t now_ms = arq_realtime_ms();
     (void)now;
-
-    if (has_urgent_control_tx_locked())
-        return false;
 
     if (now_ms >= arq_ctx.remote_busy_until)
         return false;
