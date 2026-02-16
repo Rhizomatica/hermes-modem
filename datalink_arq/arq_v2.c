@@ -325,8 +325,8 @@ enum {
 #define ARQ_EVENT_LOOP_MIN_TIMEOUT_MS 5
 #define ARQ_EVENT_LOOP_TX_BUSY_TIMEOUT_MS 20
 #define ARQ_EVENT_LOOP_SPIN_LOG_ITER_S 200
-#define ARQ_STARTUP_ACKS_REQUIRED 4
-#define ARQ_STARTUP_MAX_S 25
+#define ARQ_STARTUP_ACKS_REQUIRED 2
+#define ARQ_STARTUP_MAX_S 15
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -677,10 +677,77 @@ static void arq_consider_deadline_ms(uint64_t deadline_ms, uint64_t *next_deadli
         *next_deadline_ms = deadline_ms;
 }
 
+static bool has_immediate_control_tx_work_locked(void)
+{
+    if (arq_ctx.pending_disconnect ||
+        arq_ctx.pending_call ||
+        arq_ctx.pending_accept ||
+        arq_ctx.pending_ack ||
+        arq_ctx.pending_keepalive_ack ||
+        arq_ctx.pending_turn_ack)
+    {
+        return true;
+    }
+
+    if (arq_ctx.pending_flow_hint &&
+        !arq_ctx.waiting_ack &&
+        !arq_ctx.payload_start_pending)
+    {
+        return true;
+    }
+
+    if (arq_ctx.pending_turn_req &&
+        !arq_ctx.turn_req_in_flight &&
+        !arq_ctx.payload_start_pending)
+    {
+        return true;
+    }
+
+    if (arq_ctx.pending_keepalive && !arq_ctx.payload_start_pending)
+        return true;
+
+    if (!arq_ctx.waiting_ack &&
+        (arq_ctx.mode_fsm == ARQ_MODE_FSM_ACK_PENDING ||
+         arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_PENDING))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+static bool has_immediate_iss_payload_tx_work_locked(void)
+{
+    if (!is_connected_state_locked())
+        return false;
+    if (arq_ctx.turn_role != ARQ_TURN_ISS)
+        return false;
+    if (arq_ctx.waiting_ack)
+        return false;
+    if (arq_ctx.app_tx_len > 0)
+        return true;
+
+    return arq_ctx.app_tx_len == 0 &&
+           arq_ctx.peer_backlog_nonzero &&
+           !arq_ctx.pending_turn_req &&
+           !arq_ctx.turn_req_in_flight &&
+           arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE;
+}
+
+static bool has_immediate_tx_work_locked(void)
+{
+    if (arq_ctx.role == ARQ_ROLE_NONE)
+        return false;
+
+    return has_immediate_control_tx_work_locked() ||
+           has_immediate_iss_payload_tx_work_locked();
+}
+
 static int arq_event_loop_timeout_ms(void)
 {
     uint64_t now_ms;
     uint64_t next_deadline_ms = 0;
+    bool tx_work_immediate = false;
     bool local_tx_active = false;
 
     if (!arq_fsm_lock_ready)
@@ -703,9 +770,14 @@ static int arq_event_loop_timeout_ms(void)
 
     if (arq_ctx.role != ARQ_ROLE_NONE)
     {
+        tx_work_immediate = has_immediate_tx_work_locked();
+
         if (arq_ctx.next_role_tx_at > 0)
-            arq_consider_deadline_ms(arq_ctx.next_role_tx_at, &next_deadline_ms);
-        else
+        {
+            if (arq_ctx.next_role_tx_at > now_ms || tx_work_immediate)
+                arq_consider_deadline_ms(arq_ctx.next_role_tx_at, &next_deadline_ms);
+        }
+        else if (tx_work_immediate)
             arq_consider_deadline_ms(now_ms, &next_deadline_ms);
     }
 
@@ -2820,7 +2892,7 @@ static int preferred_rx_mode_locked(time_t now)
     if (arq_ctx.turn_role == ARQ_TURN_IRS &&
         arq_ctx.peer_backlog_nonzero &&
         !arq_ctx.payload_start_pending &&
-        !mode_fsm_busy_locked() &&
+        arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE &&
         arq_ctx.last_peer_payload_rx > 0 &&
         (now - arq_ctx.last_peer_payload_rx) > peer_payload_hold_s_locked())
     {
@@ -2840,7 +2912,8 @@ static int preferred_rx_mode_locked(time_t now)
         arq_ctx.pending_turn_req ||
         arq_ctx.turn_req_in_flight ||
         arq_ctx.pending_turn_ack ||
-        arq_ctx.pending_flow_hint;
+        arq_ctx.pending_flow_hint ||
+        arq_ctx.mode_fsm != ARQ_MODE_FSM_IDLE;
 
     if (is_connected_state_locked())
     {
@@ -2892,7 +2965,8 @@ static int preferred_tx_mode_locked(time_t now)
         arq_ctx.pending_turn_req ||
         arq_ctx.turn_req_in_flight ||
         arq_ctx.pending_turn_ack ||
-        arq_ctx.pending_flow_hint;
+        arq_ctx.pending_flow_hint ||
+        arq_ctx.mode_fsm != ARQ_MODE_FSM_IDLE;
 
     if (is_connected_state_locked())
     {
