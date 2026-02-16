@@ -279,7 +279,7 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode, in
     pthread_mutex_unlock(&modem_freedv_lock);
     arq_set_active_modem_mode(target_mode, payload_bytes_per_modem_frame);
 
-    HLOGI("modem", "Switched modem mode to %d (%s), payload=%zu",
+    HLOGD("modem", "Switched modem mode to %d (%s), payload=%zu",
           target_mode, mode_name_from_enum(target_mode), payload_bytes_per_modem_frame);
     return 1;
 }
@@ -790,6 +790,22 @@ static void rx_decoder_dispose(rx_decoder_state_t *state)
     memset(state, 0, sizeof(*state));
 }
 
+static int rx_decoder_target_chunk_samples(const rx_decoder_state_t *state)
+{
+    int nin = 0;
+
+    if (!state || !state->freedv)
+        return RX_DECODE_CHUNK_SAMPLES;
+
+    pthread_mutex_lock(&modem_freedv_lock);
+    nin = freedv_nin(state->freedv);
+    pthread_mutex_unlock(&modem_freedv_lock);
+
+    if (nin < RX_DECODE_CHUNK_SAMPLES)
+        nin = RX_DECODE_CHUNK_SAMPLES;
+    return nin;
+}
+
 static void process_received_frame(const uint8_t *data,
                                    size_t nbytes_out,
                                    size_t frame_bytes,
@@ -1098,20 +1114,11 @@ void *rx_thread(void *g_modem)
     generic_modem_t *modem = (generic_modem_t *)g_modem;
     int32_t *capture_i32 = NULL;
     int16_t *capture_i16 = NULL;
+    int capture_cap = 0;
     rx_decoder_state_t control_decoder = {0};
     rx_decoder_state_t payload_decoder = {0};
     int last_pref_rx_mode = -1;
     int last_pref_tx_mode = -1;
-
-    capture_i32 = (int32_t *)malloc(sizeof(int32_t) * RX_DECODE_CHUNK_SAMPLES);
-    capture_i16 = (int16_t *)malloc(sizeof(int16_t) * RX_DECODE_CHUNK_SAMPLES);
-    if (!capture_i32 || !capture_i16)
-    {
-        HLOGE("modem-rx", "Failed to allocate dual-decoder capture buffers");
-        free(capture_i32);
-        free(capture_i16);
-        return NULL;
-    }
 
     while (!shutdown_)
     {
@@ -1158,10 +1165,33 @@ void *rx_thread(void *g_modem)
             continue;
         }
 
+        int chunk_samples = rx_decoder_target_chunk_samples(&control_decoder);
+        int payload_chunk = rx_decoder_target_chunk_samples(&payload_decoder);
+        if (payload_chunk > chunk_samples)
+            chunk_samples = payload_chunk;
+
+        if (capture_cap < chunk_samples)
+        {
+            int32_t *new_i32 = (int32_t *)realloc(capture_i32, sizeof(int32_t) * (size_t)chunk_samples);
+            int16_t *new_i16 = (int16_t *)realloc(capture_i16, sizeof(int16_t) * (size_t)chunk_samples);
+            if (!new_i32 || !new_i16)
+            {
+                HLOGE("modem-rx", "Failed to allocate dual-decoder capture buffers");
+                free(new_i32 ? new_i32 : capture_i32);
+                free(new_i16 ? new_i16 : capture_i16);
+                capture_i32 = NULL;
+                capture_i16 = NULL;
+                break;
+            }
+            capture_i32 = new_i32;
+            capture_i16 = new_i16;
+            capture_cap = chunk_samples;
+        }
+
         read_buffer(capture_buffer,
                     (uint8_t *)capture_i32,
-                    sizeof(int32_t) * RX_DECODE_CHUNK_SAMPLES);
-        for (int i = 0; i < RX_DECODE_CHUNK_SAMPLES; i++)
+                    sizeof(int32_t) * (size_t)chunk_samples);
+        for (int i = 0; i < chunk_samples; i++)
         {
             capture_i16[i] = (int16_t)(capture_i32[i] >> 16);
         }
@@ -1169,7 +1199,7 @@ void *rx_thread(void *g_modem)
         rx_metrics_accum_t metrics = {0};
         rx_decoder_consume_chunk(&control_decoder,
                                  capture_i16,
-                                 RX_DECODE_CHUNK_SAMPLES,
+                                 chunk_samples,
                                  arq_policy_ready,
                                  payload_mode,
                                  bitrate_bps,
@@ -1179,7 +1209,7 @@ void *rx_thread(void *g_modem)
         {
             rx_decoder_consume_chunk(&payload_decoder,
                                      capture_i16,
-                                     RX_DECODE_CHUNK_SAMPLES,
+                                     chunk_samples,
                                      arq_policy_ready,
                                      payload_mode,
                                      bitrate_bps,
