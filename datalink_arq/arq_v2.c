@@ -2016,7 +2016,8 @@ static bool do_slot_tx_locked(time_t now)
         update_connected_state_from_turn_locked();
     }
 
-    if (arq_ctx.mode_fsm == ARQ_MODE_FSM_ACK_PENDING)
+    if (!arq_ctx.waiting_ack &&
+        arq_ctx.mode_fsm == ARQ_MODE_FSM_ACK_PENDING)
     {
         if (send_mode_change_locked(ARQ_SUBTYPE_MODE_ACK, arq_ctx.pending_mode) == 0)
         {
@@ -2027,7 +2028,8 @@ static bool do_slot_tx_locked(time_t now)
         }
     }
 
-    if (arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_PENDING)
+    if (!arq_ctx.waiting_ack &&
+        arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_PENDING)
     {
         if (send_mode_change_locked(ARQ_SUBTYPE_MODE_REQ, arq_ctx.pending_mode) == 0)
         {
@@ -2042,7 +2044,8 @@ static bool do_slot_tx_locked(time_t now)
         }
     }
 
-    if (arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT &&
+    if (!arq_ctx.waiting_ack &&
+        arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT &&
         now >= arq_ctx.mode_req_deadline)
     {
         if (arq_ctx.mode_req_retries_left > 0 &&
