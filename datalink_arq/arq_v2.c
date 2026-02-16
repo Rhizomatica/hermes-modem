@@ -2771,7 +2771,6 @@ static int preferred_rx_mode_locked(time_t now)
         arq_ctx.pending_ack ||
         arq_ctx.pending_keepalive ||
         arq_ctx.pending_keepalive_ack ||
-        mode_fsm_busy_locked() ||
         arq_ctx.pending_turn_req ||
         arq_ctx.turn_req_in_flight ||
         arq_ctx.pending_turn_ack ||
@@ -2824,7 +2823,6 @@ static int preferred_tx_mode_locked(time_t now)
         arq_ctx.pending_ack ||
         arq_ctx.pending_keepalive ||
         arq_ctx.pending_keepalive_ack ||
-        mode_fsm_busy_locked() ||
         arq_ctx.pending_turn_req ||
         arq_ctx.turn_req_in_flight ||
         arq_ctx.pending_turn_ack ||
