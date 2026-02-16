@@ -67,6 +67,7 @@ static uint64_t modem_last_switch_ms = 0;
 #define ARQ_ACTION_WAIT_MS 100
 #define RX_TX_DRAIN_SAMPLES 160
 #define RX_DECODE_CHUNK_SAMPLES 160
+#define RX_IDLE_SLEEP_US 5000
 
 typedef struct {
     struct freedv *datac1;
@@ -459,11 +460,14 @@ int run_tests_rx(generic_modem_t *g_modem)
     size_t bytes_out = 0;
     int counter = 0;
 
-    while(1)
+    while(!shutdown_)
     {
         receive_modulated_data(g_modem, buffer, &bytes_out);
         if (bytes_out == 0)
+        {
+            usleep(RX_IDLE_SLEEP_US);
             continue;
+        }
 
         counter++;
         /* bytes_out includes CRC, actual payload is bytes_out - 2 */
@@ -691,7 +695,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
 
     pthread_mutex_unlock(&modem_freedv_lock);
     if (idle_spin_sleep)
-        usleep(1000);
+        usleep(RX_IDLE_SLEEP_US);
     return 0;
 }
 
