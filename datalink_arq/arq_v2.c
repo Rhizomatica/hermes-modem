@@ -172,6 +172,7 @@ typedef struct {
     time_t turn_req_deadline;
     bool pending_turn_ack;
     bool turn_promote_after_ack;
+    bool turn_ack_deferred;
     bool pending_mode_req;
     bool pending_mode_ack;
     uint8_t pending_mode;
@@ -740,6 +741,8 @@ static bool has_immediate_iss_payload_tx_work_locked(void)
     if (arq_ctx.turn_role != ARQ_TURN_ISS)
         return false;
     if (arq_ctx.waiting_ack)
+        return false;
+    if (arq_ctx.turn_ack_deferred)
         return false;
     if (arq_ctx.pending_turn_req || arq_ctx.turn_req_in_flight)
         return false;
@@ -1832,6 +1835,7 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.turn_req_deadline = 0;
     arq_ctx.pending_turn_ack = false;
     arq_ctx.turn_promote_after_ack = false;
+    arq_ctx.turn_ack_deferred = false;
     arq_ctx.pending_mode_req = false;
     arq_ctx.pending_mode_ack = false;
     arq_ctx.pending_mode = 0;
@@ -1961,6 +1965,7 @@ static void enter_connected_locked(void)
     arq_ctx.turn_req_deadline = 0;
     arq_ctx.pending_turn_ack = false;
     arq_ctx.turn_promote_after_ack = false;
+    arq_ctx.turn_ack_deferred = false;
     arq_ctx.pending_flow_hint = false;
     arq_ctx.last_flow_hint_sent = -1;
     arq_ctx.peer_backlog_nonzero = (arq_ctx.role == ARQ_ROLE_CALLEE);
@@ -1993,6 +1998,7 @@ static void start_outgoing_call_locked(void)
     arq_ctx.pending_accept = false;
     arq_ctx.pending_ack = false;
     arq_ctx.pending_ack_set_ms = 0;
+    arq_ctx.turn_ack_deferred = false;
     arq_ctx.pending_disconnect = false;
     arq_ctx.pending_keepalive = false;
     arq_ctx.pending_keepalive_ack = false;
@@ -2088,6 +2094,17 @@ static bool do_slot_tx_locked(time_t now)
     if (defer_tx_if_busy_locked(now))
         return false;
     apply_deferred_payload_mode_locked();
+
+    if (arq_ctx.turn_ack_deferred &&
+        !arq_ctx.waiting_ack &&
+        arq_ctx.outstanding_frame_len == 0)
+    {
+        arq_ctx.turn_ack_deferred = false;
+        if (arq_ctx.peer_backlog_nonzero)
+            become_irs_locked("turn ack deferred");
+        else
+            update_connected_state_from_turn_locked();
+    }
 
     if (arq_ctx.disconnect_after_flush &&
         !arq_ctx.pending_disconnect &&
@@ -3275,6 +3292,14 @@ static void handle_control_frame_locked(uint8_t subtype,
         }
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.outstanding_frame_len = 0;
+        if (arq_ctx.turn_ack_deferred)
+        {
+            arq_ctx.turn_ack_deferred = false;
+            if (arq_ctx.peer_backlog_nonzero)
+                become_irs_locked("turn ack deferred");
+            else
+                update_connected_state_from_turn_locked();
+        }
         mark_link_activity_locked(now);
         mark_success_locked();
         schedule_flow_hint_locked();
@@ -3346,10 +3371,12 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.last_peer_payload_rx = arq_ctx.peer_backlog_nonzero ? now : 0;
         if (arq_ctx.waiting_ack || arq_ctx.outstanding_frame_len > 0)
         {
+            arq_ctx.turn_ack_deferred = true;
             HLOGD("arq", "Turn ACK defer role switch (waiting local ACK)");
             mark_link_activity_locked(now);
             return;
         }
+        arq_ctx.turn_ack_deferred = false;
         if (arq_ctx.peer_backlog_nonzero)
             become_irs_locked("turn ack");
         else
@@ -3507,6 +3534,7 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
             arq_ctx.turn_req_in_flight = false;
             arq_ctx.pending_turn_ack = false;
             arq_ctx.turn_promote_after_ack = false;
+            arq_ctx.turn_ack_deferred = false;
             arq_ctx.peer_backlog_nonzero = false;
             arq_ctx.last_peer_payload_rx = 0;
             schedule_immediate_control_tx_locked(now, "connect call");
