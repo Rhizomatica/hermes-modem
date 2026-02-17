@@ -984,6 +984,7 @@ void *tx_thread(void *g_modem)
     generic_modem_t *modem = (generic_modem_t *)g_modem;
     uint8_t *data = NULL;
     size_t data_size = 0;
+    int startup_mode = -1;
 
     while (!shutdown_)
     {
@@ -991,6 +992,13 @@ void *tx_thread(void *g_modem)
         memset(&arq_snapshot, 0, sizeof(arq_snapshot));
         bool have_arq_snapshot = arq_get_runtime_snapshot(&arq_snapshot);
         bool arq_policy_ready = arq_mode_policy_ready_snapshot(have_arq_snapshot, &arq_snapshot);
+
+        if (startup_mode < 0)
+        {
+            pthread_mutex_lock(&modem_freedv_lock);
+            startup_mode = modem->mode;
+            pthread_mutex_unlock(&modem_freedv_lock);
+        }
 
         size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
@@ -1008,6 +1016,14 @@ void *tx_thread(void *g_modem)
             int desired_mode = arq_snapshot.preferred_tx_mode;
             if (desired_mode >= 0)
                 maybe_switch_modem_mode(modem, desired_mode, arq_snapshot.trx, false);
+        }
+        else if (arq_snapshot.trx != TX &&
+                 !arq_tx_queued &&
+                 pending_broadcast > 0 &&
+                 startup_mode >= 0)
+        {
+            // Keep pure broadcast TX on the startup payload mode/frame size.
+            maybe_switch_modem_mode(modem, startup_mode, arq_snapshot.trx, false);
         }
 
         size_t payload_bytes_per_modem_frame = 0;

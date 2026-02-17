@@ -1853,7 +1853,10 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.payload_start_pending = false;
     arq_ctx.startup_acks_left = 0;
     arq_ctx.startup_deadline = 0;
-    arq_ctx.payload_mode = 0;
+    if (is_payload_mode(arq_conn.mode))
+        arq_ctx.payload_mode = arq_conn.mode;
+    else
+        arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
     arq_ctx.control_mode = FREEDV_MODE_DATAC13;
     arq_ctx.turn_role = ARQ_TURN_NONE;
     arq_ctx.peer_backlog_nonzero = false;
