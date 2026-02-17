@@ -488,8 +488,30 @@ static bool arq_action_queue_push_locked(const arq_action_t *action)
 
 static bool arq_action_queue_pop_locked(arq_action_t *action)
 {
+    size_t pick_idx;
+    bool picked_priority = false;
+
     if (!action || arq_ctx.action_count == 0)
         return false;
+
+    pick_idx = arq_ctx.action_head;
+    for (size_t i = 0; i < arq_ctx.action_count; i++)
+    {
+        arq_action_type_t t = arq_ctx.action_queue[pick_idx].type;
+        if (t == ARQ_ACTION_TX_CONTROL || t == ARQ_ACTION_MODE_SWITCH)
+        {
+            picked_priority = true;
+            break;
+        }
+        pick_idx = (pick_idx + 1) % ARQ_ACTION_QUEUE_CAPACITY;
+    }
+
+    if (picked_priority && pick_idx != arq_ctx.action_head)
+    {
+        arq_action_t tmp = arq_ctx.action_queue[arq_ctx.action_head];
+        arq_ctx.action_queue[arq_ctx.action_head] = arq_ctx.action_queue[pick_idx];
+        arq_ctx.action_queue[pick_idx] = tmp;
+    }
 
     *action = arq_ctx.action_queue[arq_ctx.action_head];
     arq_ctx.action_head = (arq_ctx.action_head + 1) % ARQ_ACTION_QUEUE_CAPACITY;
@@ -3067,7 +3089,6 @@ static int preferred_tx_mode_locked(time_t now)
         arq_ctx.turn_req_in_flight ||
         arq_ctx.pending_turn_ack ||
         arq_ctx.pending_flow_hint ||
-        size_buffer(data_tx_buffer_arq_control) > 0 ||
         arq_ctx.mode_fsm != ARQ_MODE_FSM_IDLE;
 
     if (is_connected_state_locked())
