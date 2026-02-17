@@ -321,6 +321,7 @@ enum {
 #define ARQ_MODE_SWITCH_HYST_COUNT 1
 #define ARQ_BACKLOG_MIN_DATAC3 56
 #define ARQ_BACKLOG_MIN_DATAC1 126
+#define ARQ_BACKLOG_MIN_BIDIR_MODE_UPGRADE 48 /* > DATAC4 payload capacity (47 bytes) */
 #define ARQ_PEER_PAYLOAD_HOLD_S 15
 /* Re-enable negotiated payload upgrades once ACK path is stabilized. */
 #define ARQ_ENABLE_MODE_UPGRADE 1
@@ -1227,6 +1228,9 @@ static int desired_payload_mode_locked(void)
 
     if (desired_rank > current_rank)
     {
+        if (arq_ctx.peer_backlog_nonzero &&
+            effective_backlog < ARQ_BACKLOG_MIN_BIDIR_MODE_UPGRADE)
+            return current;
         if (desired == FREEDV_MODE_DATAC1 && effective_backlog < ARQ_BACKLOG_MIN_DATAC1)
             return current;
         if (desired == FREEDV_MODE_DATAC3 && effective_backlog < ARQ_BACKLOG_MIN_DATAC3)
