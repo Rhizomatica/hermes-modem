@@ -800,12 +800,30 @@ static int arq_event_loop_timeout_ms(void)
 
     if (is_connected_state_locked())
     {
-        if (arq_ctx.waiting_ack)
-            arq_consider_deadline_s(arq_ctx.ack_deadline, &next_deadline_ms);
-        if (arq_ctx.turn_req_in_flight)
-            arq_consider_deadline_s(arq_ctx.turn_req_deadline, &next_deadline_ms);
-        if (arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT)
-            arq_consider_deadline_s(arq_ctx.mode_req_deadline, &next_deadline_ms);
+        if (arq_ctx.waiting_ack && arq_ctx.ack_deadline > 0)
+        {
+            uint64_t ack_deadline_ms = (uint64_t)arq_ctx.ack_deadline * 1000ULL;
+            if (arq_ctx.next_role_tx_at > ack_deadline_ms)
+                ack_deadline_ms = arq_ctx.next_role_tx_at;
+            arq_consider_deadline_ms(ack_deadline_ms, &next_deadline_ms);
+        }
+        if (arq_ctx.turn_req_in_flight && arq_ctx.turn_req_deadline > 0)
+        {
+            uint64_t turn_deadline_ms = (uint64_t)arq_ctx.turn_req_deadline * 1000ULL;
+            if (arq_ctx.next_role_tx_at > turn_deadline_ms)
+                turn_deadline_ms = arq_ctx.next_role_tx_at;
+            arq_consider_deadline_ms(turn_deadline_ms, &next_deadline_ms);
+        }
+        if (!arq_ctx.waiting_ack &&
+            !arq_ctx.payload_start_pending &&
+            arq_ctx.mode_fsm == ARQ_MODE_FSM_REQ_IN_FLIGHT &&
+            arq_ctx.mode_req_deadline > 0)
+        {
+            uint64_t mode_deadline_ms = (uint64_t)arq_ctx.mode_req_deadline * 1000ULL;
+            if (arq_ctx.next_role_tx_at > mode_deadline_ms)
+                mode_deadline_ms = arq_ctx.next_role_tx_at;
+            arq_consider_deadline_ms(mode_deadline_ms, &next_deadline_ms);
+        }
 
         if (arq_ctx.keepalive_waiting)
         {
@@ -973,7 +991,7 @@ static int ack_timeout_s_for_mode(int mode)
     case FREEDV_MODE_DATAC3:
         return 10;
     case FREEDV_MODE_DATAC4:
-        return 9;
+        return 6;
     default:
         return 6;
     }
