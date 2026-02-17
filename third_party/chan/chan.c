@@ -245,10 +245,24 @@ static int buffered_chan_send(chan_t* chan, void* data)
     pthread_mutex_lock(&chan->m_mu);
     while (chan->queue->size == chan->queue->capacity)
     {
+        if (chan->closed)
+        {
+            pthread_mutex_unlock(&chan->m_mu);
+            errno = EPIPE;
+            return -1;
+        }
+
         // Block until something is removed.
         chan->w_waiting++;
         pthread_cond_wait(&chan->w_cond, &chan->m_mu);
         chan->w_waiting--;
+    }
+
+    if (chan->closed)
+    {
+        pthread_mutex_unlock(&chan->m_mu);
+        errno = EPIPE;
+        return -1;
     }
 
     int success = queue_add(chan->queue, data);

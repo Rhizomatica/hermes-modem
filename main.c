@@ -375,7 +375,18 @@ int main(int argc, char *argv[])
     broadcast_run(&g_modem);
 
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
-    interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame);
+    if (interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame) != EXIT_SUCCESS)
+    {
+        fprintf(stderr, "Failed to initialize TCP interfaces.\n");
+        shutdown_ = true;
+        interfaces_shutdown();
+        if (audio_system != AUDIO_SUBSYSTEM_SHM)
+            audioio_deinit(&radio_capture, &radio_playback);
+        shutdown_modem(&g_modem);
+        HLOGI("main", "Shutting down");
+        hermes_log_shutdown();
+        return EXIT_FAILURE;
+    }
 
 
     // we block somewhere here until shutdown
