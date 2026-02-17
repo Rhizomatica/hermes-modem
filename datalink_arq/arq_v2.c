@@ -173,7 +173,6 @@ typedef struct {
     bool pending_turn_ack;
     bool turn_promote_after_ack;
     bool turn_ack_deferred;
-    bool turn_ack_promote_pending;
     bool pending_mode_req;
     bool pending_mode_ack;
     uint8_t pending_mode;
@@ -1145,7 +1144,6 @@ static void become_iss_locked(const char *reason)
     time_t now = time(NULL);
 
     arq_ctx.turn_role = ARQ_TURN_ISS;
-    arq_ctx.turn_ack_promote_pending = false;
     arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
     arq_ctx.payload_start_pending = true;
     arq_ctx.startup_acks_left = ARQ_STARTUP_ACKS_REQUIRED;
@@ -1160,7 +1158,6 @@ static void become_iss_locked(const char *reason)
 static void become_irs_locked(const char *reason)
 {
     arq_ctx.turn_role = ARQ_TURN_IRS;
-    arq_ctx.turn_ack_promote_pending = false;
     arq_ctx.waiting_ack = false;
     arq_ctx.outstanding_frame_len = 0;
     arq_ctx.outstanding_app_len = 0;
@@ -1861,7 +1858,6 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.pending_turn_ack = false;
     arq_ctx.turn_promote_after_ack = false;
     arq_ctx.turn_ack_deferred = false;
-    arq_ctx.turn_ack_promote_pending = false;
     arq_ctx.pending_mode_req = false;
     arq_ctx.pending_mode_ack = false;
     arq_ctx.pending_mode = 0;
@@ -1992,7 +1988,6 @@ static void enter_connected_locked(void)
     arq_ctx.pending_turn_ack = false;
     arq_ctx.turn_promote_after_ack = false;
     arq_ctx.turn_ack_deferred = false;
-    arq_ctx.turn_ack_promote_pending = false;
     arq_ctx.pending_flow_hint = false;
     arq_ctx.last_flow_hint_sent = -1;
     arq_ctx.peer_backlog_nonzero = (arq_ctx.role == ARQ_ROLE_CALLEE);
@@ -2026,7 +2021,6 @@ static void start_outgoing_call_locked(void)
     arq_ctx.pending_ack = false;
     arq_ctx.pending_ack_set_ms = 0;
     arq_ctx.turn_ack_deferred = false;
-    arq_ctx.turn_ack_promote_pending = false;
     arq_ctx.pending_disconnect = false;
     arq_ctx.pending_keepalive = false;
     arq_ctx.pending_keepalive_ack = false;
@@ -2122,17 +2116,6 @@ static bool do_slot_tx_locked(time_t now)
     if (defer_tx_if_busy_locked(now))
         return false;
     apply_deferred_payload_mode_locked();
-
-    if (arq_ctx.turn_ack_promote_pending &&
-        arq_ctx.turn_role == ARQ_TURN_IRS &&
-        !arq_ctx.pending_turn_ack &&
-        !arq_ctx.waiting_ack &&
-        arq_ctx.outstanding_frame_len == 0 &&
-        size_buffer(data_tx_buffer_arq_control) == 0)
-    {
-        arq_ctx.turn_ack_promote_pending = false;
-        become_iss_locked("turn ack sent");
-    }
 
     if (arq_ctx.turn_ack_deferred &&
         !arq_ctx.waiting_ack &&
@@ -2238,8 +2221,8 @@ static bool do_slot_tx_locked(time_t now)
         if (send_turn_control_locked(ARQ_SUBTYPE_TURN_ACK, has_data) == 0)
         {
             arq_ctx.pending_turn_ack = false;
-            arq_ctx.turn_ack_promote_pending =
-                arq_ctx.turn_promote_after_ack && has_data;
+            if (arq_ctx.turn_promote_after_ack && has_data)
+                become_iss_locked("turn ack");
             arq_ctx.turn_promote_after_ack = false;
             update_connected_state_from_turn_locked();
             schedule_next_tx_locked(now, false);
@@ -3391,7 +3374,6 @@ static void handle_control_frame_locked(uint8_t subtype,
             arq_ctx.last_peer_payload_rx = 0;
             arq_ctx.pending_turn_ack = true;
             arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
-            arq_ctx.turn_ack_promote_pending = false;
             arq_fsm.current = state_turn_negotiating;
             schedule_immediate_control_tx_locked(now, "turn req");
         }
@@ -3406,7 +3388,6 @@ static void handle_control_frame_locked(uint8_t subtype,
         if (!arq_ctx.turn_req_in_flight)
             return;
         arq_ctx.turn_req_in_flight = false;
-        arq_ctx.turn_ack_promote_pending = false;
         arq_ctx.turn_req_retries_left = 0;
         arq_ctx.peer_backlog_nonzero = payload_len > 0 && payload[0] != 0;
         arq_ctx.last_peer_payload_rx = arq_ctx.peer_backlog_nonzero ? now : 0;
@@ -3576,7 +3557,6 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
             arq_ctx.pending_turn_ack = false;
             arq_ctx.turn_promote_after_ack = false;
             arq_ctx.turn_ack_deferred = false;
-            arq_ctx.turn_ack_promote_pending = false;
             arq_ctx.peer_backlog_nonzero = false;
             arq_ctx.last_peer_payload_rx = 0;
             schedule_immediate_control_tx_locked(now, "connect call");
