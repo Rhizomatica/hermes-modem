@@ -115,6 +115,7 @@ static void *log_worker(void *arg)
             entry = g_log.entries[g_log.head];
             g_log.head = (g_log.head + 1) % g_log.capacity;
             g_log.count--;
+            pthread_cond_signal(&g_log.cond);
             have_entry = true;
         }
         else if (!g_log.running)
@@ -225,10 +226,10 @@ void hermes_logf(hermes_log_level_t level, const char *component, const char *fm
     hermes_log_entry_t entry;
     va_list ap;
 
-    if (level < atomic_load_explicit(&g_log.min_level, memory_order_relaxed))
+    if (!fmt)
         return;
 
-    if (!g_log.initialized || !g_log.running || !fmt)
+    if (level < atomic_load_explicit(&g_log.min_level, memory_order_relaxed))
         return;
 
     clock_gettime(CLOCK_REALTIME, &entry.ts);
@@ -239,15 +240,18 @@ void hermes_logf(hermes_log_level_t level, const char *component, const char *fm
     vsnprintf(entry.message, sizeof(entry.message), fmt, ap);
     va_end(ap);
 
-    if (pthread_mutex_trylock(&g_log.lock) != 0)
+    pthread_mutex_lock(&g_log.lock);
+    if (!g_log.initialized || !g_log.running || !g_log.entries || g_log.capacity == 0)
     {
-        atomic_fetch_add_explicit(&g_log.dropped, 1, memory_order_relaxed);
+        pthread_mutex_unlock(&g_log.lock);
         return;
     }
 
-    if (!g_log.running || g_log.count >= g_log.capacity)
+    while (g_log.running && g_log.count >= g_log.capacity)
+        pthread_cond_wait(&g_log.cond, &g_log.lock);
+
+    if (!g_log.initialized || !g_log.running || !g_log.entries || g_log.capacity == 0)
     {
-        atomic_fetch_add_explicit(&g_log.dropped, 1, memory_order_relaxed);
         pthread_mutex_unlock(&g_log.lock);
         return;
     }
