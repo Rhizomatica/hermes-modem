@@ -245,11 +245,14 @@ static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool r
     return mode;
 }
 
-static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode, int arq_trx)
+static int maybe_switch_modem_mode(generic_modem_t *g_modem,
+                                   int target_mode,
+                                   int arq_trx,
+                                   bool force_now)
 {
     if (!is_supported_split_mode(target_mode))
         return 0;
-    if (arq_trx == TX)
+    if (arq_trx == TX && !force_now)
         return 0;
 
     pthread_mutex_lock(&modem_freedv_lock);
@@ -260,7 +263,9 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem, int target_mode, in
         return 0;
     }
     uint64_t now_ms = monotonic_ms();
-    if (modem_last_switch_ms != 0 && (now_ms - modem_last_switch_ms) < 250)
+    if (!force_now &&
+        modem_last_switch_ms != 0 &&
+        (now_ms - modem_last_switch_ms) < 250)
     {
         pthread_mutex_unlock(&modem_freedv_lock);
         return 0;
@@ -1000,7 +1005,7 @@ void *tx_thread(void *g_modem)
         {
             int desired_mode = arq_snapshot.preferred_tx_mode;
             if (desired_mode >= 0)
-                maybe_switch_modem_mode(modem, desired_mode, arq_snapshot.trx);
+                maybe_switch_modem_mode(modem, desired_mode, arq_snapshot.trx, false);
         }
 
         size_t payload_bytes_per_modem_frame = 0;
@@ -1050,9 +1055,8 @@ void *tx_thread(void *g_modem)
             cbuf_handle_t action_buffer = NULL;
             size_t action_frame_size = payload_bytes_per_modem_frame;
             if (action.mode >= 0 &&
-                arq_policy_ready &&
-                arq_snapshot.trx != TX)
-                maybe_switch_modem_mode(modem, action.mode, arq_snapshot.trx);
+                arq_policy_ready)
+                maybe_switch_modem_mode(modem, action.mode, RX, true);
 
             pthread_mutex_lock(&modem_freedv_lock);
             action_frame_size = modem->payload_bytes_per_modem_frame;
