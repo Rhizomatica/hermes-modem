@@ -854,7 +854,17 @@ static int arq_event_loop_timeout_ms(void)
         {
             arq_consider_deadline_s(arq_ctx.keepalive_deadline, &next_deadline_ms);
         }
-        else if (arq_ctx.role == ARQ_ROLE_CALLER && arq_ctx.keepalive_interval_s > 0)
+        else if (arq_ctx.role == ARQ_ROLE_CALLER &&
+                 arq_ctx.keepalive_interval_s > 0 &&
+                 !arq_ctx.payload_start_pending &&
+                 !arq_ctx.waiting_ack &&
+                 arq_ctx.app_tx_len == 0 &&
+                 !arq_ctx.pending_ack &&
+                 !arq_ctx.pending_accept &&
+                 !arq_ctx.pending_call &&
+                 !arq_ctx.pending_disconnect &&
+                 !arq_ctx.pending_keepalive &&
+                 !arq_ctx.pending_keepalive_ack)
         {
             time_t last_link_activity = arq_ctx.last_keepalive_tx;
             if (arq_ctx.last_keepalive_rx > last_link_activity)
