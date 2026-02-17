@@ -126,8 +126,9 @@ static const char *mode_name_from_enum(int mode)
 
 static struct freedv *open_freedv_mode_locked(int mode)
 {
-    char codename[80] = "H_256_512_4";
-    struct freedv_advanced adv = {0, 2, 100, 8000, 1000, 200, codename};
+    // char codename[80] = "H_256_512_4";
+    char codename[80] = "H_256_768_22";
+    struct freedv_advanced adv = {0, 4, 50, 8000, 750, 250, codename};
 
     if (mode == FREEDV_MODE_FSK_LDPC)
         return freedv_open_advanced(mode, &adv);
@@ -538,7 +539,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     int samples_silence = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
     if (freedv_get_mode(freedv) == FREEDV_MODE_FSK_LDPC)
     {
-        int fsk_settle_samples = 2 * freedv_get_n_max_modem_samples(freedv);
+        int fsk_settle_samples = freedv_get_n_nom_modem_samples(freedv);
         if (fsk_settle_samples > samples_silence)
             samples_silence = fsk_settle_samples;
     }
