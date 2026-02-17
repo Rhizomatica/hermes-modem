@@ -20,7 +20,7 @@ Usage modes:
 
 Options:
  -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.
- -m [mode_index]            Startup payload mode index shown in "-l" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3).
+ -m [mode_index]            Startup payload mode index shown in "-l" output. Sets broadcast/test mode. Default is 1 (DATAC3).
  -s [mode_index]            Legacy alias for -m.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
@@ -34,6 +34,10 @@ Options:
  -r                         Test RX mode.
  -h                         Prints this help.
 ```
+
+Mode behavior notes:
+- `-m` / `-s` affects **broadcast** and **test** modes only.
+- During an active ARQ link, control frames use DATAC13 and ARQ payload starts in DATAC4 (then may adapt to DATAC3/DATAC1).
 
 ## Compilation
 
