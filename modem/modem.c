@@ -996,12 +996,14 @@ void *tx_thread(void *g_modem)
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
         size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
         int pending_arq_app = have_arq_snapshot ? arq_snapshot.tx_backlog_bytes : 0;
-        bool local_tx_queued =
+        bool arq_tx_queued =
             (pending_arq_app > 0) ||
             (pending_arq_data > 0) ||
-            (pending_arq_control > 0) ||
+            (pending_arq_control > 0);
+        bool local_tx_queued =
+            arq_tx_queued ||
             (pending_broadcast > 0);
-        if (arq_policy_ready && arq_snapshot.trx != TX && local_tx_queued)
+        if (arq_policy_ready && arq_snapshot.trx != TX && arq_tx_queued)
         {
             int desired_mode = arq_snapshot.preferred_tx_mode;
             if (desired_mode >= 0)
