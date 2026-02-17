@@ -612,9 +612,13 @@ int freedv_rx_fsk_ldpc_data(struct freedv *f, COMP demod_in[]) {
       for (int i = 0; i < 8; i++) seq |= f->rx_payload_bits[8 + i] << (7 - i);
     }
 
-    if (f->fsk_ldpc_state == 1)
+    if (f->fsk_ldpc_state == 1) {
       rx_status |=
           FREEDV_RX_SYNC; /* need this set before verbose logging fprintf() */
+      f->sync = 1;
+    } else {
+      f->sync = 0;
+    }
     if (((f->verbose == 1) && (rx_status & FREEDV_RX_BITS)) ||
         (f->verbose == 2)) {
       fprintf(stderr,
@@ -628,7 +632,12 @@ int freedv_rx_fsk_ldpc_data(struct freedv *f, COMP demod_in[]) {
     }
   } else {
     /* set RX_SYNC flag even if we don't perform frame processing */
-    if (f->fsk_ldpc_state == 1) rx_status |= FREEDV_RX_SYNC;
+    if (f->fsk_ldpc_state == 1) {
+      rx_status |= FREEDV_RX_SYNC;
+      f->sync = 1;
+    } else {
+      f->sync = 0;
+    }
   }
 
   return rx_status;
