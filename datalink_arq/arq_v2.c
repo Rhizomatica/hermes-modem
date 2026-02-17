@@ -740,13 +740,13 @@ static bool has_immediate_iss_payload_tx_work_locked(void)
         return false;
     if (arq_ctx.waiting_ack)
         return false;
+    if (arq_ctx.pending_turn_req || arq_ctx.turn_req_in_flight)
+        return false;
     if (arq_ctx.app_tx_len > 0)
         return true;
 
     return arq_ctx.app_tx_len == 0 &&
            arq_ctx.peer_backlog_nonzero &&
-           !arq_ctx.pending_turn_req &&
-           !arq_ctx.turn_req_in_flight &&
            arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE;
 }
 
@@ -2008,6 +2008,8 @@ static void queue_next_data_frame_locked(void)
         return;
     if (arq_ctx.waiting_ack)
         return;
+    if (arq_ctx.pending_turn_req || arq_ctx.turn_req_in_flight)
+        return;
     if (arq_ctx.app_tx_len == 0)
         return;
     if (arq_conn.mode != arq_ctx.payload_mode)
@@ -2287,6 +2289,8 @@ static bool do_slot_tx_locked(time_t now)
 
         if (arq_ctx.turn_role == ARQ_TURN_ISS &&
             !arq_ctx.waiting_ack &&
+            !arq_ctx.pending_turn_req &&
+            !arq_ctx.turn_req_in_flight &&
             arq_ctx.app_tx_len > 0)
         {
             queue_next_data_frame_locked();
@@ -3318,6 +3322,12 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.turn_req_retries_left = 0;
         arq_ctx.peer_backlog_nonzero = payload_len > 0 && payload[0] != 0;
         arq_ctx.last_peer_payload_rx = arq_ctx.peer_backlog_nonzero ? now : 0;
+        if (arq_ctx.waiting_ack || arq_ctx.outstanding_frame_len > 0)
+        {
+            HLOGD("arq", "Turn ACK defer role switch (waiting local ACK)");
+            mark_link_activity_locked(now);
+            return;
+        }
         if (arq_ctx.peer_backlog_nonzero)
             become_irs_locked("turn ack");
         else
