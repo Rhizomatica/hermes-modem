@@ -991,7 +991,7 @@ static int ack_timeout_s_for_mode(int mode)
     case FREEDV_MODE_DATAC3:
         return 10;
     case FREEDV_MODE_DATAC4:
-        return 6;
+        return 9;
     default:
         return 6;
     }
