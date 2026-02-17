@@ -536,6 +536,12 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     /* Inter-burst silence */
     int inter_burst_delay_ms = 200;
     int samples_silence = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
+    if (freedv_get_mode(freedv) == FREEDV_MODE_FSK_LDPC)
+    {
+        int fsk_settle_samples = 2 * freedv_get_n_max_modem_samples(freedv);
+        if (fsk_settle_samples > samples_silence)
+            samples_silence = fsk_settle_samples;
+    }
 
     /* Calculate max buffer size needed:
      * preamble + (frames * n_mod_out) + postamble + silence */
