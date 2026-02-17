@@ -144,6 +144,8 @@ typedef struct {
     bool disconnect_to_no_client;
     int disconnect_retries_left;
     time_t disconnect_deadline;
+    bool disconnect_after_flush;
+    bool disconnect_after_flush_to_no_client;
 
     size_t app_tx_len;
     uint8_t app_tx_queue[DATA_TX_BUFFER_SIZE];
@@ -677,8 +679,22 @@ static void arq_consider_deadline_ms(uint64_t deadline_ms, uint64_t *next_deadli
         *next_deadline_ms = deadline_ms;
 }
 
+static bool has_outbound_payload_pending_locked(void)
+{
+    return arq_ctx.app_tx_len > 0 ||
+           arq_ctx.waiting_ack ||
+           arq_ctx.outstanding_frame_len > 0 ||
+           arq_ctx.pending_payload_actions > 0;
+}
+
 static bool has_immediate_control_tx_work_locked(void)
 {
+    if (arq_ctx.disconnect_after_flush &&
+        !has_outbound_payload_pending_locked())
+    {
+        return true;
+    }
+
     if (arq_ctx.pending_disconnect ||
         arq_ctx.pending_call ||
         arq_ctx.pending_accept ||
@@ -1770,6 +1786,8 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.disconnect_to_no_client = false;
     arq_ctx.disconnect_retries_left = 0;
     arq_ctx.disconnect_deadline = 0;
+    arq_ctx.disconnect_after_flush = false;
+    arq_ctx.disconnect_after_flush_to_no_client = false;
     arq_ctx.app_tx_len = 0;
     arq_ctx.gear = 0;
     arq_ctx.success_streak = 0;
@@ -1835,15 +1853,43 @@ static void finalize_disconnect_locked(void)
 static void start_disconnect_locked(bool to_no_client)
 {
     time_t now = time(NULL);
+    bool effective_to_no_client = to_no_client || arq_ctx.disconnect_after_flush_to_no_client;
 
     arq_ctx.disconnect_in_progress = true;
-    arq_ctx.disconnect_to_no_client = to_no_client;
+    arq_ctx.disconnect_to_no_client = effective_to_no_client;
     arq_ctx.disconnect_retries_left = ARQ_DISCONNECT_RETRY_SLOTS + 1;
     arq_ctx.pending_disconnect = true;
     arq_ctx.disconnect_deadline = now + (arq_ctx.slot_len_s * 2) + 2;
+    arq_ctx.disconnect_after_flush = false;
+    arq_ctx.disconnect_after_flush_to_no_client = false;
     arq_ctx.next_role_tx_at = arq_realtime_ms();
     arq_fsm.current = state_disconnecting;
-    HLOGI("arq", "Disconnect start (to_no_client=%d)", to_no_client ? 1 : 0);
+    HLOGI("arq", "Disconnect start (to_no_client=%d)", effective_to_no_client ? 1 : 0);
+}
+
+static void request_disconnect_locked(bool to_no_client, const char *reason)
+{
+    if (arq_fsm.current == state_disconnecting)
+    {
+        if (to_no_client)
+            arq_ctx.disconnect_to_no_client = true;
+        return;
+    }
+
+    if (has_outbound_payload_pending_locked())
+    {
+        arq_ctx.disconnect_after_flush = true;
+        if (to_no_client)
+            arq_ctx.disconnect_after_flush_to_no_client = true;
+        HLOGI("arq", "Disconnect deferred (%s): backlog=%zu waiting_ack=%d actions=%zu",
+              reason ? reason : "request",
+              arq_ctx.app_tx_len,
+              arq_ctx.waiting_ack ? 1 : 0,
+              arq_ctx.pending_payload_actions);
+        return;
+    }
+
+    start_disconnect_locked(to_no_client);
 }
 
 static void enter_connected_locked(void)
@@ -1867,6 +1913,8 @@ static void enter_connected_locked(void)
     arq_ctx.disconnect_in_progress = false;
     arq_ctx.disconnect_retries_left = 0;
     arq_ctx.disconnect_deadline = 0;
+    arq_ctx.disconnect_after_flush = false;
+    arq_ctx.disconnect_after_flush_to_no_client = false;
     arq_ctx.connect_deadline = 0;
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
@@ -1941,6 +1989,8 @@ static void start_outgoing_call_locked(void)
     arq_ctx.disconnect_to_no_client = false;
     arq_ctx.disconnect_retries_left = 0;
     arq_ctx.disconnect_deadline = 0;
+    arq_ctx.disconnect_after_flush = false;
+    arq_ctx.disconnect_after_flush_to_no_client = false;
     arq_ctx.next_role_tx_at = arq_realtime_ms();
     arq_ctx.remote_busy_until = 0;
     arq_ctx.connect_deadline = now + (retry_interval_s * (arq_ctx.max_call_retries + 1)) + ARQ_CONNECT_GRACE_SLOTS;
@@ -2014,6 +2064,14 @@ static bool do_slot_tx_locked(time_t now)
     if (defer_tx_if_busy_locked(now))
         return false;
     apply_deferred_payload_mode_locked();
+
+    if (arq_ctx.disconnect_after_flush &&
+        !arq_ctx.pending_disconnect &&
+        !has_outbound_payload_pending_locked())
+    {
+        bool to_no_client = arq_ctx.disconnect_after_flush_to_no_client;
+        start_disconnect_locked(to_no_client);
+    }
 
     if (arq_ctx.pending_disconnect)
     {
@@ -2332,10 +2390,10 @@ static void state_calling_wait_accept(int event)
         arq_conn.listen = false;
         break;
     case EV_LINK_DISCONNECT:
-        start_disconnect_locked(false);
+        request_disconnect_locked(false, "link request");
         break;
     case EV_CLIENT_DISCONNECT:
-        start_disconnect_locked(true);
+        request_disconnect_locked(true, "client disconnect");
         break;
     default:
         break;
@@ -2353,10 +2411,10 @@ static void state_connected_common(int event)
         arq_conn.listen = false;
         break;
     case EV_LINK_DISCONNECT:
-        start_disconnect_locked(false);
+        request_disconnect_locked(false, "link request");
         break;
     case EV_CLIENT_DISCONNECT:
-        start_disconnect_locked(true);
+        request_disconnect_locked(true, "client disconnect");
         break;
     default:
         break;
