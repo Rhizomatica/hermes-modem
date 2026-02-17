@@ -65,11 +65,12 @@ bool shutdown_ = false; // global shutdown flag
 static void print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -s [modulation_config] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
-    printf(" -s [mode_index]            Selects modem mode by index shown in \"-l\" output. Default is 1 (DATAC3)\n");
+    printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
+    printf(" -s [mode_index]            Legacy alias for -m.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
@@ -100,7 +101,7 @@ int main(int argc, char *argv[])
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
-    int mod_config = FREEDV_MODE_DATAC3;
+    int startup_payload_mode = FREEDV_MODE_DATAC3;
     
     input_dev[0] = 0;
     output_dev[0] = 0;
@@ -109,7 +110,7 @@ int main(int argc, char *argv[])
 
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:li:o:x:p:b:zvtr")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:li:o:x:p:b:zvtr")) != -1)
     {
         switch (opt)
         {
@@ -161,17 +162,18 @@ int main(int argc, char *argv[])
             list_sndcards = true;
             break;
         case 's':
+        case 'm':
             if (optarg)
             {
                 char *endptr = NULL;
                 long mode_index = strtol(optarg, &endptr, 10);
                 if (endptr == optarg || *endptr != '\0' || mode_index < 0 || mode_index >= mode_count)
                 {
-                    fprintf(stderr, "Invalid -s index '%s'. Use -l to list valid mode indexes (0..%d).\n",
+                    fprintf(stderr, "Invalid mode index '%s'. Use -l to list valid mode indexes (0..%d).\n",
                             optarg, mode_count - 1);
                     return EXIT_FAILURE;
                 }
-                mod_config = freedv_modes[(int)mode_index];
+                startup_payload_mode = freedv_modes[(int)mode_index];
             }
             break;
         case 'l':
@@ -361,7 +363,7 @@ int main(int argc, char *argv[])
     }
 
     printf("Initializing Modem\n");
-    init_modem(&g_modem, mod_config, 1, test_mode); // frames per burst is 1 for now
+    init_modem(&g_modem, startup_payload_mode, 1, test_mode); // frames per burst is 1 for now
     
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {

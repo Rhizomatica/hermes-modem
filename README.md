@@ -15,12 +15,13 @@ on David Rowe's FreeDV modem, while support for other modems, as Mercury, will c
 
 ```
 Usage modes: 
-./mercury -s [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]
+./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]
 ./mercury [-h -l -z]
 
 Options:
  -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.
- -s [mode_index]            Selects modem mode by index shown in "-l" output. Default is 1 (DATAC3).
+ -m [mode_index]            Startup payload mode index shown in "-l" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3).
+ -s [mode_index]            Legacy alias for -m.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
  -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.
