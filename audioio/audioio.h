@@ -35,7 +35,7 @@ extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
 
-int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
+int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, int capture_channel_layout, pthread_t *radio_capture,
 						  pthread_t *radio_playback);
 
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);

@@ -15,13 +15,15 @@ on David Rowe's FreeDV modem, while support for other modems, as Mercury, will c
 
 ```
 Usage modes: 
-./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]
+./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel]
 ./mercury [-h -l -z]
 
 Options:
  -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.
  -m [mode_index]            Startup payload mode index shown in "-l" output. Sets broadcast/test mode. Default is 1 (DATAC3).
  -s [mode_index]            Legacy alias for -m.
+ -f [freedv_verbosity]      FreeDV modem verbosity level (0..3). Default is 0.
+ -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
  -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.
@@ -38,6 +40,7 @@ Options:
 Mode behavior notes:
 - `-m` / `-s` affects **broadcast** and **test** modes only.
 - During an active ARQ link, control frames use DATAC13 and ARQ payload starts in DATAC4 (then may adapt to DATAC3/DATAC1).
+- `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
 
 ## Compilation
 

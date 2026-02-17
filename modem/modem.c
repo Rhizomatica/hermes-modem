@@ -126,7 +126,9 @@ static const char *mode_name_from_enum(int mode)
 
 static struct freedv *open_freedv_mode_locked(int mode)
 {
+    // Was:
     // char codename[80] = "H_256_512_4";
+    // struct freedv_advanced adv = {0, 2, 100, 8000, 1000, 200, codename};
     char codename[80] = "H_256_768_22";
     struct freedv_advanced adv = {0, 4, 50, 8000, 750, 250, codename};
 
@@ -144,28 +146,28 @@ static void clear_mode_pool_locked(void)
     memset(&modem_mode_pool, 0, sizeof(modem_mode_pool));
 }
 
-static int pool_open_mode_locked(struct freedv **slot, size_t *payload_slot, int mode, int frames_per_burst)
+static int pool_open_mode_locked(struct freedv **slot, size_t *payload_slot, int mode, int frames_per_burst, int freedv_verbosity)
 {
     struct freedv *f = open_freedv_mode_locked(mode);
     if (!f)
         return -1;
     freedv_set_frames_per_burst(f, frames_per_burst);
-    freedv_set_verbose(f, 0);
+    freedv_set_verbose(f, freedv_verbosity);
     *slot = f;
     *payload_slot = (freedv_get_bits_per_modem_frame(f) / 8) - 2;
     return 0;
 }
 
-static int init_mode_pool_locked(int frames_per_burst)
+static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
 {
     clear_mode_pool_locked();
-    if (pool_open_mode_locked(&modem_mode_pool.datac13, &modem_mode_pool.payload_datac13, FREEDV_MODE_DATAC13, frames_per_burst) < 0)
+    if (pool_open_mode_locked(&modem_mode_pool.datac13, &modem_mode_pool.payload_datac13, FREEDV_MODE_DATAC13, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac4, &modem_mode_pool.payload_datac4, FREEDV_MODE_DATAC4, frames_per_burst) < 0)
+    if (pool_open_mode_locked(&modem_mode_pool.datac4, &modem_mode_pool.payload_datac4, FREEDV_MODE_DATAC4, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac3, &modem_mode_pool.payload_datac3, FREEDV_MODE_DATAC3, frames_per_burst) < 0)
+    if (pool_open_mode_locked(&modem_mode_pool.datac3, &modem_mode_pool.payload_datac3, FREEDV_MODE_DATAC3, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac1, &modem_mode_pool.payload_datac1, FREEDV_MODE_DATAC1, frames_per_burst) < 0)
+    if (pool_open_mode_locked(&modem_mode_pool.datac1, &modem_mode_pool.payload_datac1, FREEDV_MODE_DATAC1, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
     return 0;
 fail:
@@ -291,7 +293,7 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem,
     return 1;
 }
 
-int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode)
+int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode, int freedv_verbosity)
 {
 // connect to shared memory buffers
 try_shm_connect1:
@@ -330,7 +332,7 @@ try_shm_connect2:
     printf("Created data buffers for ARQ and BROADCAST datalink, tx/rx paths.\n");
 
     pthread_mutex_lock(&modem_freedv_lock);
-    if (init_mode_pool_locked(frames_per_burst) < 0)
+    if (init_mode_pool_locked(frames_per_burst, freedv_verbosity) < 0)
     {
         pthread_mutex_unlock(&modem_freedv_lock);
         fprintf(stderr, "Failed to initialize persistent FreeDV pool\n");
@@ -349,7 +351,7 @@ try_shm_connect2:
             return -1;
         }
         freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
-        freedv_set_verbose(g_modem->freedv, 0);
+        freedv_set_verbose(g_modem->freedv, freedv_verbosity);
         payload_bytes_per_modem_frame = (freedv_get_bits_per_modem_frame(g_modem->freedv) / 8) - 2;
     }
     pthread_mutex_unlock(&modem_freedv_lock);
@@ -359,7 +361,7 @@ try_shm_connect2:
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     printf("Initialized persistent FreeDV mode pool (DATAC13/DATAC4/DATAC3/DATAC1), frames per burst: %d\n", frames_per_burst);
-    printf("Active FreeDV mode at startup: %d (%s), verbosity: %d\n", mode, mode_name_from_enum(mode), 0);
+    printf("Active FreeDV mode at startup: %d (%s), verbosity: %d\n", mode, mode_name_from_enum(mode), freedv_verbosity);
     printf("Modem expects sample rate: %d Hz\n", modem_sample_rate);
     printf("Modem payload bytes per frame: %zu\n", payload_bytes_per_modem_frame);
     printf("Split control/data mode switching: ENABLED\n");

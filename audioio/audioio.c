@@ -31,6 +31,7 @@ cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
+static int capture_input_channel_layout = LEFT;
 
 struct conf {
     const char *cmd;
@@ -381,7 +382,7 @@ void *radio_capture_thread(void *device_ptr)
     if (radio_type == RADIO_STOCKHF)
         ch_layout = STEREO;
 #endif
-    ch_layout = LEFT;
+    ch_layout = capture_input_channel_layout;
 
     static int resample_remainder = 0;  // Track fractional samples for accurate resampling
     
@@ -570,10 +571,16 @@ int rx_transfer(double *buffer, size_t len)
 }
 #endif
 
-int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
+int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, int capture_channel_layout, pthread_t *radio_capture,
                           pthread_t *radio_playback)
 {
     audio_subsystem = audio_subsys;
+    if (capture_channel_layout == LEFT ||
+        capture_channel_layout == RIGHT ||
+        capture_channel_layout == STEREO)
+        capture_input_channel_layout = capture_channel_layout;
+    else
+        capture_input_channel_layout = LEFT;
 
 #if defined(_WIN32)
     uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);

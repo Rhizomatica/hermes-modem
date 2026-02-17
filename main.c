@@ -62,15 +62,30 @@ char *freedv_mode_names[] = { "DATAC1",
 
 bool shutdown_ = false; // global shutdown flag
 
+static int parse_rx_channel_layout(const char *value)
+{
+    if (!value)
+        return -1;
+    if (!strcmp(value, "left") || !strcmp(value, "LEFT"))
+        return LEFT;
+    if (!strcmp(value, "right") || !strcmp(value, "RIGHT"))
+        return RIGHT;
+    if (!strcmp(value, "stereo") || !strcmp(value, "STEREO"))
+        return STEREO;
+    return -1;
+}
+
 static void print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
     printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
     printf(" -s [mode_index]            Legacy alias for -m.\n");
+    printf(" -f [freedv_verbosity]      FreeDV modem verbosity level (0..3). Default is 0.\n");
+    printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
@@ -102,6 +117,8 @@ int main(int argc, char *argv[])
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
     int startup_payload_mode = FREEDV_MODE_DATAC3;
+    int freedv_verbosity = 0;
+    int rx_input_channel = LEFT;
     
     input_dev[0] = 0;
     output_dev[0] = 0;
@@ -110,7 +127,7 @@ int main(int argc, char *argv[])
 
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:li:o:x:p:b:zvtr")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtr")) != -1)
     {
         switch (opt)
         {
@@ -131,6 +148,31 @@ int main(int argc, char *argv[])
         case 'c':
             if (optarg)
                 cpu_nr = atoi(optarg);
+            break;
+        case 'f':
+            if (optarg)
+            {
+                char *endptr = NULL;
+                long verbosity = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || verbosity < 0 || verbosity > 3)
+                {
+                    fprintf(stderr, "Invalid FreeDV verbosity '%s'. Valid range is 0..3.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                freedv_verbosity = (int)verbosity;
+            }
+            break;
+        case 'k':
+            if (optarg)
+            {
+                int parsed_layout = parse_rx_channel_layout(optarg);
+                if (parsed_layout < 0)
+                {
+                    fprintf(stderr, "Invalid RX input channel '%s'. Use left, right, or stereo.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                rx_input_channel = parsed_layout;
+            }
             break;
         case 'p':
             if (optarg)
@@ -208,9 +250,10 @@ int main(int argc, char *argv[])
                 return 1;
             }
 
-            if (verbose) {
+            if (freedv_verbosity > 0)
+                freedv_set_verbose(freedv, freedv_verbosity);
+            else if (verbose)
                 freedv_set_verbose(freedv, 2);
-            }
 
             size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
             size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2; /* 16 bits used for the CRC */
@@ -359,11 +402,11 @@ int main(int argc, char *argv[])
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         printf("Initializing I/O from Sound Card\n");
-        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
+        audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
     printf("Initializing Modem\n");
-    init_modem(&g_modem, startup_payload_mode, 1, test_mode); // frames per burst is 1 for now
+    init_modem(&g_modem, startup_payload_mode, 1, test_mode, freedv_verbosity); // frames per burst is 1 for now
     
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
