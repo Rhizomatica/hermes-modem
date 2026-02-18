@@ -283,8 +283,8 @@ enum {
 #define ARQ_ACCEPT_RETRY_SLOTS 3
 #define ARQ_DATA_RETRY_SLOTS 6
 #define ARQ_CONNECT_GRACE_SLOTS 2
-#define ARQ_CHANNEL_GUARD_MS 200
-#define ARQ_ACK_REPLY_EXTRA_GUARD_MS 300
+#define ARQ_CHANNEL_GUARD_MS 400
+#define ARQ_ACK_REPLY_EXTRA_GUARD_MS 400
 #define ARQ_ACK_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
@@ -1137,7 +1137,7 @@ static int ack_timeout_s_for_mode(int mode)
     case FREEDV_MODE_DATAC3:
         return 10;
     case FREEDV_MODE_DATAC4:
-        return 8;
+        return 9;
     default:
         return 6;
     }
@@ -1572,7 +1572,7 @@ static int payload_mode_for_frame_size(size_t frame_size)
         return FREEDV_MODE_DATAC1;
     if (frame_size >= 126)
         return FREEDV_MODE_DATAC3;
-    if (frame_size >= 56)
+    if (frame_size >= 54)
         return FREEDV_MODE_DATAC4;
     return 0;
 }
@@ -1589,7 +1589,7 @@ static size_t frame_size_for_payload_mode(int mode)
     case FREEDV_MODE_DATAC3:
         return 126;
     case FREEDV_MODE_DATAC4:
-        return 56;
+        return 54;
     case FREEDV_MODE_DATAC13:
         return ARQ_CONTROL_FRAME_SIZE;
     default:
@@ -2360,6 +2360,7 @@ static void start_outgoing_call_locked(void)
     mode_fsm_reset_locked("new call");
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
+    arq_ctx.peer_backlog_nonzero = false;
     arq_ctx.last_peer_payload_rx = 0;
     arq_ctx.last_keepalive_rx = now;
     arq_ctx.last_keepalive_tx = now;
@@ -2372,6 +2373,14 @@ static void start_outgoing_call_locked(void)
     arq_ctx.disconnect_deadline = 0;
     arq_ctx.disconnect_after_flush = false;
     arq_ctx.disconnect_after_flush_to_no_client = false;
+    arq_ctx.pending_flow_hint = false;
+    arq_ctx.last_flow_hint_sent = -1;
+    arq_ctx.pending_turn_req = false;
+    arq_ctx.turn_req_in_flight = false;
+    arq_ctx.turn_req_retries_left = 0;
+    arq_ctx.turn_req_deadline = 0;
+    arq_ctx.pending_turn_ack = false;
+    arq_ctx.turn_promote_after_ack = false;
     arq_ctx.next_role_tx_at = arq_realtime_ms();
     arq_ctx.remote_busy_until = 0;
     arq_ctx.connect_deadline = now + (retry_interval_s * (arq_ctx.max_call_retries + 1)) + ARQ_CONNECT_GRACE_SLOTS;
