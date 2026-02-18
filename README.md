@@ -72,7 +72,14 @@ make doxygen-clean
   - `TX enabled (PTT ON)`
   - `TX disabled (PTT OFF)`
 
-## Authors
+## Physical Layer
+
+The HERMES modem uses the FreeDV modulator developed by David Rowe.
+
+## Author
 
 - Rafael Diniz (Rhizomatica, ARQ, Broadcast, TCP interface, etc)
-- David Rowe (FreeDV - physical layer)
+
+## LICENSE
+
+Please check LICENSE and LICENSE-freedv.
