@@ -72,7 +72,10 @@ make doxygen-clean
   - `TX enabled (PTT ON)`
   - `TX disabled (PTT OFF)`
 
-## Authors
+## Special Thanks to FreeDV Physical Layer Author
+
+- David Rowe (FreeDV - physical layer)
+
+## Author
 
 - Rafael Diniz (Rhizomatica, ARQ, Broadcast, TCP interface, etc)
-- David Rowe (FreeDV - physical layer)
