@@ -16,3 +16,5 @@ AR = ar
 endif
 
 COMMON_CFLAGS ?= -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE
+GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
+COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"

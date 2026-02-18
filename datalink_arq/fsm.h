@@ -52,18 +52,33 @@ extern const char* fsm_event_names[];
 }
 #endif
 
-// State function pointer type
+/** @brief State-handler function signature used by FSM dispatcher. */
 typedef void (*fsm_state)(int event);
 
-// Thread-safe FSM structure
+/** @brief Thread-safe finite-state machine wrapper. */
 typedef struct {
     fsm_state current;
     pthread_mutex_t lock;
 } fsm_handle;
 
-// Public API
+/**
+ * @brief Initialize FSM instance.
+ * @param fsm FSM handle.
+ * @param initial_state Initial state callback.
+ */
 void fsm_init(fsm_handle* fsm, fsm_state initial_state);
+
+/**
+ * @brief Dispatch an event into current FSM state.
+ * @param fsm FSM handle.
+ * @param event Event identifier.
+ */
 void fsm_dispatch(fsm_handle* fsm, int event);
+
+/**
+ * @brief Destroy FSM synchronization resources.
+ * @param fsm FSM handle.
+ */
 void fsm_destroy(fsm_handle* fsm);
 
 #endif // FSM_H

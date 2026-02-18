@@ -41,23 +41,31 @@ endif
 
 include config.mk
 
-.PHONY: all internal_deps clean
+.PHONY: all internal_deps utils clean doxygen doxygen-clean
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
+DOXYGEN ?= doxygen
+DOXYFILE ?= Doxyfile
+
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Ithird_party/chan
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
-all: mercury
+MERCURY_LINK_INPUTS = \
+	main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
+	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
+	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o
 
-mercury: internal_deps main.o 
+all: internal_deps utils
+	$(MAKE) mercury
+	$(MAKE) -C utils
+
+mercury: $(MERCURY_LINK_INPUTS)
 	$(CC) -o mercury  \
-		main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
-		modem/framer.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \
-		common/crc6.o data_interfaces/tcp_interfaces.o data_interfaces/net.o $(LDFLAGS)
+		$(MERCURY_LINK_INPUTS) $(LDFLAGS)
 
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c
-
 
 internal_deps:
 	$(MAKE) -C modem
@@ -69,10 +77,18 @@ internal_deps:
 
 
 clean:
-	rm -f mercury *.o
+	rm -f mercury *.o third_party/chan/*.o
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
 	$(MAKE) -C data_interfaces clean
 	$(MAKE) -C audioio clean
 	$(MAKE) -C common clean
+
+doxygen:
+	@command -v $(DOXYGEN) >/dev/null 2>&1 || { echo "ERROR: doxygen not found"; exit 1; }
+	mkdir -p docs
+	$(DOXYGEN) $(DOXYFILE)
+
+doxygen-clean:
+	rm -rf docs

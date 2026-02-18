@@ -30,3 +30,6 @@ Thumbs.db
 
 # FreeDV binaries
 modem/freedv/freedv_data_*
+utils/broadcast_diag_rx
+utils/broadcast_diag_tx
+utils/broadcast_test

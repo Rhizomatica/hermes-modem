@@ -1,0 +1,15 @@
+<map id="arq_bus_msg_t" name="arq_bus_msg_t">
+<area shape="rect" id="Node000001" title=" " alt="" coords="284,129,395,155"/>
+<area shape="rect" id="Node000002" href="$structarq__cmd__msg__t.html" title=" " alt="" coords="39,5,154,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="166,32,189,39,226,54,261,74,297,101,326,127,323,131,294,105,259,79,224,59,187,45,164,37"/>
+<area shape="rect" id="Node000003" href="$structarq__bytes__msg__t.html" title=" " alt="" coords="35,55,158,80"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="167,81,261,107,310,127,308,132,259,113,166,86"/>
+<area shape="rect" id="Node000004" href="$structarq__frame__msg__t.html" title=" " alt="" coords="35,104,158,129"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="172,122,284,134,283,139,172,127"/>
+<area shape="rect" id="Node000005" href="$structarq__tx__frame__msg__t.html" title=" " alt="" coords="26,153,167,179"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="181,164,260,158,291,152,292,157,260,163,181,169"/>
+<area shape="rect" id="Node000006" href="$structarq__modem__metrics__msg__t.html" title=" " alt="" coords="5,203,188,228"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="201,199,259,183,291,169,318,152,321,157,293,174,261,189,202,204"/>
+<area shape="rect" id="Node000007" href="$structarq__status__msg__t.html" title=" " alt="" coords="33,252,160,277"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="173,250,217,237,259,218,298,186,326,154,331,157,302,190,261,223,218,242,174,255"/>
+</map>

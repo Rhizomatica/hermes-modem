@@ -37,7 +37,7 @@ typedef struct generic_modem {
     void *future_extension; // Placeholder for future extensions
 } generic_modem_t;
 
-int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode);
+int init_modem(generic_modem_t *g_modem, int mode, int frames_per_burst, int test_mode, int freedv_verbosity);
 
 int run_tests_tx(generic_modem_t *g_modem);
 

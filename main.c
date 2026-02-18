@@ -19,6 +19,9 @@
  */
 
 #define VERSION__ "2.0.0alpha"
+#ifndef GIT_HASH
+#define GIT_HASH "unknown000"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +42,7 @@
 #include "defines_modem.h"
 #include "audioio/audioio.h"
 #include "tcp_interfaces.h"
+#include "hermes_log.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -61,14 +65,30 @@ char *freedv_mode_names[] = { "DATAC1",
 
 bool shutdown_ = false; // global shutdown flag
 
+static int parse_rx_channel_layout(const char *value)
+{
+    if (!value)
+        return -1;
+    if (!strcmp(value, "left") || !strcmp(value, "LEFT"))
+        return LEFT;
+    if (!strcmp(value, "right") || !strcmp(value, "RIGHT"))
+        return RIGHT;
+    if (!strcmp(value, "stereo") || !strcmp(value, "STEREO"))
+        return STEREO;
+    return -1;
+}
+
 static void print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -s [modulation_config] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
-    printf(" -s [modulation_config]     Sets modulation configuration for broadcasting. Modes: 0 to 6. Use \"-l\" for listing all available modulations. Default is 0 (DATAC1)\n");
+    printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
+    printf(" -s [mode_index]            Legacy alias for -m.\n");
+    printf(" -f [freedv_verbosity]      FreeDV modem verbosity level (0..3). Default is 0.\n");
+    printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
@@ -85,11 +105,12 @@ static void print_usage(const char *prog)
 int main(int argc, char *argv[])
 {
 #if defined(__linux__)
-    printf("\e[0;31mMercury Version %s\e[0m\n", VERSION__); // we go red
+    printf("\e[0;31mRhizomatica Mercury Version %s (git %.8s)\e[0m\n", VERSION__, GIT_HASH); // we go red
 #elif defined(_WIN32)
-    printf("Mercury Version %s\n", VERSION__);
+    printf("Rhizomatica Mercury Version %s (git %.8s)\n", VERSION__, GIT_HASH);
 #endif
     int verbose = 0;
+    const int mode_count = (int)(sizeof(freedv_modes) / sizeof(freedv_modes[0]));
     int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;
@@ -98,7 +119,9 @@ int main(int argc, char *argv[])
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
-    int mod_config = FREEDV_MODE_DATAC1;
+    int startup_payload_mode = FREEDV_MODE_DATAC3;
+    int freedv_verbosity = 0;
+    int rx_input_channel = LEFT;
     
     input_dev[0] = 0;
     output_dev[0] = 0;
@@ -107,7 +130,7 @@ int main(int argc, char *argv[])
 
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:li:o:x:p:b:zvtr")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtr")) != -1)
     {
         switch (opt)
         {
@@ -128,6 +151,31 @@ int main(int argc, char *argv[])
         case 'c':
             if (optarg)
                 cpu_nr = atoi(optarg);
+            break;
+        case 'f':
+            if (optarg)
+            {
+                char *endptr = NULL;
+                long verbosity = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || verbosity < 0 || verbosity > 3)
+                {
+                    fprintf(stderr, "Invalid FreeDV verbosity '%s'. Valid range is 0..3.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                freedv_verbosity = (int)verbosity;
+            }
+            break;
+        case 'k':
+            if (optarg)
+            {
+                int parsed_layout = parse_rx_channel_layout(optarg);
+                if (parsed_layout < 0)
+                {
+                    fprintf(stderr, "Invalid RX input channel '%s'. Use left, right, or stereo.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                rx_input_channel = parsed_layout;
+            }
             break;
         case 'p':
             if (optarg)
@@ -159,8 +207,19 @@ int main(int argc, char *argv[])
             list_sndcards = true;
             break;
         case 's':
+        case 'm':
             if (optarg)
-                mod_config = atoi(optarg);
+            {
+                char *endptr = NULL;
+                long mode_index = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || mode_index < 0 || mode_index >= mode_count)
+                {
+                    fprintf(stderr, "Invalid mode index '%s'. Use -l to list valid mode indexes (0..%d).\n",
+                            optarg, mode_count - 1);
+                    return EXIT_FAILURE;
+                }
+                startup_payload_mode = freedv_modes[(int)mode_index];
+            }
             break;
         case 'l':
             list_modes = true;
@@ -182,9 +241,9 @@ int main(int argc, char *argv[])
     if (list_modes)
     {
         printf("Available modulation modes:\n");
-        for (int i = 0; i < sizeof(freedv_modes) / sizeof(freedv_modes[0]); i++)
+        for (int i = 0; i < mode_count; i++)
         {
-            printf("Mode: %d\n", i);
+            printf("Mode index: %d\n", i);
             printf("Opening mode %s (%d)\n", freedv_mode_names[i], freedv_modes[i]);
 
             struct freedv *freedv = freedv_open(freedv_modes[i]);
@@ -194,9 +253,10 @@ int main(int argc, char *argv[])
                 return 1;
             }
 
-            if (verbose) {
+            if (freedv_verbosity > 0)
+                freedv_set_verbose(freedv, freedv_verbosity);
+            else if (verbose)
                 freedv_set_verbose(freedv, 2);
-            }
 
             size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
             size_t payload_bytes_per_modem_frame = bytes_per_modem_frame - 2; /* 16 bits used for the CRC */
@@ -329,24 +389,54 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }    
 
+    if (hermes_log_init(1024) == 0)
+    {
+        hermes_log_set_level(verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
+        HLOGI("main", "Async logger initialized (min_level=%s)", verbose ? "DEBUG" : "INFO");
+    }
+    else
+    {
+        fprintf(stderr, "Warning: async logger unavailable\n");
+    }
+
     generic_modem_t g_modem;
     pthread_t radio_capture, radio_playback;
     
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         printf("Initializing I/O from Sound Card\n");
-        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
+        audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
     printf("Initializing Modem\n");
-    init_modem(&g_modem, mod_config, 1, test_mode); // frames per burst is 1 for now
+    init_modem(&g_modem, startup_payload_mode, 1, test_mode, freedv_verbosity); // frames per burst is 1 for now
     
-    arq_init();
+    if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
+    {
+        fprintf(stderr, "Failed to initialize ARQ subsystem.\n");
+        shutdown_ = true;
+        if (audio_system != AUDIO_SUBSYSTEM_SHM)
+            audioio_deinit(&radio_capture, &radio_playback);
+        shutdown_modem(&g_modem);
+        hermes_log_shutdown();
+        return EXIT_FAILURE;
+    }
 
     broadcast_run(&g_modem);
 
     printf("Initializing TCP interfaces with base port %d and broadcast port %d\n", base_tcp_port, broadcast_port);
-    interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame);
+    if (interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame) != EXIT_SUCCESS)
+    {
+        fprintf(stderr, "Failed to initialize TCP interfaces.\n");
+        shutdown_ = true;
+        interfaces_shutdown();
+        if (audio_system != AUDIO_SUBSYSTEM_SHM)
+            audioio_deinit(&radio_capture, &radio_playback);
+        shutdown_modem(&g_modem);
+        HLOGI("main", "Shutting down");
+        hermes_log_shutdown();
+        return EXIT_FAILURE;
+    }
 
 
     // we block somewhere here until shutdown
@@ -356,6 +446,8 @@ int main(int argc, char *argv[])
     }
 
     shutdown_modem(&g_modem);
+    HLOGI("main", "Shutting down");
+    hermes_log_shutdown();
 
     return 0;
 
