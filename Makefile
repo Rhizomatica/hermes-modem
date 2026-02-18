@@ -87,8 +87,8 @@ clean:
 
 doxygen:
 	@command -v $(DOXYGEN) >/dev/null 2>&1 || { echo "ERROR: doxygen not found"; exit 1; }
-	mkdir -p docs/doxygen
+	mkdir -p docs
 	$(DOXYGEN) $(DOXYFILE)
 
 doxygen-clean:
-	rm -rf docs/doxygen
+	rm -rf docs
