@@ -19,6 +19,9 @@
  */
 
 #define VERSION__ "2.0.0alpha"
+#ifndef GIT_HASH
+#define GIT_HASH "unknown000"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,9 +105,9 @@ static void print_usage(const char *prog)
 int main(int argc, char *argv[])
 {
 #if defined(__linux__)
-    printf("\e[0;31mMercury Version %s\e[0m\n", VERSION__); // we go red
+    printf("\e[0;31mRhizomatica Mercury Version %s (git %.8s)\e[0m\n", VERSION__, GIT_HASH); // we go red
 #elif defined(_WIN32)
-    printf("Mercury Version %s\n", VERSION__);
+    printf("Rhizomatica Mercury Version %s (git %.8s)\n", VERSION__, GIT_HASH);
 #endif
     int verbose = 0;
     const int mode_count = (int)(sizeof(freedv_modes) / sizeof(freedv_modes[0]));

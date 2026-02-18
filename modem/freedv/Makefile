@@ -1,6 +1,6 @@
 include ../../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -DGIT_HASH=\"hermes\" -Wno-strict-overflow -fPIC -g -I.
+CFLAGS = $(COMMON_CFLAGS) -Wno-strict-overflow -I.
 
 LIBNAME = libfreedvdata.a
 

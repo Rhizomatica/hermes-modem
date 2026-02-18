@@ -41,29 +41,28 @@ endif
 
 include config.mk
 
-.PHONY: all internal_deps clean
+.PHONY: all internal_deps utils clean
 
 CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Ithird_party/chan
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
-all: mercury
+MERCURY_LINK_INPUTS = \
+	main.o datalink_arq/arq.o datalink_arq/arq_v2.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
+	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
+	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o
 
-mercury: internal_deps third_party/chan/chan.o third_party/chan/queue.o main.o
+all: internal_deps utils
+	$(MAKE) mercury
+	$(MAKE) -C utils
+
+mercury: $(MERCURY_LINK_INPUTS)
 	$(CC) -o mercury  \
-		main.o datalink_arq/arq.o datalink_arq/arq_v2.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
-		modem/framer.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o \
-		common/crc6.o common/hermes_log.o data_interfaces/tcp_interfaces.o data_interfaces/net.o third_party/chan/chan.o third_party/chan/queue.o $(LDFLAGS)
+		$(MERCURY_LINK_INPUTS) $(LDFLAGS)
 
 main.o: main.c
 	$(CC) $(CFLAGS) -c main.c
-
-third_party/chan/chan.o: third_party/chan/chan.c third_party/chan/chan.h third_party/chan/queue.h
-	$(CC) $(filter-out -D_GNU_SOURCE,$(COMMON_CFLAGS)) -c third_party/chan/chan.c -o third_party/chan/chan.o
-
-third_party/chan/queue.o: third_party/chan/queue.c third_party/chan/queue.h
-	$(CC) $(filter-out -D_GNU_SOURCE,$(COMMON_CFLAGS)) -c third_party/chan/queue.c -o third_party/chan/queue.o
-
 
 internal_deps:
 	$(MAKE) -C modem
