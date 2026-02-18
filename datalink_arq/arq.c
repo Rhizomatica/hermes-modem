@@ -3804,6 +3804,14 @@ static void handle_control_frame_locked(uint8_t subtype,
             else
                 update_connected_state_from_turn_locked();
         }
+        if (arq_ctx.turn_role == ARQ_TURN_ISS &&
+            arq_ctx.app_tx_len == 0 &&
+            !arq_ctx.pending_turn_req &&
+            !arq_ctx.turn_req_in_flight)
+        {
+            /* Proactively offer turn after draining local backlog (UUCP is request/response). */
+            arq_ctx.pending_turn_req = true;
+        }
         mark_link_activity_locked(now);
         mark_success_locked();
         schedule_flow_hint_locked();
