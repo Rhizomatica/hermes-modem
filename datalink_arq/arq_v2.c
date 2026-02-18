@@ -1498,6 +1498,14 @@ static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
     return interval;
 }
 
+static time_t ack_deadline_from_now_locked(time_t now)
+{
+    int wait_s = arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S + arq_ctx.slot_len_s;
+    if (wait_s < 1)
+        wait_s = 1;
+    return now + wait_s;
+}
+
 static void schedule_next_tx_locked(time_t now, bool with_jitter)
 {
     arq_ctx.next_role_tx_at =
@@ -2130,7 +2138,7 @@ static void queue_next_data_frame_locked(void)
     arq_ctx.outstanding_app_len = chunk;
     arq_ctx.waiting_ack = true;
     arq_ctx.data_retries_left = arq_ctx.max_data_retries;
-    arq_ctx.ack_deadline = time(NULL) + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
+    arq_ctx.ack_deadline = ack_deadline_from_now_locked(time(NULL));
     arq_ctx.tx_seq++;
 }
 
@@ -2363,7 +2371,7 @@ static bool do_slot_tx_locked(time_t now)
                     apply_payload_mode_locked(retry_mode, "retry realign");
                 queue_frame_locked(arq_ctx.outstanding_frame, arq_ctx.outstanding_frame_len, false);
                 arq_ctx.data_retries_left--;
-                arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
+                arq_ctx.ack_deadline = ack_deadline_from_now_locked(now);
                 mark_failure_locked();
                 HLOGW("arq", "Data retry seq=%u left=%d frame=%zu active=%zu",
                       arq_ctx.outstanding_seq,
