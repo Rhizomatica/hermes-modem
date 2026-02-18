@@ -1070,6 +1070,22 @@ static int peer_payload_hold_s_locked(void)
     return hold;
 }
 
+static void expire_peer_backlog_locked(time_t now)
+{
+    if (!arq_ctx.peer_backlog_nonzero)
+        return;
+    if (arq_ctx.payload_start_pending || arq_ctx.mode_fsm != ARQ_MODE_FSM_IDLE)
+        return;
+    if (arq_ctx.last_peer_payload_rx <= 0)
+        return;
+    if ((now - arq_ctx.last_peer_payload_rx) <= peer_payload_hold_s_locked())
+        return;
+
+    arq_ctx.peer_backlog_nonzero = false;
+    arq_ctx.last_peer_payload_rx = 0;
+    HLOGD("arq", "Peer backlog timeout -> control");
+}
+
 static const char *mode_name(int mode)
 {
     switch (mode)
@@ -2155,6 +2171,7 @@ static bool do_slot_tx_locked(time_t now)
     if (defer_tx_if_busy_locked(now))
         return false;
     apply_deferred_payload_mode_locked();
+    expire_peer_backlog_locked(now);
 
     if (arq_ctx.turn_ack_deferred &&
         !arq_ctx.waiting_ack &&
@@ -3065,16 +3082,7 @@ static int preferred_rx_mode_locked(time_t now)
     if (!arq_ctx.initialized)
         return mode;
 
-    if (arq_ctx.turn_role == ARQ_TURN_IRS &&
-        arq_ctx.peer_backlog_nonzero &&
-        !arq_ctx.payload_start_pending &&
-        arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE &&
-        arq_ctx.last_peer_payload_rx > 0 &&
-        (now - arq_ctx.last_peer_payload_rx) > peer_payload_hold_s_locked())
-    {
-        arq_ctx.peer_backlog_nonzero = false;
-        HLOGD("arq", "Peer backlog timeout -> control");
-    }
+    expire_peer_backlog_locked(now);
 
     control_phase =
         arq_fsm.current == state_listen ||
@@ -3285,7 +3293,22 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
         if (arq_conn.my_call_sign[0] == 0 || strcasecmp(dst, arq_conn.my_call_sign) != 0)
             return;
-        if (arq_fsm.current != state_listen && !is_connected_state_locked())
+
+        if (is_connected_state_locked())
+        {
+            if (arq_ctx.role == ARQ_ROLE_CALLEE &&
+                session_id == arq_ctx.session_id &&
+                strcasecmp(src, arq_conn.dst_addr) == 0 &&
+                strcasecmp(dst, arq_conn.src_addr) == 0)
+            {
+                arq_ctx.pending_accept = true;
+                arq_ctx.accept_retries_left = 1;
+                schedule_immediate_control_tx_locked(now, "call dup");
+            }
+            return;
+        }
+
+        if (arq_fsm.current != state_listen)
             return;
 
         strncpy(arq_conn.src_addr, arq_conn.my_call_sign, CALLSIGN_MAX_SIZE - 1);
@@ -3432,15 +3455,17 @@ static void handle_control_frame_locked(uint8_t subtype,
             return;
         if (session_id != arq_ctx.session_id)
             return;
-        if (arq_ctx.turn_role == ARQ_TURN_IRS)
+        if (arq_ctx.waiting_ack || arq_ctx.outstanding_frame_len > 0)
         {
-            arq_ctx.peer_backlog_nonzero = false;
-            arq_ctx.last_peer_payload_rx = 0;
-            arq_ctx.pending_turn_ack = true;
-            arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
-            arq_fsm.current = state_turn_negotiating;
-            schedule_immediate_control_tx_locked(now, "turn req");
+            mark_link_activity_locked(now);
+            return;
         }
+        arq_ctx.peer_backlog_nonzero = false;
+        arq_ctx.last_peer_payload_rx = 0;
+        arq_ctx.pending_turn_ack = true;
+        arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
+        arq_fsm.current = state_turn_negotiating;
+        schedule_immediate_control_tx_locked(now, "turn req");
         mark_link_activity_locked(now);
         return;
 

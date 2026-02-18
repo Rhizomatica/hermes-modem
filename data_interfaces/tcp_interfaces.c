@@ -258,6 +258,13 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    if (!memcmp(buffer, "COMPRESSION", strlen("COMPRESSION")))
+    {
+        /* Compatibility no-op: VARA-style clients expect this command. */
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
     if (!memcmp(buffer, "BW", strlen("BW")))
     {
         memset(&cmd, 0, sizeof(cmd));
