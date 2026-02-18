@@ -311,6 +311,7 @@ enum {
 #define ARQ_DATA_RETRY_SLOTS 6
 #define ARQ_CONNECT_GRACE_SLOTS 2
 #define ARQ_CHANNEL_GUARD_MS 200
+#define ARQ_ACK_REPLY_EXTRA_GUARD_MS 300
 #define ARQ_ACK_GUARD_S 1
 #define ARQ_CONNECT_BUSY_EXT_S 2
 #define ARQ_DISCONNECT_RETRY_SLOTS 2
@@ -1498,25 +1499,19 @@ static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
     return interval;
 }
 
-static time_t ack_deadline_from_now_locked(time_t now)
-{
-    int wait_s = arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S + arq_ctx.slot_len_s;
-    if (wait_s < 1)
-        wait_s = 1;
-    return now + wait_s;
-}
-
 static void schedule_next_tx_locked(time_t now, bool with_jitter)
 {
     arq_ctx.next_role_tx_at =
         arq_realtime_ms() + ((uint64_t)compute_inter_frame_interval_locked(now, with_jitter) * 1000ULL);
 }
 
-static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
+static void schedule_immediate_control_tx_with_guard_locked(time_t now,
+                                                            const char *reason,
+                                                            uint64_t extra_guard_ms)
 {
     bool adjusted = false;
     uint64_t now_ms = arq_realtime_ms();
-    uint64_t earliest_tx = now_ms + ARQ_CHANNEL_GUARD_MS;
+    uint64_t earliest_tx = now_ms + ARQ_CHANNEL_GUARD_MS + extra_guard_ms;
 
     if (arq_ctx.remote_busy_until > earliest_tx)
         earliest_tx = arq_ctx.remote_busy_until;
@@ -1531,6 +1526,11 @@ static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
         HLOGD("arq", "Immediate control reply (%s) at +%llums",
               reason ? reason : "rx",
               (unsigned long long)(arq_ctx.next_role_tx_at - now_ms));
+}
+
+static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
+{
+    schedule_immediate_control_tx_with_guard_locked(now, reason, 0);
 }
 
 static bool defer_tx_if_busy_locked(time_t now)
@@ -2138,7 +2138,7 @@ static void queue_next_data_frame_locked(void)
     arq_ctx.outstanding_app_len = chunk;
     arq_ctx.waiting_ack = true;
     arq_ctx.data_retries_left = arq_ctx.max_data_retries;
-    arq_ctx.ack_deadline = ack_deadline_from_now_locked(time(NULL));
+    arq_ctx.ack_deadline = time(NULL) + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
     arq_ctx.tx_seq++;
 }
 
@@ -2371,7 +2371,7 @@ static bool do_slot_tx_locked(time_t now)
                     apply_payload_mode_locked(retry_mode, "retry realign");
                 queue_frame_locked(arq_ctx.outstanding_frame, arq_ctx.outstanding_frame_len, false);
                 arq_ctx.data_retries_left--;
-                arq_ctx.ack_deadline = ack_deadline_from_now_locked(now);
+                arq_ctx.ack_deadline = now + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
                 mark_failure_locked();
                 HLOGW("arq", "Data retry seq=%u left=%d frame=%zu active=%zu",
                       arq_ctx.outstanding_seq,
@@ -3550,7 +3550,8 @@ static void handle_data_frame_locked(uint8_t session_id,
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         arq_ctx.pending_ack_set_ms = arq_monotonic_ms();
-        schedule_immediate_control_tx_locked(now, "data ack");
+        schedule_immediate_control_tx_with_guard_locked(now, "data ack",
+                                                        ARQ_ACK_REPLY_EXTRA_GUARD_MS);
         mark_success_locked();
         schedule_flow_hint_locked();
         update_payload_mode_locked();
@@ -3565,7 +3566,8 @@ static void handle_data_frame_locked(uint8_t session_id,
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         arq_ctx.pending_ack_set_ms = arq_monotonic_ms();
-        schedule_immediate_control_tx_locked(now, "dup ack");
+        schedule_immediate_control_tx_with_guard_locked(now, "dup ack",
+                                                        ARQ_ACK_REPLY_EXTRA_GUARD_MS);
     }
 }
 
