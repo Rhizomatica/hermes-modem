@@ -1328,13 +1328,9 @@ static void update_connected_state_from_turn_locked(void)
  */
 static void become_iss_locked(const char *reason)
 {
-    time_t now = time(NULL);
-
     arq_ctx.turn_role = ARQ_TURN_ISS;
     arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
-    arq_ctx.payload_start_pending = true;
-    arq_ctx.startup_acks_left = ARQ_STARTUP_ACKS_REQUIRED;
-    arq_ctx.startup_deadline = now + ARQ_STARTUP_MAX_S;
+    /* Keep startup gate one-shot per connection; do not re-arm on each turn handoff. */
     mode_fsm_reset_locked("turn iss");
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
