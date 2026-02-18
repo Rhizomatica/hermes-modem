@@ -1,6 +1,6 @@
 PROJECT_NAME           = "HERMES Modem"
 PROJECT_BRIEF          = "Hermes ARQ/Broadcast modem"
-OUTPUT_DIRECTORY       = docs/doxygen
+OUTPUT_DIRECTORY       = docs
 CREATE_SUBDIRS         = NO
 OPTIMIZE_OUTPUT_FOR_C  = YES
 EXTRACT_ALL            = YES

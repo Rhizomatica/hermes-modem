@@ -1,0 +1,16 @@
+<map id="arq_channels.h" name="arq_channels.h">
+<area shape="rect" id="Node000001" title=" " alt="" coords="53,5,163,31"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,152,75,177"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="100,32,84,54,68,80,56,110,48,139,43,138,51,108,63,77,79,51,96,29"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="77,79,139,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="111,31,111,65,105,65,105,31"/>
+<area shape="rect" id="Node000004" href="$arq__events_8h.html" title=" " alt="" coords="163,79,261,104"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="126,28,185,68,182,73,123,33"/>
+<area shape="poly" id="edge5_Node000004_Node000002" title=" " alt="" coords="185,106,82,149,80,144,183,102"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="99,152,173,177"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="202,106,160,144,157,141,198,102"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="198,152,263,177"/>
+<area shape="poly" id="edge6_Node000004_Node000006" title=" " alt="" coords="218,104,227,138,222,140,213,105"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="288,152,413,177"/>
+<area shape="poly" id="edge7_Node000004_Node000007" title=" " alt="" coords="235,102,317,143,315,148,233,106"/>
+</map>
