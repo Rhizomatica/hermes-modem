@@ -40,6 +40,7 @@
 #include "fsm.h"
 #include "arq_events.h"
 
+/** @brief Runtime ARQ connection and mode state shared across modules. */
 typedef struct
 {
     int TRX; // RX (0) or TX (1)
@@ -53,6 +54,7 @@ typedef struct
     int mode;
 } arq_info;
 
+/** @brief Action types emitted by ARQ for modem worker execution. */
 typedef enum
 {
     ARQ_ACTION_NONE = 0,
@@ -61,6 +63,7 @@ typedef enum
     ARQ_ACTION_MODE_SWITCH = 3
 } arq_action_type_t;
 
+/** @brief Single modem action item popped by modem TX worker. */
 typedef struct
 {
     arq_action_type_t type;
@@ -68,6 +71,7 @@ typedef struct
     size_t frame_size;
 } arq_action_t;
 
+/** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */
 typedef struct
 {
     bool initialized;
@@ -84,33 +88,167 @@ typedef struct
 extern arq_info arq_conn;
 extern fsm_handle arq_fsm;
 
-// ARQ core functions
+/**
+ * @brief Initialize ARQ subsystem.
+ * @param frame_size Active modem frame size in bytes.
+ * @param mode Initial modem mode.
+ * @return 0 on success, non-zero on failure.
+ */
 int arq_init(size_t frame_size, int mode);
+
+/**
+ * @brief Shut down ARQ workers and release ARQ resources.
+ */
 void arq_shutdown();
+
+/**
+ * @brief Execute 1 Hz ARQ maintenance tick.
+ */
 void arq_tick_1hz(void);
+
+/**
+ * @brief Post an FSM event to ARQ.
+ * @param event Event identifier from fsm.h.
+ */
 void arq_post_event(int event);
+
+/**
+ * @brief Check whether ARQ link is connected.
+ * @return true when connected; otherwise false.
+ */
 bool arq_is_link_connected(void);
+
+/**
+ * @brief Queue outbound payload bytes for ARQ transmission.
+ * @param data Pointer to payload bytes.
+ * @param len Number of bytes to queue.
+ * @return Number of bytes queued, or negative on error.
+ */
 int arq_queue_data(const uint8_t *data, size_t len);
+
+/**
+ * @brief Get pending outbound payload backlog.
+ * @return Backlog size in bytes.
+ */
 int arq_get_tx_backlog_bytes(void);
+
+/**
+ * @brief Get current ARQ speed level (gear).
+ * @return Speed level index.
+ */
 int arq_get_speed_level(void);
+
+/**
+ * @brief Get active ARQ payload mode.
+ * @return FreeDV payload mode value.
+ */
 int arq_get_payload_mode(void);
+
+/**
+ * @brief Get active ARQ control mode.
+ * @return FreeDV control mode value.
+ */
 int arq_get_control_mode(void);
+
+/**
+ * @brief Get ARQ-preferred receive mode for modem.
+ * @return FreeDV mode value.
+ */
 int arq_get_preferred_rx_mode(void);
+
+/**
+ * @brief Get ARQ-preferred transmit mode for modem.
+ * @return FreeDV mode value.
+ */
 int arq_get_preferred_tx_mode(void);
+
+/**
+ * @brief Inform ARQ of modem mode/frame size actually active in modem.
+ * @param mode Active FreeDV mode.
+ * @param frame_size Active frame size in bytes.
+ */
 void arq_set_active_modem_mode(int mode, size_t frame_size);
+
+/**
+ * @brief Handle incoming compressed CALL/ACCEPT frame.
+ * @param data Frame bytes.
+ * @param frame_size Frame length in bytes.
+ * @return true if frame was handled by ARQ connect path.
+ */
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
+
+/**
+ * @brief Handle incoming regular ARQ control/data frame.
+ * @param data Frame bytes.
+ * @param frame_size Frame length in bytes.
+ */
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
+
+/**
+ * @brief Feed decoder/link metrics into ARQ adaptation.
+ * @param sync Decoder sync flag.
+ * @param snr Estimated SNR.
+ * @param rx_status Decoder RX status flags.
+ * @param frame_decoded True when a frame decoded this cycle.
+ */
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
+
+/**
+ * @brief Try to dequeue next modem action without blocking.
+ * @param action Output action item.
+ * @return true if an action was dequeued.
+ */
 bool arq_try_dequeue_action(arq_action_t *action);
+
+/**
+ * @brief Wait for next modem action.
+ * @param action Output action item.
+ * @param timeout_ms Wait timeout in milliseconds.
+ * @return true if an action was dequeued.
+ */
 bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms);
+
+/**
+ * @brief Copy ARQ runtime snapshot.
+ * @param snapshot Output snapshot pointer.
+ * @return true when snapshot contains initialized state.
+ */
 bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot);
+
+/**
+ * @brief Submit parsed control command from TCP bridge to ARQ.
+ * @param cmd Command message.
+ * @return 0 on success, negative on queue/error.
+ */
 int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd);
+
+/**
+ * @brief Submit payload bytes from TCP bridge to ARQ.
+ * @param data Payload bytes.
+ * @param len Payload length in bytes.
+ * @return 0 on success, negative on queue/error.
+ */
 int arq_submit_tcp_payload(const uint8_t *data, size_t len);
 
-// auxiliary functions
+/**
+ * @brief Clear legacy ARQ connection state and buffers.
+ */
 void clear_connection_data();
+
+/**
+ * @brief Reset external arq_info structure.
+ * @param arq_conn Pointer to structure to reset.
+ */
 void reset_arq_info(arq_info *arq_conn);
+
+/**
+ * @brief Trigger outgoing call attempt using current ARQ addresses.
+ */
 void call_remote();
+
+/**
+ * @brief Trigger callee-side accept flow in compatibility path.
+ */
 void callee_accept_connection();
 
 #endif
