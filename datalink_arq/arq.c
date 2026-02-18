@@ -344,6 +344,9 @@ static void *arq_cmd_bridge_worker(void *arg);
 static void *arq_payload_bridge_worker(void *arg);
 static void arq_handle_tcp_cmd_msg(const arq_cmd_msg_t *cmd);
 
+/**
+ * @brief Internal ARQ helper: arq_monotonic_ms.
+ */
 static uint64_t arq_monotonic_ms(void)
 {
     struct timespec ts;
@@ -351,6 +354,9 @@ static uint64_t arq_monotonic_ms(void)
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_realtime_ms.
+ */
 static uint64_t arq_realtime_ms(void)
 {
     struct timespec ts;
@@ -358,16 +364,25 @@ static uint64_t arq_realtime_ms(void)
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_lock.
+ */
 static inline void arq_lock(void)
 {
     pthread_mutex_lock(&arq_fsm.lock);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_unlock.
+ */
 static inline void arq_unlock(void)
 {
     pthread_mutex_unlock(&arq_fsm.lock);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_start.
+ */
 static int arq_event_loop_start(void)
 {
     if (arq_event_loop.started)
@@ -395,6 +410,9 @@ static int arq_event_loop_start(void)
     return 0;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_stop.
+ */
 static void arq_event_loop_stop(void)
 {
     if (!arq_event_loop.started)
@@ -411,6 +429,9 @@ static void arq_event_loop_stop(void)
     memset(&arq_event_loop, 0, sizeof(arq_event_loop));
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_internal.
+ */
 static bool arq_event_loop_enqueue_internal(const arq_event_t *event_item)
 {
     bool queued = false;
@@ -434,6 +455,9 @@ static bool arq_event_loop_enqueue_internal(const arq_event_t *event_item)
     return queued;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_action_queue_clear_locked.
+ */
 static void arq_action_queue_clear_locked(void)
 {
     arq_ctx.action_head = 0;
@@ -443,6 +467,9 @@ static void arq_action_queue_clear_locked(void)
     pthread_cond_broadcast(&arq_action_cond);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_action_queue_push_locked.
+ */
 static bool arq_action_queue_push_locked(const arq_action_t *action)
 {
     if (!action)
@@ -460,6 +487,9 @@ static bool arq_action_queue_push_locked(const arq_action_t *action)
     return true;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_action_queue_pop_locked.
+ */
 static bool arq_action_queue_pop_locked(arq_action_t *action)
 {
     size_t pick_idx;
@@ -495,6 +525,9 @@ static bool arq_action_queue_pop_locked(arq_action_t *action)
     return true;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_app_tx_result_complete.
+ */
 static void arq_event_app_tx_result_complete(arq_event_app_tx_result_t *result, int queued)
 {
     if (!result)
@@ -507,6 +540,9 @@ static void arq_event_app_tx_result_complete(arq_event_app_tx_result_t *result, 
     pthread_mutex_unlock(&result->lock);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_process_event.
+ */
 static void arq_process_event(const arq_event_t *event_item)
 {
     if (!event_item)
@@ -566,6 +602,9 @@ static void arq_process_event(const arq_event_t *event_item)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_fsm.
+ */
 static void arq_event_loop_enqueue_fsm(int event)
 {
     arq_event_t event_item;
@@ -580,6 +619,9 @@ static void arq_event_loop_enqueue_fsm(int event)
         arq_process_event(&event_item);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_frame.
+ */
 static void arq_event_loop_enqueue_frame(const uint8_t *data, size_t frame_size)
 {
     arq_event_t event_item;
@@ -595,6 +637,9 @@ static void arq_event_loop_enqueue_frame(const uint8_t *data, size_t frame_size)
         arq_process_event(&event_item);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_connect_frame.
+ */
 static void arq_event_loop_enqueue_connect_frame(const uint8_t *data, size_t frame_size)
 {
     arq_event_t event_item;
@@ -610,6 +655,9 @@ static void arq_event_loop_enqueue_connect_frame(const uint8_t *data, size_t fra
         arq_process_event(&event_item);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_metrics.
+ */
 static void arq_event_loop_enqueue_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
     arq_event_t event_item;
@@ -624,6 +672,9 @@ static void arq_event_loop_enqueue_metrics(int sync, float snr, int rx_status, b
         arq_process_event(&event_item);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_app_tx.
+ */
 static void arq_event_loop_enqueue_app_tx(const uint8_t *data, size_t data_len, arq_event_app_tx_result_t *result)
 {
     arq_event_t event_item;
@@ -643,6 +694,9 @@ static void arq_event_loop_enqueue_app_tx(const uint8_t *data, size_t data_len, 
         arq_process_event(&event_item);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_enqueue_active_mode.
+ */
 static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size)
 {
     arq_event_t event_item;
@@ -658,6 +712,9 @@ static void arq_event_loop_enqueue_active_mode(int mode, size_t frame_size)
         arq_process_event(&event_item);
 }
 
+/**
+ * @brief Internal ARQ helper: arq_consider_deadline_s.
+ */
 static void arq_consider_deadline_s(time_t deadline, uint64_t *next_deadline_ms)
 {
     uint64_t deadline_ms;
@@ -669,6 +726,9 @@ static void arq_consider_deadline_s(time_t deadline, uint64_t *next_deadline_ms)
         *next_deadline_ms = deadline_ms;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_consider_deadline_ms.
+ */
 static void arq_consider_deadline_ms(uint64_t deadline_ms, uint64_t *next_deadline_ms)
 {
     if (!next_deadline_ms || deadline_ms == 0)
@@ -677,6 +737,9 @@ static void arq_consider_deadline_ms(uint64_t deadline_ms, uint64_t *next_deadli
         *next_deadline_ms = deadline_ms;
 }
 
+/**
+ * @brief Internal ARQ helper: has_outbound_payload_pending_locked.
+ */
 static bool has_outbound_payload_pending_locked(void)
 {
     return arq_ctx.app_tx_len > 0 ||
@@ -685,6 +748,9 @@ static bool has_outbound_payload_pending_locked(void)
            arq_ctx.pending_payload_actions > 0;
 }
 
+/**
+ * @brief Internal ARQ helper: keepalive_quiescent_locked.
+ */
 static bool keepalive_quiescent_locked(void)
 {
     return !arq_ctx.payload_start_pending &&
@@ -703,6 +769,9 @@ static bool keepalive_quiescent_locked(void)
            arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE;
 }
 
+/**
+ * @brief Internal ARQ helper: has_immediate_control_tx_work_locked.
+ */
 static bool has_immediate_control_tx_work_locked(void)
 {
     if (arq_ctx.disconnect_after_flush &&
@@ -750,6 +819,9 @@ static bool has_immediate_control_tx_work_locked(void)
     return false;
 }
 
+/**
+ * @brief Internal ARQ helper: has_immediate_iss_payload_tx_work_locked.
+ */
 static bool has_immediate_iss_payload_tx_work_locked(void)
 {
     if (!is_connected_state_locked())
@@ -771,6 +843,9 @@ static bool has_immediate_iss_payload_tx_work_locked(void)
            arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE;
 }
 
+/**
+ * @brief Internal ARQ helper: has_immediate_tx_work_locked.
+ */
 static bool has_immediate_tx_work_locked(void)
 {
     if (arq_ctx.role == ARQ_ROLE_NONE)
@@ -780,6 +855,9 @@ static bool has_immediate_tx_work_locked(void)
            has_immediate_iss_payload_tx_work_locked();
 }
 
+/**
+ * @brief Internal ARQ helper: arq_event_loop_timeout_ms.
+ */
 static int arq_event_loop_timeout_ms(void)
 {
     uint64_t now_ms;
@@ -881,6 +959,9 @@ static int arq_event_loop_timeout_ms(void)
     return (int)(next_deadline_ms - now_ms);
 }
 
+/**
+ * @brief Main ARQ event-loop worker thread.
+ */
 static void *arq_event_loop_worker(void *arg)
 {
     uint64_t loop_iter_count = 0;
@@ -960,27 +1041,42 @@ static void *arq_event_loop_worker(void *arg)
     return NULL;
 }
 
+/**
+ * @brief Internal ARQ helper: connect_meta_build.
+ */
 static inline uint8_t connect_meta_build(uint8_t session_id, bool is_accept)
 {
     return (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK) |
            (is_accept ? ARQ_CONNECT_ACCEPT_FLAG : 0);
 }
 
+/**
+ * @brief Internal ARQ helper: connect_meta_session.
+ */
 static inline uint8_t connect_meta_session(uint8_t meta)
 {
     return (uint8_t)(meta & ARQ_CONNECT_SESSION_MASK);
 }
 
+/**
+ * @brief Internal ARQ helper: connect_meta_is_accept.
+ */
 static inline bool connect_meta_is_accept(uint8_t meta)
 {
     return (meta & ARQ_CONNECT_ACCEPT_FLAG) != 0;
 }
 
+/**
+ * @brief Internal ARQ helper: idle_or_listen_state_locked.
+ */
 static fsm_state idle_or_listen_state_locked(void)
 {
     return arq_conn.listen ? state_listen : state_idle;
 }
 
+/**
+ * @brief Internal ARQ helper: is_connected_state_locked.
+ */
 static bool is_connected_state_locked(void)
 {
     return arq_fsm.current == state_connected ||
@@ -1062,11 +1158,17 @@ static int connect_response_wait_s(void)
     return mode_slot_len_s(FREEDV_MODE_DATAC13) + ARQ_CONNECT_BUSY_EXT_S;
 }
 
+/**
+ * @brief Internal ARQ helper: control_slot_ms.
+ */
 static uint64_t control_slot_ms(int mode)
 {
     return (uint64_t)mode_slot_len_s(mode) * 1000ULL;
 }
 
+/**
+ * @brief Internal ARQ helper: peer_payload_hold_s_locked.
+ */
 static int peer_payload_hold_s_locked(void)
 {
     int hold = ARQ_PEER_PAYLOAD_HOLD_S;
@@ -1077,6 +1179,9 @@ static int peer_payload_hold_s_locked(void)
     return hold;
 }
 
+/**
+ * @brief Internal ARQ helper: expire_peer_backlog_locked.
+ */
 static void expire_peer_backlog_locked(time_t now)
 {
     if (!arq_ctx.peer_backlog_nonzero)
@@ -1093,6 +1198,11 @@ static void expire_peer_backlog_locked(time_t now)
     HLOGD("arq", "Peer backlog timeout -> control");
 }
 
+/**
+ * @brief Return short printable name for a FreeDV mode id.
+ * @param mode FreeDV mode id.
+ * @return Static mode label string.
+ */
 static const char *mode_name(int mode)
 {
     switch (mode)
@@ -1114,6 +1224,11 @@ static const char *mode_name(int mode)
     }
 }
 
+/**
+ * @brief Return short printable label for ARQ mode-FSM state.
+ * @param state Mode FSM state.
+ * @return Static state label string.
+ */
 static const char *mode_fsm_name(arq_mode_fsm_t state)
 {
     switch (state)
@@ -1130,6 +1245,9 @@ static const char *mode_fsm_name(arq_mode_fsm_t state)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: mode_fsm_set_locked.
+ */
 static void mode_fsm_set_locked(arq_mode_fsm_t next, const char *reason)
 {
     if (arq_ctx.mode_fsm == next)
@@ -1142,11 +1260,17 @@ static void mode_fsm_set_locked(arq_mode_fsm_t next, const char *reason)
     arq_ctx.mode_fsm = next;
 }
 
+/**
+ * @brief Internal ARQ helper: mode_fsm_busy_locked.
+ */
 static bool mode_fsm_busy_locked(void)
 {
     return arq_ctx.mode_fsm != ARQ_MODE_FSM_IDLE;
 }
 
+/**
+ * @brief Internal ARQ helper: mode_fsm_reset_locked.
+ */
 static void mode_fsm_reset_locked(const char *reason)
 {
     arq_ctx.pending_mode_req = false;
@@ -1159,6 +1283,9 @@ static void mode_fsm_reset_locked(const char *reason)
     mode_fsm_set_locked(ARQ_MODE_FSM_IDLE, reason);
 }
 
+/**
+ * @brief Internal ARQ helper: mode_fsm_queue_req_locked.
+ */
 static void mode_fsm_queue_req_locked(uint8_t mode, const char *reason)
 {
     arq_ctx.pending_mode = mode;
@@ -1168,6 +1295,9 @@ static void mode_fsm_queue_req_locked(uint8_t mode, const char *reason)
     mode_fsm_set_locked(ARQ_MODE_FSM_REQ_PENDING, reason);
 }
 
+/**
+ * @brief Internal ARQ helper: mode_fsm_queue_ack_locked.
+ */
 static void mode_fsm_queue_ack_locked(uint8_t mode, const char *reason)
 {
     arq_ctx.pending_mode = mode;
@@ -1179,6 +1309,9 @@ static void mode_fsm_queue_ack_locked(uint8_t mode, const char *reason)
     mode_fsm_set_locked(ARQ_MODE_FSM_ACK_PENDING, reason);
 }
 
+/**
+ * @brief Internal ARQ helper: update_connected_state_from_turn_locked.
+ */
 static void update_connected_state_from_turn_locked(void)
 {
     if (arq_fsm.current == state_disconnecting)
@@ -1190,6 +1323,9 @@ static void update_connected_state_from_turn_locked(void)
         arq_fsm.current = state_connected_irs;
 }
 
+/**
+ * @brief Internal ARQ helper: become_iss_locked.
+ */
 static void become_iss_locked(const char *reason)
 {
     time_t now = time(NULL);
@@ -1206,6 +1342,9 @@ static void become_iss_locked(const char *reason)
     HLOGD("arq", "Turn -> ISS (%s)", reason ? reason : "role change");
 }
 
+/**
+ * @brief Internal ARQ helper: become_irs_locked.
+ */
 static void become_irs_locked(const char *reason)
 {
     arq_ctx.turn_role = ARQ_TURN_IRS;
@@ -1219,6 +1358,9 @@ static void become_irs_locked(const char *reason)
     HLOGD("arq", "Turn -> IRS (%s)", reason ? reason : "role change");
 }
 
+/**
+ * @brief Internal ARQ helper: payload_mode_from_snr.
+ */
 static int payload_mode_from_snr(float snr)
 {
     if (snr >= 5.0f)
@@ -1228,6 +1370,9 @@ static int payload_mode_from_snr(float snr)
     return FREEDV_MODE_DATAC4;
 }
 
+/**
+ * @brief Internal ARQ helper: is_payload_mode.
+ */
 static bool is_payload_mode(int mode)
 {
     return mode == FREEDV_MODE_DATAC1 ||
@@ -1235,6 +1380,9 @@ static bool is_payload_mode(int mode)
            mode == FREEDV_MODE_DATAC4;
 }
 
+/**
+ * @brief Internal ARQ helper: payload_mode_rank.
+ */
 static int payload_mode_rank(int mode)
 {
     switch (mode)
@@ -1249,6 +1397,9 @@ static int payload_mode_rank(int mode)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: apply_payload_mode_locked.
+ */
 static void apply_payload_mode_locked(int new_mode, const char *reason)
 {
     arq_action_t action;
@@ -1272,6 +1423,9 @@ static void apply_payload_mode_locked(int new_mode, const char *reason)
     (void)arq_action_queue_push_locked(&action);
 }
 
+/**
+ * @brief Internal ARQ helper: request_payload_mode_locked.
+ */
 static void request_payload_mode_locked(int new_mode, const char *reason)
 {
     if (!is_payload_mode(new_mode))
@@ -1290,6 +1444,9 @@ static void request_payload_mode_locked(int new_mode, const char *reason)
     apply_payload_mode_locked(new_mode, reason);
 }
 
+/**
+ * @brief Internal ARQ helper: apply_deferred_payload_mode_locked.
+ */
 static void apply_deferred_payload_mode_locked(void)
 {
     int mode;
@@ -1305,6 +1462,9 @@ static void apply_deferred_payload_mode_locked(void)
     apply_payload_mode_locked(mode, "deferred");
 }
 
+/**
+ * @brief Internal ARQ helper: desired_payload_mode_locked.
+ */
 static int desired_payload_mode_locked(void)
 {
     int current = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
@@ -1334,6 +1494,9 @@ static int desired_payload_mode_locked(void)
     return desired;
 }
 
+/**
+ * @brief Internal ARQ helper: update_payload_mode_locked.
+ */
 static void update_payload_mode_locked(void)
 {
     if (!ARQ_ENABLE_MODE_UPGRADE)
@@ -1379,6 +1542,9 @@ static void update_payload_mode_locked(void)
           mode_name(desired), arq_ctx.snr_ema, arq_ctx.app_tx_len);
 }
 
+/**
+ * @brief Internal ARQ helper: schedule_flow_hint_locked.
+ */
 static void schedule_flow_hint_locked(void)
 {
     bool backlog_nonzero = arq_ctx.app_tx_len > 0;
@@ -1393,6 +1559,9 @@ static void schedule_flow_hint_locked(void)
     arq_ctx.flow_hint_value = backlog_nonzero;
 }
 
+/**
+ * @brief Internal ARQ helper: max_gear_for_frame_size.
+ */
 static int max_gear_for_frame_size(size_t frame_size)
 {
     if (frame_size >= 510)
@@ -1402,6 +1571,9 @@ static int max_gear_for_frame_size(size_t frame_size)
     return 0;
 }
 
+/**
+ * @brief Internal ARQ helper: payload_mode_for_frame_size.
+ */
 static int payload_mode_for_frame_size(size_t frame_size)
 {
     if (frame_size >= 510)
@@ -1413,6 +1585,9 @@ static int payload_mode_for_frame_size(size_t frame_size)
     return 0;
 }
 
+/**
+ * @brief Internal ARQ helper: frame_size_for_payload_mode.
+ */
 static size_t frame_size_for_payload_mode(int mode)
 {
     switch (mode)
@@ -1430,17 +1605,26 @@ static size_t frame_size_for_payload_mode(int mode)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: chunk_size_for_gear_locked.
+ */
 static size_t chunk_size_for_gear_locked(void)
 {
     size_t cap = arq_conn.frame_size - ARQ_PAYLOAD_OFFSET;
     return cap;
 }
 
+/**
+ * @brief Internal ARQ helper: control_frame_size_locked.
+ */
 static size_t control_frame_size_locked(void)
 {
     return ARQ_CONTROL_FRAME_SIZE; /* DATAC13 payload bytes per modem frame */
 }
 
+/**
+ * @brief Internal ARQ helper: initial_gear_locked.
+ */
 static int initial_gear_locked(void)
 {
     if (arq_ctx.max_gear >= 2)
@@ -1456,6 +1640,9 @@ static int initial_gear_locked(void)
     return 0;
 }
 
+/**
+ * @brief Internal ARQ helper: maybe_gear_up_locked.
+ */
 static void maybe_gear_up_locked(void)
 {
     if (arq_ctx.gear >= arq_ctx.max_gear)
@@ -1470,6 +1657,9 @@ static void maybe_gear_up_locked(void)
     HLOGD("arq", "Gear up -> %d", arq_ctx.gear);
 }
 
+/**
+ * @brief Internal ARQ helper: maybe_gear_down_locked.
+ */
 static void maybe_gear_down_locked(void)
 {
     if (arq_ctx.gear <= 0)
@@ -1486,6 +1676,9 @@ static void maybe_gear_down_locked(void)
     HLOGD("arq", "Gear down -> %d", arq_ctx.gear);
 }
 
+/**
+ * @brief Internal ARQ helper: mark_success_locked.
+ */
 static void mark_success_locked(void)
 {
     arq_ctx.success_streak++;
@@ -1493,6 +1686,9 @@ static void mark_success_locked(void)
     maybe_gear_up_locked();
 }
 
+/**
+ * @brief Internal ARQ helper: mark_failure_locked.
+ */
 static void mark_failure_locked(void)
 {
     arq_ctx.failure_streak++;
@@ -1500,6 +1696,9 @@ static void mark_failure_locked(void)
     maybe_gear_down_locked();
 }
 
+/**
+ * @brief Internal ARQ helper: mark_link_activity_locked.
+ */
 static void mark_link_activity_locked(time_t now)
 {
     arq_ctx.last_keepalive_rx = now;
@@ -1508,6 +1707,9 @@ static void mark_link_activity_locked(time_t now)
     arq_ctx.keepalive_misses = 0;
 }
 
+/**
+ * @brief Internal ARQ helper: compute_inter_frame_interval_locked.
+ */
 static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
 {
     int interval = arq_ctx.slot_len_s;
@@ -1522,12 +1724,18 @@ static int compute_inter_frame_interval_locked(time_t now, bool with_jitter)
     return interval;
 }
 
+/**
+ * @brief Internal ARQ helper: schedule_next_tx_locked.
+ */
 static void schedule_next_tx_locked(time_t now, bool with_jitter)
 {
     arq_ctx.next_role_tx_at =
         arq_realtime_ms() + ((uint64_t)compute_inter_frame_interval_locked(now, with_jitter) * 1000ULL);
 }
 
+/**
+ * @brief Internal ARQ helper: schedule_immediate_control_tx_with_guard_locked.
+ */
 static void schedule_immediate_control_tx_with_guard_locked(time_t now,
                                                             const char *reason,
                                                             uint64_t extra_guard_ms)
@@ -1551,11 +1759,17 @@ static void schedule_immediate_control_tx_with_guard_locked(time_t now,
               (unsigned long long)(arq_ctx.next_role_tx_at - now_ms));
 }
 
+/**
+ * @brief Internal ARQ helper: schedule_immediate_control_tx_locked.
+ */
 static void schedule_immediate_control_tx_locked(time_t now, const char *reason)
 {
     schedule_immediate_control_tx_with_guard_locked(now, reason, 0);
 }
 
+/**
+ * @brief Internal ARQ helper: defer_tx_if_busy_locked.
+ */
 static bool defer_tx_if_busy_locked(time_t now)
 {
     uint64_t now_ms = arq_realtime_ms();
@@ -1569,6 +1783,9 @@ static bool defer_tx_if_busy_locked(time_t now)
     return true;
 }
 
+/**
+ * @brief Internal ARQ helper: queue_frame_locked.
+ */
 static int queue_frame_locked(const uint8_t *frame, size_t frame_size, bool control_plane)
 {
     arq_action_t action;
@@ -1586,6 +1803,9 @@ static int queue_frame_locked(const uint8_t *frame, size_t frame_size, bool cont
     return written;
 }
 
+/**
+ * @brief Internal ARQ helper: build_frame_locked.
+ */
 static int build_frame_locked(uint8_t packet_type,
                               uint8_t subtype,
                               uint8_t seq,
@@ -1617,6 +1837,9 @@ static int build_frame_locked(uint8_t packet_type,
     return 0;
 }
 
+/**
+ * @brief Internal ARQ helper: encode_connect_callsign_payload.
+ */
 static int encode_connect_callsign_payload(const char *msg, uint8_t *encoded, size_t encoded_cap)
 {
     uint8_t encoded_full[ARQ_ARITH_BUFFER_SIZE];
@@ -1645,6 +1868,9 @@ static int encode_connect_callsign_payload(const char *msg, uint8_t *encoded, si
     return enc_len;
 }
 
+/**
+ * @brief Internal ARQ helper: decode_connect_callsign_payload.
+ */
 static bool decode_connect_callsign_payload(const uint8_t *encoded, char *decoded)
 {
     init_model();
@@ -1653,6 +1879,9 @@ static bool decode_connect_callsign_payload(const uint8_t *encoded, char *decode
     return decoded[0] != 0;
 }
 
+/**
+ * @brief Internal ARQ helper: build_connect_call_accept_frame_locked.
+ */
 static int build_connect_call_accept_frame_locked(uint8_t subtype,
                                                   uint8_t session_id,
                                                   const char *msg,
@@ -1678,6 +1907,9 @@ static int build_connect_call_accept_frame_locked(uint8_t subtype,
     return 0;
 }
 
+/**
+ * @brief Internal ARQ helper: split_call_connect_payload.
+ */
 static void split_call_connect_payload(char *decoded, char *dst, char *src)
 {
     /* Supports truncation: dst may be present even when "|src" is missing. */
@@ -1694,6 +1926,9 @@ static void split_call_connect_payload(char *decoded, char *dst, char *src)
     snprintf(dst, CALLSIGN_MAX_SIZE, "%.*s", CALLSIGN_MAX_SIZE - 1, decoded);
 }
 
+/**
+ * @brief Internal ARQ helper: parse_callsign_pair_payload.
+ */
 static bool parse_callsign_pair_payload(const uint8_t *payload,
                                         size_t payload_len,
                                         char *src,
@@ -1718,6 +1953,9 @@ static bool parse_callsign_pair_payload(const uint8_t *payload,
     return true;
 }
 
+/**
+ * @brief Internal ARQ helper: send_call_locked.
+ */
 static int send_call_locked(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1736,6 +1974,9 @@ static int send_call_locked(void)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: send_accept_locked.
+ */
 static int send_accept_locked(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1754,6 +1995,9 @@ static int send_accept_locked(void)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: send_ack_locked.
+ */
 static int send_ack_locked(uint8_t ack_seq)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1770,6 +2014,9 @@ static int send_ack_locked(uint8_t ack_seq)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: send_disconnect_locked.
+ */
 static int send_disconnect_locked(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1786,6 +2033,9 @@ static int send_disconnect_locked(void)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: send_keepalive_locked.
+ */
 static int send_keepalive_locked(uint8_t subtype)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1802,6 +2052,9 @@ static int send_keepalive_locked(uint8_t subtype)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: send_mode_change_locked.
+ */
 static int send_mode_change_locked(uint8_t subtype, uint8_t mode)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1826,6 +2079,9 @@ static int send_mode_change_locked(uint8_t subtype, uint8_t mode)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: send_turn_control_locked.
+ */
 static int send_turn_control_locked(uint8_t subtype, uint8_t value)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -1850,6 +2106,9 @@ static int send_turn_control_locked(uint8_t subtype, uint8_t value)
     return queue_frame_locked(frame, frame_size, true);
 }
 
+/**
+ * @brief Internal ARQ helper: reset_runtime_locked.
+ */
 static void reset_runtime_locked(bool clear_peer_addresses)
 {
     clear_buffer(data_tx_buffer_arq);
@@ -1944,12 +2203,18 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: notify_disconnected_locked.
+ */
 static void notify_disconnected_locked(void)
 {
     tnc_send_disconnected();
     reset_runtime_locked(true);
 }
 
+/**
+ * @brief Internal ARQ helper: finalize_disconnect_locked.
+ */
 static void finalize_disconnect_locked(void)
 {
     fsm_state next_state = arq_ctx.disconnect_to_no_client ?
@@ -1960,6 +2225,9 @@ static void finalize_disconnect_locked(void)
     arq_fsm.current = next_state;
 }
 
+/**
+ * @brief Internal ARQ helper: start_disconnect_locked.
+ */
 static void start_disconnect_locked(bool to_no_client)
 {
     time_t now = time(NULL);
@@ -1977,6 +2245,9 @@ static void start_disconnect_locked(bool to_no_client)
     HLOGI("arq", "Disconnect start (to_no_client=%d)", effective_to_no_client ? 1 : 0);
 }
 
+/**
+ * @brief Internal ARQ helper: request_disconnect_locked.
+ */
 static void request_disconnect_locked(bool to_no_client, const char *reason)
 {
     if (arq_fsm.current == state_disconnecting)
@@ -2002,6 +2273,9 @@ static void request_disconnect_locked(bool to_no_client, const char *reason)
     start_disconnect_locked(to_no_client);
 }
 
+/**
+ * @brief Internal ARQ helper: enter_connected_locked.
+ */
 static void enter_connected_locked(void)
 {
     time_t now = time(NULL);
@@ -2062,6 +2336,9 @@ static void enter_connected_locked(void)
     tnc_send_connected();
 }
 
+/**
+ * @brief Internal ARQ helper: start_outgoing_call_locked.
+ */
 static void start_outgoing_call_locked(void)
 {
     time_t now = time(NULL);
@@ -2109,6 +2386,9 @@ static void start_outgoing_call_locked(void)
     arq_fsm.current = state_calling_wait_accept;
 }
 
+/**
+ * @brief Internal ARQ helper: queue_next_data_frame_locked.
+ */
 static void queue_next_data_frame_locked(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -2165,6 +2445,9 @@ static void queue_next_data_frame_locked(void)
     arq_ctx.tx_seq++;
 }
 
+/**
+ * @brief Internal ARQ helper: do_slot_tx_locked.
+ */
 static bool do_slot_tx_locked(time_t now)
 {
     uint64_t now_ms = arq_realtime_ms();
@@ -2446,6 +2729,9 @@ static bool do_slot_tx_locked(time_t now)
     return false;
 }
 
+/**
+ * @brief Internal ARQ helper: state_no_connected_client.
+ */
 static void state_no_connected_client(int event)
 {
     if (event != EV_CLIENT_CONNECT)
@@ -2455,6 +2741,9 @@ static void state_no_connected_client(int event)
     arq_fsm.current = state_idle;
 }
 
+/**
+ * @brief Internal ARQ helper: state_idle.
+ */
 static void state_idle(int event)
 {
     switch (event)
@@ -2485,6 +2774,9 @@ static void state_idle(int event)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: state_listen.
+ */
 static void state_listen(int event)
 {
     switch (event)
@@ -2512,6 +2804,9 @@ static void state_listen(int event)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: state_calling_wait_accept.
+ */
 static void state_calling_wait_accept(int event)
 {
     switch (event)
@@ -2533,6 +2828,9 @@ static void state_calling_wait_accept(int event)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: state_connected_common.
+ */
 static void state_connected_common(int event)
 {
     switch (event)
@@ -2554,26 +2852,41 @@ static void state_connected_common(int event)
     }
 }
 
+/**
+ * @brief Internal ARQ helper: state_connected.
+ */
 static void state_connected(int event)
 {
     state_connected_common(event);
 }
 
+/**
+ * @brief Internal ARQ helper: state_connected_iss.
+ */
 static void state_connected_iss(int event)
 {
     state_connected_common(event);
 }
 
+/**
+ * @brief Internal ARQ helper: state_connected_irs.
+ */
 static void state_connected_irs(int event)
 {
     state_connected_common(event);
 }
 
+/**
+ * @brief Internal ARQ helper: state_turn_negotiating.
+ */
 static void state_turn_negotiating(int event)
 {
     state_connected_common(event);
 }
 
+/**
+ * @brief Internal ARQ helper: state_disconnecting.
+ */
 static void state_disconnecting(int event)
 {
     switch (event)
@@ -2586,6 +2899,12 @@ static void state_disconnecting(int event)
     }
 }
 
+/**
+ * @brief Initialize ARQ subsystem state, workers, and channel bus.
+ * @param frame_size Active modem frame size in bytes.
+ * @param mode Startup modem mode.
+ * @return EXIT_SUCCESS on success, EXIT_FAILURE on initialization error.
+ */
 int arq_init(size_t frame_size, int mode)
 {
     if (frame_size < ARQ_PAYLOAD_OFFSET + 8 || frame_size > INT_BUFFER_SIZE)
@@ -2669,6 +2988,9 @@ int arq_init(size_t frame_size, int mode)
     return EXIT_SUCCESS;
 }
 
+/**
+ * @brief Stop ARQ workers and release ARQ runtime resources.
+ */
 void arq_shutdown(void)
 {
     if (!arq_fsm_lock_ready)
@@ -2714,6 +3036,10 @@ void arq_shutdown(void)
     arq_channel_bus_dispose(&arq_bus);
 }
 
+/**
+ * @brief Check whether ARQ is currently in a connected state.
+ * @return true when connected, otherwise false.
+ */
 bool arq_is_link_connected(void)
 {
     bool connected;
@@ -2727,6 +3053,10 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
+/**
+ * @brief Enqueue an FSM event into the ARQ event loop.
+ * @param event Event identifier from fsm.h.
+ */
 void arq_post_event(int event)
 {
     if (!arq_fsm_lock_ready)
@@ -2735,6 +3065,9 @@ void arq_post_event(int event)
     arq_event_loop_enqueue_fsm(event);
 }
 
+/**
+ * @brief Execute 1 Hz maintenance logic (timeouts, keepalive, slot TX).
+ */
 void arq_tick_1hz(void)
 {
     time_t now = time(NULL);
@@ -2831,6 +3164,9 @@ void arq_tick_1hz(void)
     arq_unlock();
 }
 
+/**
+ * @brief Internal ARQ helper: arq_queue_app_data_locked.
+ */
 static int arq_queue_app_data_locked(const uint8_t *data, size_t len)
 {
     size_t free_space;
@@ -2854,6 +3190,12 @@ static int arq_queue_app_data_locked(const uint8_t *data, size_t len)
     return (int)len;
 }
 
+/**
+ * @brief Queue outbound application bytes for ARQ transfer.
+ * @param data Payload buffer.
+ * @param len Payload length in bytes.
+ * @return Number of bytes queued (possibly partial), or 0 when unavailable.
+ */
 int arq_queue_data(const uint8_t *data, size_t len)
 {
     size_t total_queued = 0;
@@ -2927,6 +3269,9 @@ int arq_queue_data(const uint8_t *data, size_t len)
     return (int)total_queued;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_handle_tcp_cmd_msg.
+ */
 static void arq_handle_tcp_cmd_msg(const arq_cmd_msg_t *cmd)
 {
     if (!cmd || !arq_fsm_lock_ready)
@@ -2977,6 +3322,11 @@ static void arq_handle_tcp_cmd_msg(const arq_cmd_msg_t *cmd)
     }
 }
 
+/**
+ * @brief Bridge worker that converts queued TCP control messages into ARQ events.
+ * @param arg Unused thread argument.
+ * @return Always NULL.
+ */
 static void *arq_cmd_bridge_worker(void *arg)
 {
     arq_cmd_msg_t msg;
@@ -2988,6 +3338,11 @@ static void *arq_cmd_bridge_worker(void *arg)
     return NULL;
 }
 
+/**
+ * @brief Bridge worker that converts queued TCP payload chunks into ARQ TX input.
+ * @param arg Unused thread argument.
+ * @return Always NULL.
+ */
 static void *arq_payload_bridge_worker(void *arg)
 {
     arq_bytes_msg_t payload;
@@ -3002,6 +3357,11 @@ static void *arq_payload_bridge_worker(void *arg)
     return NULL;
 }
 
+/**
+ * @brief Submit a parsed TCP control command to ARQ.
+ * @param cmd Command message.
+ * @return 0 on success, -1 on invalid input or queue error.
+ */
 int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
 {
     if (!cmd || !arq_fsm_lock_ready)
@@ -3010,6 +3370,12 @@ int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
     return arq_channel_bus_try_send_cmd(&arq_bus, cmd);
 }
 
+/**
+ * @brief Submit TCP payload bytes into ARQ ingress queue.
+ * @param data Payload bytes.
+ * @param len Payload length in bytes.
+ * @return 0 on success, -1 on invalid input or queue error.
+ */
 int arq_submit_tcp_payload(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || len > INT_BUFFER_SIZE || !arq_fsm_lock_ready)
@@ -3018,6 +3384,10 @@ int arq_submit_tcp_payload(const uint8_t *data, size_t len)
     return arq_channel_bus_try_send_payload(&arq_bus, data, len);
 }
 
+/**
+ * @brief Return outbound ARQ backlog size in bytes.
+ * @return Pending byte count capped at INT_MAX.
+ */
 int arq_get_tx_backlog_bytes(void)
 {
     size_t pending = 0;
@@ -3038,6 +3408,10 @@ int arq_get_tx_backlog_bytes(void)
     return (int)pending;
 }
 
+/**
+ * @brief Return current ARQ speed level (gear index).
+ * @return Current speed level.
+ */
 int arq_get_speed_level(void)
 {
     int gear = 0;
@@ -3055,6 +3429,10 @@ int arq_get_speed_level(void)
     return gear;
 }
 
+/**
+ * @brief Return current ARQ payload FreeDV mode.
+ * @return Payload mode, or DATAC4 fallback when unavailable.
+ */
 int arq_get_payload_mode(void)
 {
     int mode;
@@ -3068,6 +3446,10 @@ int arq_get_payload_mode(void)
     return mode;
 }
 
+/**
+ * @brief Return current ARQ control FreeDV mode.
+ * @return Control mode, or DATAC13 fallback when unavailable.
+ */
 int arq_get_control_mode(void)
 {
     int mode;
@@ -3081,6 +3463,9 @@ int arq_get_control_mode(void)
     return mode;
 }
 
+/**
+ * @brief Internal ARQ helper: preferred_rx_mode_locked.
+ */
 static int preferred_rx_mode_locked(time_t now)
 {
     int mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : FREEDV_MODE_DATAC4;
@@ -3136,6 +3521,9 @@ static int preferred_rx_mode_locked(time_t now)
     return mode;
 }
 
+/**
+ * @brief Internal ARQ helper: preferred_tx_mode_locked.
+ */
 static int preferred_tx_mode_locked(time_t now)
 {
     int mode = is_payload_mode(arq_ctx.payload_mode) ? arq_ctx.payload_mode : arq_conn.mode;
@@ -3184,6 +3572,10 @@ static int preferred_tx_mode_locked(time_t now)
     return mode;
 }
 
+/**
+ * @brief Compute policy-preferred receive mode for modem RX path.
+ * @return Preferred RX FreeDV mode.
+ */
 int arq_get_preferred_rx_mode(void)
 {
     int mode;
@@ -3198,6 +3590,10 @@ int arq_get_preferred_rx_mode(void)
     return mode;
 }
 
+/**
+ * @brief Compute policy-preferred transmit mode for modem TX path.
+ * @return Preferred TX FreeDV mode.
+ */
 int arq_get_preferred_tx_mode(void)
 {
     int mode;
@@ -3212,6 +3608,11 @@ int arq_get_preferred_tx_mode(void)
     return mode;
 }
 
+/**
+ * @brief Export a point-in-time ARQ runtime snapshot.
+ * @param snapshot Output snapshot structure.
+ * @return true when snapshot was produced from initialized state.
+ */
 bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
 {
     size_t pending = 0;
@@ -3253,6 +3654,9 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     return snapshot->initialized;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_set_active_modem_mode_locked.
+ */
 static void arq_set_active_modem_mode_locked(int mode, size_t frame_size)
 {
     arq_conn.mode = mode;
@@ -3267,6 +3671,11 @@ static void arq_set_active_modem_mode_locked(int mode, size_t frame_size)
     }
 }
 
+/**
+ * @brief Notify ARQ of modem mode/frame size actually active on modem side.
+ * @param mode Active FreeDV mode.
+ * @param frame_size Active frame size in bytes.
+ */
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     if (!arq_fsm_lock_ready || frame_size == 0 || frame_size > INT_BUFFER_SIZE)
@@ -3283,6 +3692,9 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
     arq_unlock();
 }
 
+/**
+ * @brief Internal ARQ helper: handle_control_frame_locked.
+ */
 static void handle_control_frame_locked(uint8_t subtype,
                                         uint8_t session_id,
                                         uint8_t ack,
@@ -3548,6 +3960,9 @@ static void handle_control_frame_locked(uint8_t subtype,
     }
 }
 
+/**
+ * @brief Internal ARQ helper: handle_data_frame_locked.
+ */
 static void handle_data_frame_locked(uint8_t session_id,
                                      uint8_t seq,
                                      const uint8_t *payload,
@@ -3603,6 +4018,9 @@ static void handle_data_frame_locked(uint8_t session_id,
     }
 }
 
+/**
+ * @brief Internal ARQ helper: arq_handle_incoming_connect_frame_locked.
+ */
 static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t frame_size)
 {
     uint8_t meta;
@@ -3675,6 +4093,12 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
     return true;
 }
 
+/**
+ * @brief Handle incoming compressed connect/control frame.
+ * @param data Frame bytes.
+ * @param frame_size Frame length in bytes.
+ * @return true if frame was accepted by connect-frame handler.
+ */
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 {
     if (!data || frame_size != ARQ_CONTROL_FRAME_SIZE)
@@ -3703,6 +4127,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     return handled;
 }
 
+/**
+ * @brief Internal ARQ helper: arq_handle_incoming_frame_locked.
+ */
 static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_size)
 {
     uint8_t packet_type;
@@ -3742,6 +4169,11 @@ static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_s
         handle_data_frame_locked(session_id, seq, payload, payload_len);
 }
 
+/**
+ * @brief Handle regular incoming ARQ frame (control or data).
+ * @param data Frame bytes.
+ * @param frame_size Frame length in bytes.
+ */
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 {
     if (!data || frame_size < HEADER_SIZE)
@@ -3761,6 +4193,9 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
     arq_unlock();
 }
 
+/**
+ * @brief Internal ARQ helper: arq_update_link_metrics_locked.
+ */
 static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, bool frame_decoded, time_t now)
 {
     uint64_t now_ms = arq_realtime_ms();
@@ -3796,6 +4231,13 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
     }
 }
 
+/**
+ * @brief Update ARQ link adaptation metrics from decoder feedback.
+ * @param sync Decoder sync flag.
+ * @param snr Estimated signal-to-noise ratio.
+ * @param rx_status Decoder status bits.
+ * @param frame_decoded True when a frame decoded this cycle.
+ */
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
     if (!arq_fsm_lock_ready)
@@ -3814,6 +4256,11 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
     arq_unlock();
 }
 
+/**
+ * @brief Try to dequeue next modem action without blocking.
+ * @param action Output action structure.
+ * @return true when an action was dequeued.
+ */
 bool arq_try_dequeue_action(arq_action_t *action)
 {
     bool ok;
@@ -3833,6 +4280,12 @@ bool arq_try_dequeue_action(arq_action_t *action)
     return ok;
 }
 
+/**
+ * @brief Wait for next modem action up to timeout.
+ * @param action Output action structure.
+ * @param timeout_ms Timeout in milliseconds.
+ * @return true when an action was dequeued before timeout.
+ */
 bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms)
 {
     int rc = 0;
@@ -3877,6 +4330,9 @@ bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms)
     return ok;
 }
 
+/**
+ * @brief Clear ARQ runtime/buffer state used by legacy compatibility path.
+ */
 void clear_connection_data(void)
 {
     if (!arq_fsm_lock_ready)
@@ -3888,6 +4344,10 @@ void clear_connection_data(void)
     arq_unlock();
 }
 
+/**
+ * @brief Reset caller-provided arq_info structure to defaults.
+ * @param arq_conn_i Structure to reset.
+ */
 void reset_arq_info(arq_info *arq_conn_i)
 {
     if (!arq_conn_i)
@@ -3905,6 +4365,9 @@ void reset_arq_info(arq_info *arq_conn_i)
     arq_conn_i->mode = 0;
 }
 
+/**
+ * @brief Trigger outgoing call event using configured source/destination callsigns.
+ */
 void call_remote(void)
 {
     if (!arq_fsm_lock_ready)
@@ -3928,6 +4391,9 @@ void call_remote(void)
     arq_unlock();
 }
 
+/**
+ * @brief Trigger callee-side accept event from compatibility path.
+ */
 void callee_accept_connection(void)
 {
     if (!arq_fsm_lock_ready)
