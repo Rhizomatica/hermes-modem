@@ -52,6 +52,8 @@ make
 
 ## API documentation (Doxygen)
 
+Online HTML docs: https://rhizomatica.github.io/hermes-modem/
+
 If you have `doxygen` installed, you can generate HTML documentation for the ARQ subsystem:
 
 ```
