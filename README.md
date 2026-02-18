@@ -50,6 +50,20 @@ Edit config.mk with your C compiler and appropriate flags (defaults should be fi
 make
 ```
 
+## API documentation (Doxygen)
+
+If you have `doxygen` installed, you can generate HTML documentation for the ARQ subsystem:
+
+```
+make doxygen
+```
+
+Output will be generated in `docs/html/` (open `docs/html/index.html` in a browser). To remove generated docs:
+
+```
+make doxygen-clean
+```
+
 ## Logging and collision tracing
 
 - Default run (`./mercury`): logger runs at **INFO** level with timestamps (`[INF]/[WRN]/[ERR]`).

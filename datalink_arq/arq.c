@@ -2899,12 +2899,7 @@ static void state_disconnecting(int event)
     }
 }
 
-/**
- * @brief Initialize ARQ subsystem state, workers, and channel bus.
- * @param frame_size Active modem frame size in bytes.
- * @param mode Startup modem mode.
- * @return EXIT_SUCCESS on success, EXIT_FAILURE on initialization error.
- */
+/* See arq.h for API docs. */
 int arq_init(size_t frame_size, int mode)
 {
     if (frame_size < ARQ_PAYLOAD_OFFSET + 8 || frame_size > INT_BUFFER_SIZE)
@@ -3053,10 +3048,7 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
-/**
- * @brief Enqueue an FSM event into the ARQ event loop.
- * @param event Event identifier from fsm.h.
- */
+/* See arq.h for API docs. */
 void arq_post_event(int event)
 {
     if (!arq_fsm_lock_ready)
@@ -3175,12 +3167,7 @@ static int arq_queue_app_data_locked(const uint8_t *data, size_t len)
     return (int)len;
 }
 
-/**
- * @brief Queue outbound application bytes for ARQ transfer.
- * @param data Payload buffer.
- * @param len Payload length in bytes.
- * @return Number of bytes queued (possibly partial), or 0 when unavailable.
- */
+/* See arq.h for API docs. */
 int arq_queue_data(const uint8_t *data, size_t len)
 {
     size_t total_queued = 0;
@@ -3342,11 +3329,7 @@ static void *arq_payload_bridge_worker(void *arg)
     return NULL;
 }
 
-/**
- * @brief Submit a parsed TCP control command to ARQ.
- * @param cmd Command message.
- * @return 0 on success, -1 on invalid input or queue error.
- */
+/* See arq.h for API docs. */
 int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
 {
     if (!cmd || !arq_fsm_lock_ready)
@@ -3355,12 +3338,7 @@ int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
     return arq_channel_bus_try_send_cmd(&arq_bus, cmd);
 }
 
-/**
- * @brief Submit TCP payload bytes into ARQ ingress queue.
- * @param data Payload bytes.
- * @param len Payload length in bytes.
- * @return 0 on success, -1 on invalid input or queue error.
- */
+/* See arq.h for API docs. */
 int arq_submit_tcp_payload(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || len > INT_BUFFER_SIZE || !arq_fsm_lock_ready)
@@ -3593,11 +3571,7 @@ int arq_get_preferred_tx_mode(void)
     return mode;
 }
 
-/**
- * @brief Export a point-in-time ARQ runtime snapshot.
- * @param snapshot Output snapshot structure.
- * @return true when snapshot was produced from initialized state.
- */
+/* See arq.h for API docs. */
 bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
 {
     size_t pending = 0;
@@ -3656,11 +3630,7 @@ static void arq_set_active_modem_mode_locked(int mode, size_t frame_size)
     }
 }
 
-/**
- * @brief Notify ARQ of modem mode/frame size actually active on modem side.
- * @param mode Active FreeDV mode.
- * @param frame_size Active frame size in bytes.
- */
+/* See arq.h for API docs. */
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     if (!arq_fsm_lock_ready || frame_size == 0 || frame_size > INT_BUFFER_SIZE)
@@ -4086,12 +4056,7 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
     return true;
 }
 
-/**
- * @brief Handle incoming compressed connect/control frame.
- * @param data Frame bytes.
- * @param frame_size Frame length in bytes.
- * @return true if frame was accepted by connect-frame handler.
- */
+/* See arq.h for API docs. */
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 {
     if (!data || frame_size != ARQ_CONTROL_FRAME_SIZE)
@@ -4162,11 +4127,7 @@ static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_s
         handle_data_frame_locked(session_id, seq, payload, payload_len);
 }
 
-/**
- * @brief Handle regular incoming ARQ frame (control or data).
- * @param data Frame bytes.
- * @param frame_size Frame length in bytes.
- */
+/* See arq.h for API docs. */
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 {
     if (!data || frame_size < HEADER_SIZE)
@@ -4225,13 +4186,7 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
     }
 }
 
-/**
- * @brief Update ARQ link adaptation metrics from decoder feedback.
- * @param sync Decoder sync flag.
- * @param snr Estimated signal-to-noise ratio.
- * @param rx_status Decoder status bits.
- * @param frame_decoded True when a frame decoded this cycle.
- */
+/* See arq.h for API docs. */
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
     if (!arq_fsm_lock_ready)
@@ -4250,11 +4205,7 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
     arq_unlock();
 }
 
-/**
- * @brief Try to dequeue next modem action without blocking.
- * @param action Output action structure.
- * @return true when an action was dequeued.
- */
+/* See arq.h for API docs. */
 bool arq_try_dequeue_action(arq_action_t *action)
 {
     bool ok;
@@ -4274,12 +4225,7 @@ bool arq_try_dequeue_action(arq_action_t *action)
     return ok;
 }
 
-/**
- * @brief Wait for next modem action up to timeout.
- * @param action Output action structure.
- * @param timeout_ms Timeout in milliseconds.
- * @return true when an action was dequeued before timeout.
- */
+/* See arq.h for API docs. */
 bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms)
 {
     int rc = 0;
@@ -4338,25 +4284,22 @@ void clear_connection_data(void)
     arq_unlock();
 }
 
-/**
- * @brief Reset caller-provided arq_info structure to defaults.
- * @param arq_conn_i Structure to reset.
- */
-void reset_arq_info(arq_info *arq_conn_i)
+/* See arq.h for API docs. */
+void reset_arq_info(arq_info *arq_conn)
 {
-    if (!arq_conn_i)
+    if (!arq_conn)
         return;
 
-    arq_conn_i->TRX = RX;
-    arq_conn_i->my_call_sign[0] = 0;
-    arq_conn_i->src_addr[0] = 0;
-    arq_conn_i->dst_addr[0] = 0;
-    arq_conn_i->encryption = false;
-    arq_conn_i->call_burst_size = 1;
-    arq_conn_i->listen = false;
-    arq_conn_i->bw = 0;
-    arq_conn_i->frame_size = 0;
-    arq_conn_i->mode = 0;
+    arq_conn->TRX = RX;
+    arq_conn->my_call_sign[0] = 0;
+    arq_conn->src_addr[0] = 0;
+    arq_conn->dst_addr[0] = 0;
+    arq_conn->encryption = false;
+    arq_conn->call_burst_size = 1;
+    arq_conn->listen = false;
+    arq_conn->bw = 0;
+    arq_conn->frame_size = 0;
+    arq_conn->mode = 0;
 }
 
 /**

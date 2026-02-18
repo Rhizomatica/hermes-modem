@@ -504,15 +504,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true when snapshot contains initialized state.</dd></dl>
-<p>Copy ARQ runtime snapshot.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">snapshot</td><td>Output snapshot structure. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>true when snapshot was produced from initialized state. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true when snapshot contains initialized state. </dd></dl>
 
 </div>
 </div>
@@ -596,16 +588,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true if frame was handled by ARQ connect path.</dd></dl>
-<p>Handle incoming compressed CALL/ACCEPT frame.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
-    <tr><td class="paramname">frame_size</td><td>Frame length in bytes. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>true if frame was accepted by connect-frame handler. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if frame was handled by ARQ connect path. </dd></dl>
 
 </div>
 </div>
@@ -636,14 +619,6 @@ Variables</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Handle incoming regular ARQ control/data frame. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
-    <tr><td class="paramname">frame_size</td><td>Frame length in bytes.</td></tr>
-  </table>
-  </dd>
-</dl>
-<p>Handle incoming regular ARQ control/data frame.</p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
@@ -688,16 +663,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, non-zero on failure.</dd></dl>
-<p>Initialize ARQ subsystem.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">frame_size</td><td>Active modem frame size in bytes. </td></tr>
-    <tr><td class="paramname">mode</td><td>Startup modem mode. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>EXIT_SUCCESS on success, EXIT_FAILURE on initialization error. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>0 on success, non-zero on failure. </dd></dl>
 
 </div>
 </div>
@@ -743,13 +709,6 @@ Variables</h2></td></tr>
 <p>Post an FSM event to ARQ. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">event</td><td>Event identifier from <a class="el" href="fsm_8h.html">fsm.h</a>.</td></tr>
-  </table>
-  </dd>
-</dl>
-<p>Post an FSM event to ARQ.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
     <tr><td class="paramname">event</td><td>Event identifier from <a class="el" href="fsm_8h.html">fsm.h</a>. </td></tr>
   </table>
   </dd>
@@ -791,16 +750,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>Number of bytes queued, or negative on error.</dd></dl>
-<p>Queue outbound payload bytes for ARQ transmission.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">data</td><td>Payload buffer. </td></tr>
-    <tr><td class="paramname">len</td><td>Payload length in bytes. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>Number of bytes queued (possibly partial), or 0 when unavailable. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>Number of bytes queued, or negative on error. </dd></dl>
 
 </div>
 </div>
@@ -831,14 +781,6 @@ Variables</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Inform ARQ of modem mode/frame size actually active in modem. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">mode</td><td>Active FreeDV mode. </td></tr>
-    <tr><td class="paramname">frame_size</td><td>Active frame size in bytes.</td></tr>
-  </table>
-  </dd>
-</dl>
-<p>Inform ARQ of modem mode/frame size actually active in modem.</p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">mode</td><td>Active FreeDV mode. </td></tr>
@@ -893,15 +835,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, negative on queue/error.</dd></dl>
-<p>Submit parsed control command from TCP bridge to ARQ.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">cmd</td><td>Command message. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, -1 on invalid input or queue error. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>0 on success, negative on queue/error. </dd></dl>
 
 </div>
 </div>
@@ -939,16 +873,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, negative on queue/error.</dd></dl>
-<p>Submit payload bytes from TCP bridge to ARQ.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">data</td><td>Payload bytes. </td></tr>
-    <tr><td class="paramname">len</td><td>Payload length in bytes. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, -1 on invalid input or queue error. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>0 on success, negative on queue/error. </dd></dl>
 
 </div>
 </div>
@@ -996,14 +921,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true if an action was dequeued.</dd></dl>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">action</td><td>Output action structure. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>true when an action was dequeued. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if an action was dequeued. </dd></dl>
 
 </div>
 </div>
@@ -1051,16 +969,6 @@ Variables</h2></td></tr>
     <tr><td class="paramname">sync</td><td>Decoder sync flag. </td></tr>
     <tr><td class="paramname">snr</td><td>Estimated SNR. </td></tr>
     <tr><td class="paramname">rx_status</td><td>Decoder RX status flags. </td></tr>
-    <tr><td class="paramname">frame_decoded</td><td>True when a frame decoded this cycle.</td></tr>
-  </table>
-  </dd>
-</dl>
-<p>Feed decoder/link metrics into ARQ adaptation.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">sync</td><td>Decoder sync flag. </td></tr>
-    <tr><td class="paramname">snr</td><td>Estimated signal-to-noise ratio. </td></tr>
-    <tr><td class="paramname">rx_status</td><td>Decoder status bits. </td></tr>
     <tr><td class="paramname">frame_decoded</td><td>True when a frame decoded this cycle. </td></tr>
   </table>
   </dd>
@@ -1102,16 +1010,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true if an action was dequeued.</dd></dl>
-<p>Wait for next modem action.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">action</td><td>Output action structure. </td></tr>
-    <tr><td class="paramname">timeout_ms</td><td>Timeout in milliseconds. </td></tr>
-  </table>
-  </dd>
-</dl>
-<dl class="section return"><dt>Returns</dt><dd>true when an action was dequeued before timeout. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if an action was dequeued. </dd></dl>
 
 </div>
 </div>
@@ -1188,7 +1087,7 @@ Variables</h2></td></tr>
           <td class="memname">void reset_arq_info </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structarq__info.html">arq_info</a> *&#160;</td>
-          <td class="paramname"><em>arq_conn_i</em></td><td>)</td>
+          <td class="paramname"><em>arq_conn</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
@@ -1197,14 +1096,7 @@ Variables</h2></td></tr>
 <p>Reset external <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">arq_conn</td><td>Pointer to structure to reset.</td></tr>
-  </table>
-  </dd>
-</dl>
-<p>Reset external <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure.</p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">arq_conn_i</td><td>Structure to reset. </td></tr>
+    <tr><td class="paramname">arq_conn</td><td>Pointer to structure to reset. </td></tr>
   </table>
   </dd>
 </dl>

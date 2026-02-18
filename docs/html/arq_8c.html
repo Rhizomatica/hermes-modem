@@ -660,7 +660,7 @@ Functions</h2></td></tr>
 <tr class="memdesc:a9aba6be089415061ba4b9589d8dbe04c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Internal ARQ helper: state_connected_common.  <br /></td></tr>
 <tr class="separator:a9aba6be089415061ba4b9589d8dbe04c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a124478c5cd13f1e211666b2051e6ac70" id="r_a124478c5cd13f1e211666b2051e6ac70"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a124478c5cd13f1e211666b2051e6ac70">arq_init</a> (size_t frame_size, int mode)</td></tr>
-<tr class="memdesc:a124478c5cd13f1e211666b2051e6ac70"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initialize ARQ subsystem state, workers, and channel bus.  <br /></td></tr>
+<tr class="memdesc:a124478c5cd13f1e211666b2051e6ac70"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initialize ARQ subsystem.  <br /></td></tr>
 <tr class="separator:a124478c5cd13f1e211666b2051e6ac70"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af4405a7f9f73579526b8e51e2f34fc1f" id="r_af4405a7f9f73579526b8e51e2f34fc1f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#af4405a7f9f73579526b8e51e2f34fc1f">arq_shutdown</a> (void)</td></tr>
 <tr class="memdesc:af4405a7f9f73579526b8e51e2f34fc1f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Stop ARQ workers and release ARQ runtime resources.  <br /></td></tr>
@@ -669,19 +669,19 @@ Functions</h2></td></tr>
 <tr class="memdesc:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Check whether ARQ is currently in a connected state.  <br /></td></tr>
 <tr class="separator:ac508dd91b0ac44ed4dc4b8c34ed188a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4098ee343c6a96aef872c8d682f5d815" id="r_a4098ee343c6a96aef872c8d682f5d815"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a4098ee343c6a96aef872c8d682f5d815">arq_post_event</a> (int event)</td></tr>
-<tr class="memdesc:a4098ee343c6a96aef872c8d682f5d815"><td class="mdescLeft">&#160;</td><td class="mdescRight">Enqueue an FSM event into the ARQ event loop.  <br /></td></tr>
+<tr class="memdesc:a4098ee343c6a96aef872c8d682f5d815"><td class="mdescLeft">&#160;</td><td class="mdescRight">Post an FSM event to ARQ.  <br /></td></tr>
 <tr class="separator:a4098ee343c6a96aef872c8d682f5d815"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac445c576b8db69543d81a3ea83ddeac4" id="r_ac445c576b8db69543d81a3ea83ddeac4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac445c576b8db69543d81a3ea83ddeac4">arq_tick_1hz</a> (void)</td></tr>
 <tr class="memdesc:ac445c576b8db69543d81a3ea83ddeac4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Execute 1 Hz maintenance logic (timeouts, keepalive, slot TX).  <br /></td></tr>
 <tr class="separator:ac445c576b8db69543d81a3ea83ddeac4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ace211c35fb67ea6ac3d9115b6145f404" id="r_ace211c35fb67ea6ac3d9115b6145f404"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ace211c35fb67ea6ac3d9115b6145f404">arq_queue_data</a> (const uint8_t *data, size_t len)</td></tr>
-<tr class="memdesc:ace211c35fb67ea6ac3d9115b6145f404"><td class="mdescLeft">&#160;</td><td class="mdescRight">Queue outbound application bytes for ARQ transfer.  <br /></td></tr>
+<tr class="memdesc:ace211c35fb67ea6ac3d9115b6145f404"><td class="mdescLeft">&#160;</td><td class="mdescRight">Queue outbound payload bytes for ARQ transmission.  <br /></td></tr>
 <tr class="separator:ace211c35fb67ea6ac3d9115b6145f404"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0b2cc156d65b108859935ba259c2248b" id="r_a0b2cc156d65b108859935ba259c2248b"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a0b2cc156d65b108859935ba259c2248b">arq_submit_tcp_cmd</a> (const <a class="el" href="structarq__cmd__msg__t.html">arq_cmd_msg_t</a> *cmd)</td></tr>
-<tr class="memdesc:a0b2cc156d65b108859935ba259c2248b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Submit a parsed TCP control command to ARQ.  <br /></td></tr>
+<tr class="memdesc:a0b2cc156d65b108859935ba259c2248b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Submit parsed control command from TCP bridge to ARQ.  <br /></td></tr>
 <tr class="separator:a0b2cc156d65b108859935ba259c2248b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1396fc1795106d9b3827799fac64517c" id="r_a1396fc1795106d9b3827799fac64517c"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a1396fc1795106d9b3827799fac64517c">arq_submit_tcp_payload</a> (const uint8_t *data, size_t len)</td></tr>
-<tr class="memdesc:a1396fc1795106d9b3827799fac64517c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Submit TCP payload bytes into ARQ ingress queue.  <br /></td></tr>
+<tr class="memdesc:a1396fc1795106d9b3827799fac64517c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Submit payload bytes from TCP bridge to ARQ.  <br /></td></tr>
 <tr class="separator:a1396fc1795106d9b3827799fac64517c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac7eb6578855b43252d4fe6b75729765a" id="r_ac7eb6578855b43252d4fe6b75729765a"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ac7eb6578855b43252d4fe6b75729765a">arq_get_tx_backlog_bytes</a> (void)</td></tr>
 <tr class="memdesc:ac7eb6578855b43252d4fe6b75729765a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Return outbound ARQ backlog size in bytes.  <br /></td></tr>
@@ -702,10 +702,10 @@ Functions</h2></td></tr>
 <tr class="memdesc:ae388724ef6bc7b7cef06c1fc4c74631f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Compute policy-preferred transmit mode for modem TX path.  <br /></td></tr>
 <tr class="separator:ae388724ef6bc7b7cef06c1fc4c74631f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3a0167ad3d586e1782a3d078579383c0" id="r_a3a0167ad3d586e1782a3d078579383c0"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a3a0167ad3d586e1782a3d078579383c0">arq_get_runtime_snapshot</a> (<a class="el" href="structarq__runtime__snapshot__t.html">arq_runtime_snapshot_t</a> *snapshot)</td></tr>
-<tr class="memdesc:a3a0167ad3d586e1782a3d078579383c0"><td class="mdescLeft">&#160;</td><td class="mdescRight">Export a point-in-time ARQ runtime snapshot.  <br /></td></tr>
+<tr class="memdesc:a3a0167ad3d586e1782a3d078579383c0"><td class="mdescLeft">&#160;</td><td class="mdescRight">Copy ARQ runtime snapshot.  <br /></td></tr>
 <tr class="separator:a3a0167ad3d586e1782a3d078579383c0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a67d12cb2540272e8dde165df7f3d8c47" id="r_a67d12cb2540272e8dde165df7f3d8c47"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a67d12cb2540272e8dde165df7f3d8c47">arq_set_active_modem_mode</a> (int mode, size_t frame_size)</td></tr>
-<tr class="memdesc:a67d12cb2540272e8dde165df7f3d8c47"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify ARQ of modem mode/frame size actually active on modem side.  <br /></td></tr>
+<tr class="memdesc:a67d12cb2540272e8dde165df7f3d8c47"><td class="mdescLeft">&#160;</td><td class="mdescRight">Inform ARQ of modem mode/frame size actually active in modem.  <br /></td></tr>
 <tr class="separator:a67d12cb2540272e8dde165df7f3d8c47"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1b41df4e65da5e4df97a4f8d93ca1a7e" id="r_a1b41df4e65da5e4df97a4f8d93ca1a7e"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a1b41df4e65da5e4df97a4f8d93ca1a7e">handle_control_frame_locked</a> (uint8_t subtype, uint8_t session_id, uint8_t ack, const uint8_t *payload, size_t payload_len)</td></tr>
 <tr class="memdesc:a1b41df4e65da5e4df97a4f8d93ca1a7e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Internal ARQ helper: handle_control_frame_locked.  <br /></td></tr>
@@ -714,26 +714,26 @@ Functions</h2></td></tr>
 <tr class="memdesc:af5263ceccee8e392319ee2f3dfec4b47"><td class="mdescLeft">&#160;</td><td class="mdescRight">Internal ARQ helper: handle_data_frame_locked.  <br /></td></tr>
 <tr class="separator:af5263ceccee8e392319ee2f3dfec4b47"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a680e48d89b1ee94ab8335b130ce74500" id="r_a680e48d89b1ee94ab8335b130ce74500"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a680e48d89b1ee94ab8335b130ce74500">arq_handle_incoming_connect_frame</a> (uint8_t *data, size_t frame_size)</td></tr>
-<tr class="memdesc:a680e48d89b1ee94ab8335b130ce74500"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming compressed connect/control frame.  <br /></td></tr>
+<tr class="memdesc:a680e48d89b1ee94ab8335b130ce74500"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming compressed CALL/ACCEPT frame.  <br /></td></tr>
 <tr class="separator:a680e48d89b1ee94ab8335b130ce74500"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a19e4ff35b1b05ae68720b55beee467bb" id="r_a19e4ff35b1b05ae68720b55beee467bb"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a19e4ff35b1b05ae68720b55beee467bb">arq_handle_incoming_frame</a> (uint8_t *data, size_t frame_size)</td></tr>
-<tr class="memdesc:a19e4ff35b1b05ae68720b55beee467bb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle regular incoming ARQ frame (control or data).  <br /></td></tr>
+<tr class="memdesc:a19e4ff35b1b05ae68720b55beee467bb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handle incoming regular ARQ control/data frame.  <br /></td></tr>
 <tr class="separator:a19e4ff35b1b05ae68720b55beee467bb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a13dc145e5a843e32bb1fe641de60d1da" id="r_a13dc145e5a843e32bb1fe641de60d1da"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a13dc145e5a843e32bb1fe641de60d1da">arq_update_link_metrics</a> (int sync, float snr, int rx_status, bool frame_decoded)</td></tr>
-<tr class="memdesc:a13dc145e5a843e32bb1fe641de60d1da"><td class="mdescLeft">&#160;</td><td class="mdescRight">Update ARQ link adaptation metrics from decoder feedback.  <br /></td></tr>
+<tr class="memdesc:a13dc145e5a843e32bb1fe641de60d1da"><td class="mdescLeft">&#160;</td><td class="mdescRight">Feed decoder/link metrics into ARQ adaptation.  <br /></td></tr>
 <tr class="separator:a13dc145e5a843e32bb1fe641de60d1da"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a8707db9e45785f0028f031c3d73e7a2d" id="r_a8707db9e45785f0028f031c3d73e7a2d"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a8707db9e45785f0028f031c3d73e7a2d">arq_try_dequeue_action</a> (<a class="el" href="structarq__action__t.html">arq_action_t</a> *action)</td></tr>
 <tr class="memdesc:a8707db9e45785f0028f031c3d73e7a2d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Try to dequeue next modem action without blocking.  <br /></td></tr>
 <tr class="separator:a8707db9e45785f0028f031c3d73e7a2d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4e3fbf1727d1e8fe2c3ae424dc6e6877" id="r_a4e3fbf1727d1e8fe2c3ae424dc6e6877"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a4e3fbf1727d1e8fe2c3ae424dc6e6877">arq_wait_dequeue_action</a> (<a class="el" href="structarq__action__t.html">arq_action_t</a> *action, int timeout_ms)</td></tr>
-<tr class="memdesc:a4e3fbf1727d1e8fe2c3ae424dc6e6877"><td class="mdescLeft">&#160;</td><td class="mdescRight">Wait for next modem action up to timeout.  <br /></td></tr>
+<tr class="memdesc:a4e3fbf1727d1e8fe2c3ae424dc6e6877"><td class="mdescLeft">&#160;</td><td class="mdescRight">Wait for next modem action.  <br /></td></tr>
 <tr class="separator:a4e3fbf1727d1e8fe2c3ae424dc6e6877"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3619b45844362fbbd90dbe680a01db27" id="r_a3619b45844362fbbd90dbe680a01db27"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a3619b45844362fbbd90dbe680a01db27">clear_connection_data</a> (void)</td></tr>
 <tr class="memdesc:a3619b45844362fbbd90dbe680a01db27"><td class="mdescLeft">&#160;</td><td class="mdescRight">Clear ARQ runtime/buffer state used by legacy compatibility path.  <br /></td></tr>
 <tr class="separator:a3619b45844362fbbd90dbe680a01db27"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a6480b799f3f37843aa4d1f10963cc1cd" id="r_a6480b799f3f37843aa4d1f10963cc1cd"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a6480b799f3f37843aa4d1f10963cc1cd">reset_arq_info</a> (<a class="el" href="structarq__info.html">arq_info</a> *arq_conn_i)</td></tr>
-<tr class="memdesc:a6480b799f3f37843aa4d1f10963cc1cd"><td class="mdescLeft">&#160;</td><td class="mdescRight">Reset caller-provided <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure to defaults.  <br /></td></tr>
-<tr class="separator:a6480b799f3f37843aa4d1f10963cc1cd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8f582fd8a48b56a65e3c2fc5ee3e8b8a" id="r_a8f582fd8a48b56a65e3c2fc5ee3e8b8a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#a8f582fd8a48b56a65e3c2fc5ee3e8b8a">reset_arq_info</a> (<a class="el" href="structarq__info.html">arq_info</a> *<a class="el" href="arq_8c.html#a0f6867b4f42465246425479aaaef7043">arq_conn</a>)</td></tr>
+<tr class="memdesc:a8f582fd8a48b56a65e3c2fc5ee3e8b8a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Reset external <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure.  <br /></td></tr>
+<tr class="separator:a8f582fd8a48b56a65e3c2fc5ee3e8b8a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad855e33acc9a6ba29009fe3849929730" id="r_ad855e33acc9a6ba29009fe3849929730"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq_8c.html#ad855e33acc9a6ba29009fe3849929730">call_remote</a> (void)</td></tr>
 <tr class="memdesc:ad855e33acc9a6ba29009fe3849929730"><td class="mdescLeft">&#160;</td><td class="mdescRight">Trigger outgoing call event using configured source/destination callsigns.  <br /></td></tr>
 <tr class="separator:ad855e33acc9a6ba29009fe3849929730"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -2425,15 +2425,14 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Export a point-in-time ARQ runtime snapshot. </p>
-<p>Copy ARQ runtime snapshot.</p>
+<p>Copy ARQ runtime snapshot. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">snapshot</td><td>Output snapshot structure. </td></tr>
+    <tr><td class="paramname">snapshot</td><td>Output snapshot pointer. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true when snapshot was produced from initialized state. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true when snapshot contains initialized state. </dd></dl>
 
 </div>
 </div>
@@ -2507,8 +2506,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Handle incoming compressed connect/control frame. </p>
-<p>Handle incoming compressed CALL/ACCEPT frame.</p>
+<p>Handle incoming compressed CALL/ACCEPT frame. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
@@ -2516,7 +2514,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true if frame was accepted by connect-frame handler. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if frame was handled by ARQ connect path. </dd></dl>
 
 </div>
 </div>
@@ -2584,8 +2582,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Handle regular incoming ARQ frame (control or data). </p>
-<p>Handle incoming regular ARQ control/data frame.</p>
+<p>Handle incoming regular ARQ control/data frame. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Frame bytes. </td></tr>
@@ -2688,16 +2685,15 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Initialize ARQ subsystem state, workers, and channel bus. </p>
-<p>Initialize ARQ subsystem.</p>
+<p>Initialize ARQ subsystem. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">frame_size</td><td>Active modem frame size in bytes. </td></tr>
-    <tr><td class="paramname">mode</td><td>Startup modem mode. </td></tr>
+    <tr><td class="paramname">mode</td><td>Initial modem mode. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>EXIT_SUCCESS on success, EXIT_FAILURE on initialization error. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>0 on success, non-zero on failure. </dd></dl>
 
 </div>
 </div>
@@ -2830,8 +2826,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Enqueue an FSM event into the ARQ event loop. </p>
-<p>Post an FSM event to ARQ.</p>
+<p>Post an FSM event to ARQ. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">event</td><td>Event identifier from <a class="el" href="fsm_8h.html">fsm.h</a>. </td></tr>
@@ -2933,16 +2928,15 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Queue outbound application bytes for ARQ transfer. </p>
-<p>Queue outbound payload bytes for ARQ transmission.</p>
+<p>Queue outbound payload bytes for ARQ transmission. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">data</td><td>Payload buffer. </td></tr>
-    <tr><td class="paramname">len</td><td>Payload length in bytes. </td></tr>
+    <tr><td class="paramname">data</td><td>Pointer to payload bytes. </td></tr>
+    <tr><td class="paramname">len</td><td>Number of bytes to queue. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>Number of bytes queued (possibly partial), or 0 when unavailable. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>Number of bytes queued, or negative on error. </dd></dl>
 
 </div>
 </div>
@@ -3000,8 +2994,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Notify ARQ of modem mode/frame size actually active on modem side. </p>
-<p>Inform ARQ of modem mode/frame size actually active in modem.</p>
+<p>Inform ARQ of modem mode/frame size actually active in modem. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">mode</td><td>Active FreeDV mode. </td></tr>
@@ -3087,15 +3080,14 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Submit a parsed TCP control command to ARQ. </p>
-<p>Submit parsed control command from TCP bridge to ARQ.</p>
+<p>Submit parsed control command from TCP bridge to ARQ. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">cmd</td><td>Command message. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, -1 on invalid input or queue error. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>0 on success, negative on queue/error. </dd></dl>
 
 </div>
 </div>
@@ -3125,8 +3117,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Submit TCP payload bytes into ARQ ingress queue. </p>
-<p>Submit payload bytes from TCP bridge to ARQ.</p>
+<p>Submit payload bytes from TCP bridge to ARQ. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">data</td><td>Payload bytes. </td></tr>
@@ -3134,7 +3125,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>0 on success, -1 on invalid input or queue error. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>0 on success, negative on queue/error. </dd></dl>
 
 </div>
 </div>
@@ -3178,11 +3169,11 @@ Variables</h2></td></tr>
 <p>Try to dequeue next modem action without blocking. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">action</td><td>Output action structure. </td></tr>
+    <tr><td class="paramname">action</td><td>Output action item. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true when an action was dequeued. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if an action was dequeued. </dd></dl>
 
 </div>
 </div>
@@ -3252,13 +3243,12 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Update ARQ link adaptation metrics from decoder feedback. </p>
-<p>Feed decoder/link metrics into ARQ adaptation.</p>
+<p>Feed decoder/link metrics into ARQ adaptation. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">sync</td><td>Decoder sync flag. </td></tr>
-    <tr><td class="paramname">snr</td><td>Estimated signal-to-noise ratio. </td></tr>
-    <tr><td class="paramname">rx_status</td><td>Decoder status bits. </td></tr>
+    <tr><td class="paramname">snr</td><td>Estimated SNR. </td></tr>
+    <tr><td class="paramname">rx_status</td><td>Decoder RX status flags. </td></tr>
     <tr><td class="paramname">frame_decoded</td><td>True when a frame decoded this cycle. </td></tr>
   </table>
   </dd>
@@ -3348,16 +3338,15 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Wait for next modem action up to timeout. </p>
-<p>Wait for next modem action.</p>
+<p>Wait for next modem action. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">action</td><td>Output action structure. </td></tr>
-    <tr><td class="paramname">timeout_ms</td><td>Timeout in milliseconds. </td></tr>
+    <tr><td class="paramname">action</td><td>Output action item. </td></tr>
+    <tr><td class="paramname">timeout_ms</td><td>Wait timeout in milliseconds. </td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>true when an action was dequeued before timeout. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>true if an action was dequeued. </dd></dl>
 
 </div>
 </div>
@@ -5360,8 +5349,8 @@ Variables</h2></td></tr>
 
 </div>
 </div>
-<a id="a6480b799f3f37843aa4d1f10963cc1cd" name="a6480b799f3f37843aa4d1f10963cc1cd"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6480b799f3f37843aa4d1f10963cc1cd">&#9670;&#160;</a></span>reset_arq_info()</h2>
+<a id="a8f582fd8a48b56a65e3c2fc5ee3e8b8a" name="a8f582fd8a48b56a65e3c2fc5ee3e8b8a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8f582fd8a48b56a65e3c2fc5ee3e8b8a">&#9670;&#160;</a></span>reset_arq_info()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -5370,17 +5359,16 @@ Variables</h2></td></tr>
           <td class="memname">void reset_arq_info </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structarq__info.html">arq_info</a> *&#160;</td>
-          <td class="paramname"><em>arq_conn_i</em></td><td>)</td>
+          <td class="paramname"><em>arq_conn</em></td><td>)</td>
           <td></td>
         </tr>
       </table>
 </div><div class="memdoc">
 
-<p>Reset caller-provided <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure to defaults. </p>
-<p>Reset external <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure.</p>
+<p>Reset external <a class="el" href="structarq__info.html" title="Runtime ARQ connection and mode state shared across modules.">arq_info</a> structure. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">arq_conn_i</td><td>Structure to reset. </td></tr>
+    <tr><td class="paramname">arq_conn</td><td>Pointer to structure to reset. </td></tr>
   </table>
   </dd>
 </dl>
