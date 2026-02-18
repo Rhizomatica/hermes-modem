@@ -772,6 +772,7 @@ static bool has_immediate_iss_payload_tx_work_locked(void)
         return true;
 
     return arq_ctx.app_tx_len == 0 &&
+           !arq_ctx.payload_start_pending &&
            arq_ctx.peer_backlog_nonzero &&
            arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE;
 }
@@ -825,6 +826,9 @@ static int arq_event_loop_timeout_ms(void)
 
     if (is_connected_state_locked())
     {
+        if (arq_ctx.payload_start_pending && arq_ctx.startup_deadline > 0)
+            arq_consider_deadline_s(arq_ctx.startup_deadline, &next_deadline_ms);
+
         if (arq_ctx.waiting_ack && arq_ctx.ack_deadline > 0)
         {
             uint64_t ack_deadline_ms = (uint64_t)arq_ctx.ack_deadline * 1000ULL;
@@ -2736,7 +2740,7 @@ void arq_tick_1hz(void)
                 arq_ctx.waiting_ack ||
                 arq_ctx.pending_ack ||
                 arq_ctx.pending_turn_ack ||
-                arq_ctx.peer_backlog_nonzero ||
+                (arq_ctx.turn_role == ARQ_TURN_IRS && arq_ctx.peer_backlog_nonzero) ||
                 (arq_ctx.turn_role == ARQ_TURN_ISS && arq_ctx.app_tx_len > 0);
 
             if (startup_traffic_active)
@@ -3342,6 +3346,17 @@ static void handle_control_frame_locked(uint8_t subtype,
         }
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.outstanding_frame_len = 0;
+        if (arq_ctx.payload_start_pending &&
+            arq_ctx.turn_role == ARQ_TURN_ISS &&
+            arq_ctx.app_tx_len == 0 &&
+            !arq_ctx.waiting_ack)
+        {
+            arq_ctx.payload_start_pending = false;
+            arq_ctx.startup_acks_left = 0;
+            arq_ctx.startup_deadline = 0;
+            HLOGD("arq", "Startup gate end (iss drained)");
+            schedule_flow_hint_locked();
+        }
         if (arq_ctx.turn_ack_deferred)
         {
             arq_ctx.turn_ack_deferred = false;
