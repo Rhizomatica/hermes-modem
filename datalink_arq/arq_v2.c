@@ -2732,11 +2732,26 @@ void arq_tick_1hz(void)
             arq_ctx.startup_deadline > 0 &&
             now >= arq_ctx.startup_deadline)
         {
-            arq_ctx.payload_start_pending = false;
-            arq_ctx.startup_acks_left = 0;
-            arq_ctx.startup_deadline = 0;
-            HLOGD("arq", "Startup gate end (timeout)");
-            schedule_flow_hint_locked();
+            bool startup_traffic_active =
+                arq_ctx.waiting_ack ||
+                arq_ctx.pending_ack ||
+                arq_ctx.pending_turn_ack ||
+                arq_ctx.peer_backlog_nonzero ||
+                (arq_ctx.turn_role == ARQ_TURN_ISS && arq_ctx.app_tx_len > 0);
+
+            if (startup_traffic_active)
+            {
+                arq_ctx.startup_deadline = now + ARQ_STARTUP_MAX_S;
+                HLOGD("arq", "Startup gate extend (traffic)");
+            }
+            else
+            {
+                arq_ctx.payload_start_pending = false;
+                arq_ctx.startup_acks_left = 0;
+                arq_ctx.startup_deadline = 0;
+                HLOGD("arq", "Startup gate end (timeout)");
+                schedule_flow_hint_locked();
+            }
         }
 
         if (arq_ctx.keepalive_waiting && now >= arq_ctx.keepalive_deadline)
