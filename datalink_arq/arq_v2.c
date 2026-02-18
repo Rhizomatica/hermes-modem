@@ -711,6 +711,24 @@ static bool has_outbound_payload_pending_locked(void)
            arq_ctx.pending_payload_actions > 0;
 }
 
+static bool keepalive_quiescent_locked(void)
+{
+    return !arq_ctx.payload_start_pending &&
+           !arq_ctx.waiting_ack &&
+           arq_ctx.app_tx_len == 0 &&
+           !arq_ctx.pending_ack &&
+           !arq_ctx.pending_accept &&
+           !arq_ctx.pending_call &&
+           !arq_ctx.pending_disconnect &&
+           !arq_ctx.pending_keepalive_ack &&
+           !arq_ctx.pending_turn_req &&
+           !arq_ctx.turn_req_in_flight &&
+           !arq_ctx.pending_turn_ack &&
+           !arq_ctx.pending_flow_hint &&
+           !arq_ctx.peer_backlog_nonzero &&
+           arq_ctx.mode_fsm == ARQ_MODE_FSM_IDLE;
+}
+
 static bool has_immediate_control_tx_work_locked(void)
 {
     if (arq_ctx.disconnect_after_flush &&
@@ -743,7 +761,9 @@ static bool has_immediate_control_tx_work_locked(void)
         return true;
     }
 
-    if (arq_ctx.pending_keepalive && !arq_ctx.payload_start_pending)
+    if (arq_ctx.pending_keepalive &&
+        !arq_ctx.payload_start_pending &&
+        keepalive_quiescent_locked())
         return true;
 
     if (!arq_ctx.waiting_ack &&
@@ -860,15 +880,8 @@ static int arq_event_loop_timeout_ms(void)
         }
         else if (arq_ctx.role == ARQ_ROLE_CALLER &&
                  arq_ctx.keepalive_interval_s > 0 &&
-                 !arq_ctx.payload_start_pending &&
-                 !arq_ctx.waiting_ack &&
-                 arq_ctx.app_tx_len == 0 &&
-                 !arq_ctx.pending_ack &&
-                 !arq_ctx.pending_accept &&
-                 !arq_ctx.pending_call &&
-                 !arq_ctx.pending_disconnect &&
                  !arq_ctx.pending_keepalive &&
-                 !arq_ctx.pending_keepalive_ack)
+                 keepalive_quiescent_locked())
         {
             time_t last_link_activity = arq_ctx.last_keepalive_tx;
             if (arq_ctx.last_keepalive_rx > last_link_activity)
@@ -1466,6 +1479,7 @@ static void mark_failure_locked(void)
 static void mark_link_activity_locked(time_t now)
 {
     arq_ctx.last_keepalive_rx = now;
+    arq_ctx.pending_keepalive = false;
     arq_ctx.keepalive_waiting = false;
     arq_ctx.keepalive_misses = 0;
 }
@@ -2321,6 +2335,11 @@ static bool do_slot_tx_locked(time_t now)
 
     if (arq_ctx.pending_keepalive && !arq_ctx.payload_start_pending)
     {
+        if (!keepalive_quiescent_locked())
+        {
+            arq_ctx.pending_keepalive = false;
+            return false;
+        }
         send_keepalive_locked(ARQ_SUBTYPE_KEEPALIVE);
         HLOGD("arq", "Keepalive tx");
         arq_ctx.pending_keepalive = false;
@@ -2723,14 +2742,8 @@ void arq_tick_1hz(void)
             last_link_activity = arq_ctx.last_phy_activity;
 
         bool link_idle =
-            !arq_ctx.waiting_ack &&
-            arq_ctx.app_tx_len == 0 &&
-            !arq_ctx.pending_ack &&
-            !arq_ctx.pending_accept &&
-            !arq_ctx.pending_call &&
-            !arq_ctx.pending_disconnect &&
             !arq_ctx.pending_keepalive &&
-            !arq_ctx.pending_keepalive_ack;
+            keepalive_quiescent_locked();
 
         if (arq_ctx.payload_start_pending &&
             arq_ctx.startup_deadline > 0 &&
