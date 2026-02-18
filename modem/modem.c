@@ -645,9 +645,19 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     static int32_t *buffer_in = NULL;
     static int buffer_size = 0;
 
+    if (!g_modem || !bytes_out || !nbytes_out)
+        return -1;
+
     pthread_mutex_lock(&modem_freedv_lock);
     freedv = g_modem->freedv;
     epoch = modem_freedv_epoch;
+    if (!freedv)
+    {
+        pthread_mutex_unlock(&modem_freedv_lock);
+        *nbytes_out = 0;
+        usleep(RX_IDLE_SLEEP_US);
+        return 0;
+    }
     input_size = freedv_get_n_max_modem_samples(freedv);
     nin = freedv_nin(freedv);
     pthread_mutex_unlock(&modem_freedv_lock);
@@ -655,11 +665,27 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     // Allocate buffers on first call or if size changed
     if (buffer_size < input_size)
     {
-        if (demod_in) free(demod_in);
-        if (buffer_in) free(buffer_in);
-        demod_in = (int16_t *)malloc(input_size * sizeof(int16_t));
-        buffer_in = (int32_t *)malloc(input_size * sizeof(int32_t));
+        int16_t *new_demod_in = (int16_t *)realloc(demod_in, input_size * sizeof(int16_t));
+        int32_t *new_buffer_in = NULL;
+        if (!new_demod_in)
+        {
+            *nbytes_out = 0;
+            return -1;
+        }
+        demod_in = new_demod_in;
+        new_buffer_in = (int32_t *)realloc(buffer_in, input_size * sizeof(int32_t));
+        if (!new_buffer_in)
+        {
+            *nbytes_out = 0;
+            return -1;
+        }
+        buffer_in = new_buffer_in;
         buffer_size = input_size;
+    }
+    if (!demod_in || !buffer_in)
+    {
+        *nbytes_out = 0;
+        return -1;
     }
 
     // Safety check: nin should not be larger than buffer
@@ -768,7 +794,10 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         bytes_cap = (size_t)(freedv_get_bits_per_modem_frame(freedv) / 8);
         mode_changed = state->freedv != freedv || state->mode != mode;
         if (mode_changed)
+        {
             freedv_set_sync(freedv, FREEDV_SYNC_UNSYNC);
+            state->demod_count = 0;
+        }
     }
     pthread_mutex_unlock(&modem_freedv_lock);
 
@@ -792,9 +821,6 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         state->bytes_out = new_bytes;
         state->bytes_cap = bytes_cap;
     }
-
-    if (mode_changed)
-        state->demod_count = 0;
 
     state->freedv = freedv;
     state->mode = mode;
@@ -900,10 +926,10 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         sample_count = state->demod_cap;
     }
 
-    if (state->demod_count + sample_count > state->demod_cap)
+    if ((size_t)state->demod_count + (size_t)sample_count > (size_t)state->demod_cap)
     {
-        int overflow = (state->demod_count + sample_count) - state->demod_cap;
-        if (overflow >= state->demod_count)
+        size_t overflow = ((size_t)state->demod_count + (size_t)sample_count) - (size_t)state->demod_cap;
+        if (overflow >= (size_t)state->demod_count)
         {
             state->demod_count = 0;
         }
@@ -911,8 +937,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         {
             memmove(state->demod_in,
                     state->demod_in + overflow,
-                    (size_t)(state->demod_count - overflow) * sizeof(int16_t));
-            state->demod_count -= overflow;
+                    ((size_t)state->demod_count - overflow) * sizeof(int16_t));
+            state->demod_count -= (int)overflow;
         }
     }
 
@@ -980,6 +1006,14 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         if (nin == 0 && nbytes_out == 0)
             break;
+    }
+
+    if (guard > 32)
+    {
+        HLOGW("modem-rx",
+              "rx_decoder_consume_chunk guard limit reached (mode=%d, demod_count=%d)",
+              state->mode,
+              state->demod_count);
     }
 }
 
@@ -1097,6 +1131,8 @@ void *tx_thread(void *g_modem)
                 sent_from_action = true;
 
             if (action_buffer &&
+                action_frame_size > 0 &&
+                action_frame_size <= INT_BUFFER_SIZE &&
                 action.frame_size == action_frame_size &&
                 size_buffer(action_buffer) >= action_frame_size)
             {

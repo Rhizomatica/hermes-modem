@@ -549,7 +549,7 @@ static void *arq_reactor_thread(void *port)
 
         if (ctl_client >= 0)
         {
-            short events = pfds[(data_client >= 0) ? 2 : 2].revents;
+            short events = pfds[2].revents;
             if (events & (POLLERR | POLLHUP | POLLNVAL))
             {
                 close_ctl_client(&ctl_client, &data_client, true);
@@ -980,6 +980,13 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     if (pthread_create(&tid[6], NULL, tcp_server_thread, (void *)&broadcast_tcp_port_cfg) != 0)
     {
         HLOGE("tcp", "Failed to start broadcast TCP thread");
+        shutdown_ = true;
+        if (tid_started[0])
+        {
+            pthread_join(tid[0], NULL);
+            tid_started[0] = false;
+        }
+        dispose_tnc_tx_queue();
         return EXIT_FAILURE;
     }
     tid_started[6] = true;

@@ -336,8 +336,19 @@ static int unbuffered_chan_send(chan_t* chan, void* data)
         pthread_cond_signal(&chan->r_cond);
     }
 
-    // Block until reader consumed chan->data.
-    pthread_cond_wait(&chan->w_cond, &chan->m_mu);
+    // Block until reader consumed chan->data or channel closes.
+    while (!chan->closed && chan->w_waiting > 0)
+        pthread_cond_wait(&chan->w_cond, &chan->m_mu);
+
+    if (chan->closed && chan->w_waiting > 0)
+    {
+        chan->w_waiting--;
+        chan->data = NULL;
+        pthread_mutex_unlock(&chan->m_mu);
+        pthread_mutex_unlock(&chan->w_mu);
+        errno = EPIPE;
+        return -1;
+    }
 
     pthread_mutex_unlock(&chan->m_mu);
     pthread_mutex_unlock(&chan->w_mu);
@@ -451,13 +462,14 @@ int chan_select(chan_t* recv_chans[], int recv_count, void** recv_out,
         return -1;
     }
 
-    // Seed rand using current time in nanoseconds.
+    // Seed per-call PRNG using current time + thread id.
     struct timespec ts;
+    unsigned int seed;
     current_utc_time(&ts);
-    srand(ts.tv_nsec);
+    seed = (unsigned int)(ts.tv_nsec ^ (unsigned long)pthread_self());
 
     // Select candidate and perform operation.
-    select_op_t select = candidates[rand() % count];
+    select_op_t select = candidates[rand_r(&seed) % count];
     if (select.recv && chan_recv(select.chan, recv_out) != 0)
     {
         return -1;

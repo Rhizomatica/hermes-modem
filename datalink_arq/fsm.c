@@ -52,13 +52,17 @@ void fsm_init(fsm_handle* fsm, fsm_state initial_state)
 // Dispatch an event (thread-safe)
 void fsm_dispatch(fsm_handle* fsm, int event)
 {
-    const char *event_name = "UNKNOWN";
+    const char *event_name = NULL;
 
     if (!fsm)
         return;
 
-    if (event >= EV_CLIENT_CONNECT && event <= EV_LINK_ESTABLISHED)
-        event_name = fsm_event_names[event];
+    if (event < EV_CLIENT_CONNECT || event > EV_LINK_ESTABLISHED)
+    {
+        HLOGW("fsm", "Dropping invalid event id %d", event);
+        return;
+    }
+    event_name = fsm_event_names[event];
     HLOGI("fsm", "Dispatching event %s", event_name);
     
     pthread_mutex_lock(&fsm->lock);

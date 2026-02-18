@@ -414,6 +414,10 @@ int main(int argc, char *argv[])
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
         fprintf(stderr, "Failed to initialize ARQ subsystem.\n");
+        shutdown_ = true;
+        if (audio_system != AUDIO_SUBSYSTEM_SHM)
+            audioio_deinit(&radio_capture, &radio_playback);
+        shutdown_modem(&g_modem);
         hermes_log_shutdown();
         return EXIT_FAILURE;
     }

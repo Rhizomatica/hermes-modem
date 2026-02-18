@@ -58,11 +58,13 @@ queue_t* queue_init(size_t capacity)
 // Releases the queue resources.
 void queue_dispose(queue_t* queue)
 {
+    if (!queue)
+        return;
     free(queue->data);
     free(queue);
 }
 
-// Enqueues an item in the queue. Returns 0 is the add succeeded or -1 if it
+// Enqueues an item in the queue. Returns 0 if the add succeeded or -1 if it
 // failed. If -1 is returned, errno will be set.
 int queue_add(queue_t* queue, void* value)
 {
