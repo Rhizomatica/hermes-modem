@@ -4192,6 +4192,7 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, bool frame_decoded, time_t now)
 {
     uint64_t now_ms = arq_realtime_ms();
+    bool rx_activity = (rx_status & (FREEDV_RX_TRIAL_SYNC | FREEDV_RX_SYNC | FREEDV_RX_BITS)) != 0;
 
     if (frame_decoded && snr > -20.0f && snr < 30.0f)
     {
@@ -4201,10 +4202,10 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
             arq_ctx.snr_ema = (0.8f * arq_ctx.snr_ema) + (0.2f * snr);
     }
 
-    if (!frame_decoded && (rx_status & 0x4))
+    if (!frame_decoded && (rx_status & FREEDV_RX_BITS))
         mark_failure_locked();
 
-    if (sync || frame_decoded)
+    if (sync || frame_decoded || rx_activity)
     {
         arq_ctx.last_phy_activity = now;
         uint64_t busy_until = now_ms + ARQ_CHANNEL_GUARD_MS;
@@ -4216,7 +4217,7 @@ static void arq_update_link_metrics_locked(int sync, float snr, int rx_status, b
 
     if (arq_fsm.current == state_calling_wait_accept &&
         arq_ctx.role == ARQ_ROLE_CALLER &&
-        (sync || frame_decoded))
+        (sync || frame_decoded || rx_activity))
     {
         time_t min_deadline = now + arq_ctx.slot_len_s + ARQ_CONNECT_BUSY_EXT_S;
         if (arq_ctx.connect_deadline < min_deadline)
