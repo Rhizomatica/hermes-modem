@@ -304,7 +304,7 @@ enum {
 #define ARQ_EVENT_LOOP_TX_BUSY_TIMEOUT_MS 20
 #define ARQ_EVENT_LOOP_SPIN_LOG_ITER_S 200
 #define ARQ_STARTUP_ACKS_REQUIRED 2
-#define ARQ_STARTUP_MAX_S 15
+#define ARQ_STARTUP_MAX_S 8
 
 static void state_no_connected_client(int event);
 static void state_idle(int event);
@@ -791,15 +791,13 @@ static bool has_immediate_control_tx_work_locked(void)
     }
 
     if (arq_ctx.pending_flow_hint &&
-        !arq_ctx.waiting_ack &&
-        !arq_ctx.payload_start_pending)
+        !arq_ctx.waiting_ack)
     {
         return true;
     }
 
     if (arq_ctx.pending_turn_req &&
-        !arq_ctx.turn_req_in_flight &&
-        !arq_ctx.payload_start_pending)
+        !arq_ctx.turn_req_in_flight)
     {
         return true;
     }
@@ -1139,7 +1137,7 @@ static int ack_timeout_s_for_mode(int mode)
     case FREEDV_MODE_DATAC3:
         return 10;
     case FREEDV_MODE_DATAC4:
-        return 9;
+        return 8;
     default:
         return 6;
     }
@@ -1545,8 +1543,6 @@ static void schedule_flow_hint_locked(void)
 {
     bool backlog_nonzero = arq_ctx.app_tx_len > 0;
 
-    if (arq_ctx.payload_start_pending)
-        return;
     if (arq_ctx.last_flow_hint_sent >= 0 &&
         ((arq_ctx.last_flow_hint_sent != 0) == backlog_nonzero))
         return;
@@ -2546,7 +2542,7 @@ static bool do_slot_tx_locked(time_t now)
         return true;
     }
 
-    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack && !arq_ctx.payload_start_pending)
+    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack)
     {
         if (send_turn_control_locked(ARQ_SUBTYPE_FLOW_HINT, arq_ctx.flow_hint_value ? 1 : 0) == 0)
         {
@@ -2572,7 +2568,7 @@ static bool do_slot_tx_locked(time_t now)
         }
     }
 
-    if (arq_ctx.pending_turn_req && !arq_ctx.turn_req_in_flight && !arq_ctx.payload_start_pending)
+    if (arq_ctx.pending_turn_req && !arq_ctx.turn_req_in_flight)
     {
         if (send_turn_control_locked(ARQ_SUBTYPE_TURN_REQ, 1) == 0)
         {
@@ -2713,7 +2709,6 @@ static bool do_slot_tx_locked(time_t now)
             !arq_ctx.waiting_ack &&
             arq_ctx.app_tx_len == 0 &&
             arq_ctx.peer_backlog_nonzero &&
-            !arq_ctx.payload_start_pending &&
             !arq_ctx.pending_turn_req &&
             !arq_ctx.turn_req_in_flight &&
             !mode_fsm_busy_locked())
@@ -3110,26 +3105,11 @@ void arq_tick_1hz(void)
             arq_ctx.startup_deadline > 0 &&
             now >= arq_ctx.startup_deadline)
         {
-            bool startup_traffic_active =
-                arq_ctx.waiting_ack ||
-                arq_ctx.pending_ack ||
-                arq_ctx.pending_turn_ack ||
-                (arq_ctx.turn_role == ARQ_TURN_IRS && arq_ctx.peer_backlog_nonzero) ||
-                (arq_ctx.turn_role == ARQ_TURN_ISS && arq_ctx.app_tx_len > 0);
-
-            if (startup_traffic_active)
-            {
-                arq_ctx.startup_deadline = now + ARQ_STARTUP_MAX_S;
-                HLOGD("arq", "Startup gate extend (traffic)");
-            }
-            else
-            {
-                arq_ctx.payload_start_pending = false;
-                arq_ctx.startup_acks_left = 0;
-                arq_ctx.startup_deadline = 0;
-                HLOGD("arq", "Startup gate end (timeout)");
-                schedule_flow_hint_locked();
-            }
+            arq_ctx.payload_start_pending = false;
+            arq_ctx.startup_acks_left = 0;
+            arq_ctx.startup_deadline = 0;
+            HLOGD("arq", "Startup gate end (timeout)");
+            schedule_flow_hint_locked();
         }
 
         if (arq_ctx.keepalive_waiting && now >= arq_ctx.keepalive_deadline)
