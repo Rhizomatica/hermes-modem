@@ -24,6 +24,7 @@
 #include <strings.h>
 #include <time.h>
 #include <limits.h>
+#include <math.h>
 #include <errno.h>
 
 #include "arq.h"
@@ -128,6 +129,8 @@ typedef struct {
     int success_streak;
     int failure_streak;
     float snr_ema;
+    float peer_snr_ema;  /* peer's measured SNR of our transmissions, reported in frame header */
+    bool peer_snr_valid;
     bool payload_start_pending;
     int startup_acks_left;
     time_t startup_deadline;
@@ -265,7 +268,7 @@ enum {
 #define ARQ_HDR_SESSION_IDX 3
 #define ARQ_HDR_SEQ_IDX 4
 #define ARQ_HDR_ACK_IDX 5
-#define ARQ_HDR_GEAR_IDX 6
+#define ARQ_HDR_SNR_IDX 6 /* peer RX SNR feedback, encoded as int8_t (dB), INT8_MIN = unknown */
 #define ARQ_HDR_LEN_HI_IDX 7
 #define ARQ_HDR_LEN_LO_IDX 8
 #define ARQ_PAYLOAD_OFFSET 9
@@ -1357,6 +1360,19 @@ static void become_irs_locked(const char *reason)
 }
 
 /**
+ * @brief Internal ARQ helper: effective_snr_locked.
+ *        Returns the minimum of local and peer-reported SNR so that mode
+ *        decisions reflect the weaker direction of the asymmetric link.
+ */
+static float effective_snr_locked(void)
+{
+    float snr = arq_ctx.snr_ema;
+    if (arq_ctx.peer_snr_valid)
+        snr = fminf(snr, arq_ctx.peer_snr_ema);
+    return snr;
+}
+
+/**
  * @brief Internal ARQ helper: payload_mode_from_snr.
  */
 static int payload_mode_from_snr(float snr)
@@ -1474,7 +1490,7 @@ static int desired_payload_mode_locked(void)
     if (arq_ctx.snr_ema == 0.0f)
         return current;
 
-    desired = payload_mode_from_snr(arq_ctx.snr_ema);
+    desired = payload_mode_from_snr(effective_snr_locked());
     current_rank = payload_mode_rank(current);
     desired_rank = payload_mode_rank(desired);
 
@@ -1645,7 +1661,7 @@ static void maybe_gear_up_locked(void)
         return;
     if (arq_ctx.success_streak < 6)
         return;
-    if (arq_ctx.snr_ema != 0.0f && arq_ctx.snr_ema < 8.0f)
+    if (arq_ctx.snr_ema != 0.0f && effective_snr_locked() < 8.0f)
         return;
 
     arq_ctx.gear++;
@@ -1661,7 +1677,7 @@ static void maybe_gear_down_locked(void)
     if (arq_ctx.gear <= 0)
         return;
     if (arq_ctx.failure_streak < 3 &&
-        !(arq_ctx.snr_ema != 0.0f && arq_ctx.snr_ema < 2.0f))
+        !(arq_ctx.snr_ema != 0.0f && effective_snr_locked() < 2.0f))
     {
         return;
     }
@@ -1822,7 +1838,11 @@ static int build_frame_locked(uint8_t packet_type,
     out_frame[ARQ_HDR_SESSION_IDX] = arq_ctx.session_id;
     out_frame[ARQ_HDR_SEQ_IDX] = seq;
     out_frame[ARQ_HDR_ACK_IDX] = ack;
-    out_frame[ARQ_HDR_GEAR_IDX] = (uint8_t)arq_ctx.gear;
+    /* Encode local snr_ema as int8_t (1 dB steps, INT8_MIN = unknown). */
+    int8_t snr_byte = (arq_ctx.snr_ema != 0.0f)
+                          ? (int8_t)fmaxf(-127.0f, fminf(127.0f, arq_ctx.snr_ema))
+                          : INT8_MIN;
+    out_frame[ARQ_HDR_SNR_IDX] = (uint8_t)snr_byte;
     out_frame[ARQ_HDR_LEN_HI_IDX] = (uint8_t)((payload_len >> 8) & 0xff);
     out_frame[ARQ_HDR_LEN_LO_IDX] = (uint8_t)(payload_len & 0xff);
 
@@ -2154,6 +2174,8 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.success_streak = 0;
     arq_ctx.failure_streak = 0;
     arq_ctx.snr_ema = 0.0f;
+    arq_ctx.peer_snr_ema = 0.0f;
+    arq_ctx.peer_snr_valid = false;
     arq_ctx.payload_start_pending = false;
     arq_ctx.startup_acks_left = 0;
     arq_ctx.startup_deadline = 0;
@@ -2446,7 +2468,10 @@ static void queue_next_data_frame_locked(void)
     arq_ctx.outstanding_app_len = chunk;
     arq_ctx.waiting_ack = true;
     arq_ctx.data_retries_left = arq_ctx.max_data_retries;
-    arq_ctx.ack_deadline = time(NULL) + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S;
+    /* ack_deadline is measured from queue time, but TX starts tx_period_s later
+     * (channel guard + modem mode-switch). Add tx_period_s so the deadline is
+     * effectively measured from TX-end, giving the peer time to respond. */
+    arq_ctx.ack_deadline = time(NULL) + arq_ctx.ack_timeout_s + ARQ_ACK_GUARD_S + arq_ctx.tx_period_s;
     arq_ctx.tx_seq++;
 }
 
@@ -4128,6 +4153,19 @@ static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_s
         return;
 
     payload = data + ARQ_PAYLOAD_OFFSET;
+
+    /* Decode peer's SNR feedback from every valid frame. */
+    {
+        int8_t peer_snr = (int8_t)data[ARQ_HDR_SNR_IDX];
+        if (peer_snr != INT8_MIN)
+        {
+            if (!arq_ctx.peer_snr_valid)
+                arq_ctx.peer_snr_ema = (float)peer_snr;
+            else
+                arq_ctx.peer_snr_ema = (0.8f * arq_ctx.peer_snr_ema) + (0.2f * (float)peer_snr);
+            arq_ctx.peer_snr_valid = true;
+        }
+    }
 
     if (packet_type == PACKET_TYPE_ARQ_CONTROL)
         handle_control_frame_locked(subtype, session_id, ack, payload, payload_len);
