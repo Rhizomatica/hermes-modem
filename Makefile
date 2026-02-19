@@ -46,7 +46,7 @@ include config.mk
 DOXYGEN ?= doxygen
 DOXYFILE ?= Doxyfile
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Ithird_party/chan
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
@@ -87,7 +87,7 @@ internal_deps:
 
 
 clean:
-	rm -f mercury *.o .git_hash_stamp third_party/chan/*.o
+	rm -f mercury *.o .git_hash_stamp
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
