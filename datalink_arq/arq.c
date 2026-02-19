@@ -1105,13 +1105,14 @@ static int mode_slot_len_s(int mode)
     case FREEDV_MODE_DATAC3:
         return 4;
     case FREEDV_MODE_DATAC4:
-        return 3;
+        /* DATAC4 is the most robust but also the slowest payload mode (~87 bps). */
+        return 6;
     case FREEDV_MODE_DATAC0:
     case FREEDV_MODE_DATAC13:
     case FREEDV_MODE_DATAC14:
     case FREEDV_MODE_FSK_LDPC:
     default:
-        return 2;
+        return 3;
     }
 }
 
@@ -1137,7 +1138,7 @@ static int ack_timeout_s_for_mode(int mode)
     case FREEDV_MODE_DATAC3:
         return 10;
     case FREEDV_MODE_DATAC4:
-        return 9;
+        return 12;
     default:
         return 6;
     }
