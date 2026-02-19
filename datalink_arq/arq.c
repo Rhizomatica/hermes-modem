@@ -2596,7 +2596,11 @@ static bool do_slot_tx_locked(time_t now)
         if (arq_ctx.piggybacked_turn_pending)
         {
             arq_ctx.piggybacked_turn_pending = false;
-            if (arq_ctx.turn_promote_after_ack && arq_ctx.app_tx_len > 0)
+            /* Evaluate promotion at ACK-send time (app_tx_len may have changed since
+             * the data frame was received).  send_ack_locked() already set ack_has_data
+             * (bit 7 of byte 6) from the same app_tx_len snapshot, so ISS and IRS are
+             * always in agreement: both promote or neither does. */
+            if (arq_ctx.app_tx_len > 0)
                 become_iss_locked("piggyback turn");
             arq_ctx.turn_promote_after_ack = false;
             update_connected_state_from_turn_locked();
@@ -2632,7 +2636,8 @@ static bool do_slot_tx_locked(time_t now)
         if (send_turn_control_locked(ARQ_SUBTYPE_TURN_ACK, has_data) == 0)
         {
             arq_ctx.pending_turn_ack = false;
-            if (arq_ctx.turn_promote_after_ack && has_data)
+            /* Same principle: promote based on has_data evaluated at send time. */
+            if (has_data)
                 become_iss_locked("turn ack");
             arq_ctx.turn_promote_after_ack = false;
             update_connected_state_from_turn_locked();
@@ -4058,7 +4063,7 @@ static void handle_data_frame_locked(uint8_t session_id,
             /* Peer signalled last data frame: after sending ACK promote to ISS (if we have data). */
             arq_ctx.piggybacked_turn_pending = true;
             arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
-            HLOGD("arq", "Piggybacked turn req (IRS will promote=%d)", arq_ctx.turn_promote_after_ack);
+            HLOGD("arq", "Piggybacked turn req (IRS has data at rx=%d)", arq_ctx.turn_promote_after_ack);
         }
         schedule_immediate_control_tx_with_guard_locked(now, "data ack",
                                                         ARQ_ACK_REPLY_EXTRA_GUARD_MS);
