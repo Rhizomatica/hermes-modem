@@ -3678,7 +3678,8 @@ static void handle_control_frame_locked(uint8_t subtype,
             {
                 arq_ctx.pending_accept = true;
                 arq_ctx.accept_retries_left = 1;
-                schedule_immediate_control_tx_locked(now, "call dup");
+                schedule_immediate_control_tx_with_guard_locked(now, "call dup",
+                                                               ARQ_ACK_REPLY_EXTRA_GUARD_MS);
             }
             return;
         }
@@ -3700,7 +3701,8 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.outstanding_app_len = 0;
         arq_ctx.pending_accept = true;
         arq_ctx.accept_retries_left = 1;
-        schedule_immediate_control_tx_locked(now, "call");
+        schedule_immediate_control_tx_with_guard_locked(now, "call",
+                                                       ARQ_ACK_REPLY_EXTRA_GUARD_MS);
         return;
 
     case ARQ_SUBTYPE_ACCEPT:
@@ -3848,7 +3850,8 @@ static void handle_control_frame_locked(uint8_t subtype,
         arq_ctx.pending_turn_ack = true;
         arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
         arq_fsm.current = state_turn_negotiating;
-        schedule_immediate_control_tx_locked(now, "turn req");
+        schedule_immediate_control_tx_with_guard_locked(now, "turn req",
+                                                        ARQ_ACK_REPLY_EXTRA_GUARD_MS);
         mark_link_activity_locked(now);
         return;
 
@@ -4039,7 +4042,8 @@ static bool arq_handle_incoming_connect_frame_locked(const uint8_t *data, size_t
             arq_ctx.turn_ack_deferred = false;
             arq_ctx.peer_backlog_nonzero = false;
             arq_ctx.last_peer_payload_rx = 0;
-            schedule_immediate_control_tx_locked(now, "connect call");
+            schedule_immediate_control_tx_with_guard_locked(now, "connect call",
+                                                           ARQ_ACK_REPLY_EXTRA_GUARD_MS);
         }
         return true;
     }
