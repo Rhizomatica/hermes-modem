@@ -2036,6 +2036,13 @@ static int send_ack_locked(uint8_t ack_seq)
                            frame,
                            frame_size) < 0)
         return -1;
+    /* Bit 7 of byte 6: IRS signals whether it has data to send.  ISS reads
+     * this in the piggyback-turn shortcut to avoid both sides becoming IRS. */
+    if (arq_ctx.app_tx_len > 0)
+    {
+        frame[ARQ_HDR_SNR_IDX] |= 0x80u;
+        write_frame_header(frame, PACKET_TYPE_ARQ_CONTROL, frame_size); /* recompute CRC6 */
+    }
     return queue_frame_locked(frame, frame_size, true);
 }
 
@@ -3711,7 +3718,8 @@ static void handle_control_frame_locked(uint8_t subtype,
                                         uint8_t session_id,
                                         uint8_t ack,
                                         const uint8_t *payload,
-                                        size_t payload_len)
+                                        size_t payload_len,
+                                        bool ack_has_data)
 {
     char src[CALLSIGN_MAX_SIZE] = {0};
     char dst[CALLSIGN_MAX_SIZE] = {0};
@@ -3844,10 +3852,13 @@ static void handle_control_frame_locked(uint8_t subtype,
         }
         if (arq_ctx.outstanding_has_turn_req &&
             arq_ctx.turn_role == ARQ_TURN_ISS &&
-            arq_ctx.app_tx_len == 0)
+            arq_ctx.app_tx_len == 0 &&
+            ack_has_data)
         {
-            /* IRS already received TURN_REQ_FLAG and will promote to ISS after its ACK TX.
-             * Become IRS now — skip the normal TURN_REQ/TURN_ACK round-trip. */
+            /* IRS confirmed it has data (bit 7 of byte 6) and will promote to ISS
+             * after its ACK TX.  Become IRS now — skip the TURN_REQ/TURN_ACK round-trip.
+             * Without ack_has_data we fall through and send an explicit TURN_REQ instead,
+             * preventing the "both sides become IRS" deadlock. */
             arq_ctx.outstanding_has_turn_req = false;
             become_irs_locked("piggyback turn");
             mark_link_activity_locked(now);
@@ -4220,7 +4231,10 @@ static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_s
     }
 
     if (packet_type == PACKET_TYPE_ARQ_CONTROL)
-        handle_control_frame_locked(subtype, session_id, ack, payload, payload_len);
+    {
+        bool ack_has_data = (data[ARQ_HDR_SNR_IDX] & 0x80u) != 0;
+        handle_control_frame_locked(subtype, session_id, ack, payload, payload_len, ack_has_data);
+    }
     else if (packet_type == PACKET_TYPE_ARQ_DATA && subtype == ARQ_SUBTYPE_DATA)
     {
         bool has_turn_req = (data[ARQ_HDR_SNR_IDX] & 0x80u) != 0;
