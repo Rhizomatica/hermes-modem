@@ -1570,6 +1570,14 @@ static void schedule_flow_hint_locked(void)
 {
     bool backlog_nonzero = arq_ctx.app_tx_len > 0;
 
+    /* FLOW_HINTs are an IRS→ISS backpressure signal.  ISS communicates its
+     * backlog implicitly by sending data (and explicitly via TURN_REQ).
+     * Setting pending_flow_hint for ISS would keep must_control_tx=true in
+     * preferred_tx_mode_locked(), holding the modem in DATAC13 and blocking
+     * queue_next_data_frame_locked() which requires arq_conn.mode==payload_mode. */
+    if (arq_ctx.turn_role == ARQ_TURN_ISS)
+        return;
+
     if (arq_ctx.last_flow_hint_sent >= 0 &&
         ((arq_ctx.last_flow_hint_sent != 0) == backlog_nonzero))
         return;
