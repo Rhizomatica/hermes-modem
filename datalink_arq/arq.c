@@ -131,6 +131,8 @@ typedef struct {
     float snr_ema;
     float peer_snr_ema;  /* peer's measured SNR of our transmissions, reported in frame header */
     bool peer_snr_valid;
+    bool outstanding_has_turn_req; /* last queued data frame had TURN_REQ_FLAG piggybacked */
+    bool piggybacked_turn_pending; /* IRS: promote to ISS after the pending data ACK is sent */
     bool payload_start_pending;
     int startup_acks_left;
     time_t startup_deadline;
@@ -1838,11 +1840,18 @@ static int build_frame_locked(uint8_t packet_type,
     out_frame[ARQ_HDR_SESSION_IDX] = arq_ctx.session_id;
     out_frame[ARQ_HDR_SEQ_IDX] = seq;
     out_frame[ARQ_HDR_ACK_IDX] = ack;
-    /* Encode local snr_ema as int8_t (1 dB steps, INT8_MIN = unknown). */
-    int8_t snr_byte = (arq_ctx.snr_ema != 0.0f)
-                          ? (int8_t)fmaxf(-127.0f, fminf(127.0f, arq_ctx.snr_ema))
-                          : INT8_MIN;
-    out_frame[ARQ_HDR_SNR_IDX] = (uint8_t)snr_byte;
+    /* Byte 6 layout: bit 7 = TURN_REQ_FLAG (data frames only),
+     * bits 6-0 = SNR offset-encoded: (snr_ema + 64) clamped to 1..127, 0 = unknown. */
+    {
+        uint8_t snr7;
+        if (arq_ctx.snr_ema == 0.0f) {
+            snr7 = 0;
+        } else {
+            int v = (int)(arq_ctx.snr_ema + 64.5f);
+            snr7 = (uint8_t)(v < 1 ? 1 : v > 127 ? 127 : v);
+        }
+        out_frame[ARQ_HDR_SNR_IDX] = snr7; /* TURN_REQ_FLAG (bit 7) set later for data frames */
+    }
     out_frame[ARQ_HDR_LEN_HI_IDX] = (uint8_t)((payload_len >> 8) & 0xff);
     out_frame[ARQ_HDR_LEN_LO_IDX] = (uint8_t)(payload_len & 0xff);
 
@@ -2176,6 +2185,8 @@ static void reset_runtime_locked(bool clear_peer_addresses)
     arq_ctx.snr_ema = 0.0f;
     arq_ctx.peer_snr_ema = 0.0f;
     arq_ctx.peer_snr_valid = false;
+    arq_ctx.outstanding_has_turn_req = false;
+    arq_ctx.piggybacked_turn_pending = false;
     arq_ctx.payload_start_pending = false;
     arq_ctx.startup_acks_left = 0;
     arq_ctx.startup_deadline = 0;
@@ -2459,6 +2470,12 @@ static void queue_next_data_frame_locked(void)
         return;
     }
 
+    /* If this is the last chunk in the queue, piggyback a turn request in bit 7
+     * of byte 6 so the IRS can promote to ISS without a separate TURN_REQ/TURN_ACK. */
+    arq_ctx.outstanding_has_turn_req = (chunk >= arq_ctx.app_tx_len);
+    if (arq_ctx.outstanding_has_turn_req)
+        frame[ARQ_HDR_SNR_IDX] |= 0x80u;
+
     if (queue_frame_locked(frame, arq_conn.frame_size, false) < 0)
         return;
 
@@ -2566,6 +2583,14 @@ static bool do_slot_tx_locked(time_t now)
               (unsigned long long)ack_wait_ms);
         arq_ctx.pending_ack = false;
         arq_ctx.pending_ack_set_ms = 0;
+        if (arq_ctx.piggybacked_turn_pending)
+        {
+            arq_ctx.piggybacked_turn_pending = false;
+            if (arq_ctx.turn_promote_after_ack && arq_ctx.app_tx_len > 0)
+                become_iss_locked("piggyback turn");
+            arq_ctx.turn_promote_after_ack = false;
+            update_connected_state_from_turn_locked();
+        }
         schedule_next_tx_locked(now, false);
         return true;
     }
@@ -3814,6 +3839,21 @@ static void handle_control_frame_locked(uint8_t subtype,
             else
                 update_connected_state_from_turn_locked();
         }
+        if (arq_ctx.outstanding_has_turn_req &&
+            arq_ctx.turn_role == ARQ_TURN_ISS &&
+            arq_ctx.app_tx_len == 0)
+        {
+            /* IRS already received TURN_REQ_FLAG and will promote to ISS after its ACK TX.
+             * Become IRS now — skip the normal TURN_REQ/TURN_ACK round-trip. */
+            arq_ctx.outstanding_has_turn_req = false;
+            become_irs_locked("piggyback turn");
+            mark_link_activity_locked(now);
+            mark_success_locked();
+            schedule_flow_hint_locked();
+            update_payload_mode_locked();
+            return;
+        }
+        arq_ctx.outstanding_has_turn_req = false;
         if (arq_ctx.turn_role == ARQ_TURN_ISS &&
             arq_ctx.app_tx_len == 0 &&
             !arq_ctx.pending_turn_req &&
@@ -3961,7 +4001,8 @@ static void handle_control_frame_locked(uint8_t subtype,
 static void handle_data_frame_locked(uint8_t session_id,
                                      uint8_t seq,
                                      const uint8_t *payload,
-                                     size_t payload_len)
+                                     size_t payload_len,
+                                     bool has_turn_req)
 {
     time_t now = time(NULL);
 
@@ -3992,6 +4033,13 @@ static void handle_data_frame_locked(uint8_t session_id,
         arq_ctx.pending_ack = true;
         arq_ctx.pending_ack_seq = seq;
         arq_ctx.pending_ack_set_ms = arq_monotonic_ms();
+        if (has_turn_req)
+        {
+            /* Peer signalled last data frame: after sending ACK promote to ISS (if we have data). */
+            arq_ctx.piggybacked_turn_pending = true;
+            arq_ctx.turn_promote_after_ack = arq_ctx.app_tx_len > 0;
+            HLOGD("arq", "Piggybacked turn req (IRS will promote=%d)", arq_ctx.turn_promote_after_ack);
+        }
         schedule_immediate_control_tx_with_guard_locked(now, "data ack",
                                                         ARQ_ACK_REPLY_EXTRA_GUARD_MS);
         mark_success_locked();
@@ -4154,15 +4202,16 @@ static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_s
 
     payload = data + ARQ_PAYLOAD_OFFSET;
 
-    /* Decode peer's SNR feedback from every valid frame. */
+    /* Decode peer's SNR feedback (bits 6-0) and TURN_REQ_FLAG (bit 7) from every valid frame. */
     {
-        int8_t peer_snr = (int8_t)data[ARQ_HDR_SNR_IDX];
-        if (peer_snr != INT8_MIN)
+        uint8_t snr7 = data[ARQ_HDR_SNR_IDX] & 0x7Fu;
+        if (snr7 > 0)
         {
+            float peer_snr = (float)snr7 - 64.0f;
             if (!arq_ctx.peer_snr_valid)
-                arq_ctx.peer_snr_ema = (float)peer_snr;
+                arq_ctx.peer_snr_ema = peer_snr;
             else
-                arq_ctx.peer_snr_ema = (0.8f * arq_ctx.peer_snr_ema) + (0.2f * (float)peer_snr);
+                arq_ctx.peer_snr_ema = (0.8f * arq_ctx.peer_snr_ema) + (0.2f * peer_snr);
             arq_ctx.peer_snr_valid = true;
         }
     }
@@ -4170,7 +4219,10 @@ static void arq_handle_incoming_frame_locked(const uint8_t *data, size_t frame_s
     if (packet_type == PACKET_TYPE_ARQ_CONTROL)
         handle_control_frame_locked(subtype, session_id, ack, payload, payload_len);
     else if (packet_type == PACKET_TYPE_ARQ_DATA && subtype == ARQ_SUBTYPE_DATA)
-        handle_data_frame_locked(session_id, seq, payload, payload_len);
+    {
+        bool has_turn_req = (data[ARQ_HDR_SNR_IDX] & 0x80u) != 0;
+        handle_data_frame_locked(session_id, seq, payload, payload_len, has_turn_req);
+    }
 }
 
 /* See arq.h for API docs. */
