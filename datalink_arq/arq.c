@@ -2474,7 +2474,10 @@ static void queue_next_data_frame_locked(void)
      * of byte 6 so the IRS can promote to ISS without a separate TURN_REQ/TURN_ACK. */
     arq_ctx.outstanding_has_turn_req = (chunk >= arq_ctx.app_tx_len);
     if (arq_ctx.outstanding_has_turn_req)
+    {
         frame[ARQ_HDR_SNR_IDX] |= 0x80u;
+        write_frame_header(frame, PACKET_TYPE_ARQ_DATA, arq_conn.frame_size); /* recalculate CRC6 */
+    }
 
     if (queue_frame_locked(frame, arq_conn.frame_size, false) < 0)
         return;
