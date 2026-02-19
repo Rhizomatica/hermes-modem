@@ -24,10 +24,17 @@
 #ifndef FRAMER_H
 #define FRAMER_H
 
-#define PACKET_TYPE_ARQ_CONTROL 0x00
-#define PACKET_TYPE_ARQ_DATA 0x01
-#define PACKET_TYPE_BROADCAST_CONTROL 0x02
-#define PACKET_TYPE_BROADCAST_DATA 0x03
+#define PACKET_TYPE_ARQ_CONTROL       0x00  /* ACK, DISCONNECT, TURN_REQ, etc.    */
+#define PACKET_TYPE_ARQ_DATA          0x01  /* data payload frames                */
+#define PACKET_TYPE_ARQ_CALL          0x02  /* CALL/ACCEPT setup (compact layout) */
+#define PACKET_TYPE_BROADCAST_CONTROL 0x03  /* (was 0x02 in v2)                   */
+#define PACKET_TYPE_BROADCAST_DATA    0x04  /* (was 0x03 in v2)                   */
+
+#define PACKET_TYPE_BITS   3    /* bits [7:5] of framer byte */
+#define PACKET_TYPE_SHIFT  5
+#define PACKET_TYPE_MASK   0x07
+#define CRC_BITS           5    /* bits [4:0] of framer byte */
+#define CRC_MASK           0x1f
 
 #define HEADER_SIZE 1 // Size of the Hermes header
 #define BROADCAST_CONFIG_PACKET_SIZE 9 // hermes-broadcast RaptorQ config packet

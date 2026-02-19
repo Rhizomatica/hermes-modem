@@ -1941,7 +1941,7 @@ static int build_connect_call_accept_frame_locked(uint8_t subtype,
     memset(frame, 0, frame_size);
     frame[ARQ_CONNECT_SESSION_IDX] = connect_meta_build(session_id, subtype == ARQ_SUBTYPE_ACCEPT);
     memcpy(frame + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)encoded_len);
-    write_frame_header(frame, PACKET_TYPE_ARQ_DATA, frame_size);
+    write_frame_header(frame, PACKET_TYPE_ARQ_CALL, frame_size);
     return 0;
 }
 

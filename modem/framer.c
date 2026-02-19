@@ -23,45 +23,32 @@
 #include "crc6.h"
 #include "framer.h"
 
-// Parse the frame header and validate CRC
+/*
+ * Framer byte layout (v3):
+ *   bits [7:5] = packet_type  (3 bits, PACKET_TYPE_* values)
+ *   bits [4:0] = CRC5         (polynomial x^5+x^4+x^2+1 = 0x15, init=1)
+ */
+
 int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size)
 {
     if (frame_size < 2)
         return -1;
 
-    uint8_t packet_type = (data_frame[0] >> 6) & 0x3;
+    uint8_t packet_type = (data_frame[0] >> PACKET_TYPE_SHIFT) & PACKET_TYPE_MASK;
+    uint8_t stored_crc  = data_frame[0] & CRC_MASK;
+    uint8_t calc_crc    = crc5_0X15(1, data_frame + HEADER_SIZE, (int)(frame_size - HEADER_SIZE));
 
-    uint16_t crc6_local = data_frame[0] & 0x3f;
-    uint16_t crc6_full = crc6_0X6F(1, data_frame + HEADER_SIZE, frame_size - HEADER_SIZE);
-
-    if (crc6_local != crc6_full)
+    if (stored_crc != calc_crc)
     {
-        if (packet_type == PACKET_TYPE_BROADCAST_CONTROL &&
-            frame_size >= BROADCAST_CONFIG_PACKET_SIZE)
-        {
-            uint16_t crc6_legacy_cfg = crc6_0X6F(1, data_frame + HEADER_SIZE, BROADCAST_CONFIG_PACKET_SIZE - HEADER_SIZE);
-            if (crc6_local == crc6_legacy_cfg)
-                return packet_type;
-        }
-        printf("Packet received has CRC6 error!\n");
+        printf("Packet received has CRC5 error!\n");
         return -1;
     }
 
-    return packet_type;
+    return (int8_t)packet_type;
 }
 
-// Writes the frame header in place, so data must have enough space
-// for the header in the beginning of the buffer
 void write_frame_header(uint8_t *data, int packet_type, size_t frame_size)
 {
-    size_t crc_len = frame_size - HEADER_SIZE;
-    if (packet_type == PACKET_TYPE_BROADCAST_CONTROL &&
-        frame_size >= BROADCAST_CONFIG_PACKET_SIZE)
-    {
-        crc_len = BROADCAST_CONFIG_PACKET_SIZE - HEADER_SIZE;
-    }
-
-    // set payload packet type
-    data[0] = (packet_type << 6) & 0xff;
-    data[0] |= crc6_0X6F(1, data + HEADER_SIZE, crc_len);
+    uint8_t crc = crc5_0X15(1, data + HEADER_SIZE, (int)(frame_size - HEADER_SIZE));
+    data[0] = (uint8_t)(((packet_type & PACKET_TYPE_MASK) << PACKET_TYPE_SHIFT) | (crc & CRC_MASK));
 }
