@@ -377,7 +377,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-            enter_idle_irs(sess);
+            enter_idle_iss(sess);   /* caller sends data first */
         }
         break;
 
@@ -424,7 +424,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         if (g_timing)
             arq_timing_record_connect(g_timing, sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-        dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        enter_idle_irs(sess);       /* callee receives first; process incoming data */
         if (ev->id == ARQ_EV_RX_DATA)
             fsm_dflow(sess, ev);
         break;
