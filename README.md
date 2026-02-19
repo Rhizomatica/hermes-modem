@@ -32,6 +32,8 @@ Options:
  -l                         Lists all modulator/coding modes.
  -z                         Lists all available sound cards.
  -v                         Verbose mode. Prints more information during execution.
+ -L [path]                  Write full log (DEBUG level and above) to file at <path>.
+ -J                         Write log file in JSONL format (requires -L).
  -t                         Test TX mode.
  -r                         Test RX mode.
  -h                         Prints this help.
@@ -66,13 +68,17 @@ Output will be generated in `docs/html/` (open `docs/html/index.html` in a brows
 make doxygen-clean
 ```
 
-## Logging and collision tracing
+## Logging and timing traces
 
 - Default run (`./mercury`): logger runs at **INFO** level with timestamps (`[INF]/[WRN]/[ERR]`).
-- Verbose run (`./mercury -v`): logger runs at **DEBUG** level and includes all detailed ARQ/modem traces (`[DBG]`).
+- Verbose run (`./mercury -v`): logger runs at **DEBUG** level and includes all detailed ARQ/modem traces (`[DBG]` and `[TMG]`).
+- `./mercury -v -L /tmp/session.log` — write full DEBUG+TIMING log to file.
+- `./mercury -v -L /tmp/session.log -J` — same, but in **JSONL** format for machine parsing with `jq`.
 - TX state transitions are logged with timestamps at INFO level as:
   - `TX enabled (PTT ON)`
   - `TX disabled (PTT OFF)`
+
+See [docs/ARQ.md](docs/ARQ.md) for full ARQ architecture, protocol reference, and OTA tuning guide.
 
 ## Physical Layer
 
