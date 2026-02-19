@@ -97,6 +97,8 @@ static void print_usage(const char *prog)
     printf(" -l                         Lists all modulator/coding modes.\n");
     printf(" -z                         Lists all available sound cards.\n");
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
+    printf(" -L <path>                  Write log to file (TIMING level and above).\n");
+    printf(" -J                         Use JSONL format for log file (requires -L).\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
     printf(" -h                         Prints this help.\n");
@@ -114,6 +116,8 @@ int main(int argc, char *argv[])
     int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;
+    const char *log_file_path = NULL;
+    bool log_file_jsonl = false;
     int base_tcp_port = DEFAULT_ARQ_PORT; // default ARQ TCP port
     int broadcast_port = DEFAULT_BROADCAST_PORT; // default broadcast TCP port
     int audio_system = -1; // default audio system
@@ -130,7 +134,7 @@ int main(int argc, char *argv[])
 
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtr")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:J")) != -1)
     {
         switch (opt)
         {
@@ -227,6 +231,12 @@ int main(int argc, char *argv[])
         case 'v':
             printf("Verbose mode enabled.\n");
             verbose = 1;
+            break;
+        case 'L':
+            log_file_path = optarg;
+            break;
+        case 'J':
+            log_file_jsonl = true;
             break;
         case 'h':
             print_usage(argv[0]);
@@ -392,6 +402,8 @@ int main(int argc, char *argv[])
     if (hermes_log_init(1024) == 0)
     {
         hermes_log_set_level(verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
+        if (log_file_path)
+            hermes_log_set_file(log_file_path, HERMES_LOG_LEVEL_TIMING, log_file_jsonl);
         HLOGI("main", "Async logger initialized (min_level=%s)", verbose ? "DEBUG" : "INFO");
     }
     else
