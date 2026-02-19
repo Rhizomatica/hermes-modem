@@ -41,7 +41,7 @@ endif
 
 include config.mk
 
-.PHONY: all internal_deps utils clean doxygen doxygen-clean
+.PHONY: all internal_deps utils clean doxygen doxygen-clean FORCE
 
 DOXYGEN ?= doxygen
 DOXYFILE ?= Doxyfile
@@ -64,7 +64,17 @@ mercury: $(MERCURY_LINK_INPUTS)
 	$(CC) -o mercury  \
 		$(MERCURY_LINK_INPUTS) $(LDFLAGS)
 
-main.o: main.c
+# Stamp file: written only when GIT_HASH changes so main.o is rebuilt
+# exactly when needed (FORCE makes the recipe always run; the recipe
+# only touches the file when the content actually differs).
+.git_hash_stamp: FORCE
+	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(GIT_HASH)" ]; then \
+		printf '%s' "$(GIT_HASH)" > $@; \
+	fi
+
+FORCE:
+
+main.o: main.c .git_hash_stamp
 	$(CC) $(CFLAGS) -c main.c
 
 internal_deps:
@@ -77,7 +87,7 @@ internal_deps:
 
 
 clean:
-	rm -f mercury *.o third_party/chan/*.o
+	rm -f mercury *.o .git_hash_stamp third_party/chan/*.o
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean

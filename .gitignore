@@ -22,7 +22,7 @@ Thumbs.db
 /tmp/
 *.tmp
 
-# Binary files that shouldn't be in git
+.git_hash_stamp
 *.deb
 *.rpm
 *.tar.gz
