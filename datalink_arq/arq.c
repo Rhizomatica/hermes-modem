@@ -796,7 +796,8 @@ static bool has_immediate_control_tx_work_locked(void)
     }
 
     if (arq_ctx.pending_flow_hint &&
-        !arq_ctx.waiting_ack)
+        !arq_ctx.waiting_ack &&
+        arq_ctx.turn_role == ARQ_TURN_IRS)
     {
         return true;
     }
@@ -1341,6 +1342,10 @@ static void become_iss_locked(const char *reason)
     mode_fsm_reset_locked("turn iss");
     arq_ctx.mode_apply_pending = false;
     arq_ctx.mode_apply_mode = 0;
+    /* FLOW_HINTs are IRS→ISS signals.  Clear any pending one inherited from the
+     * IRS role so ISS does not fire a spurious DATAC13 frame before its data burst,
+     * which would delay the data TX by one full slot and cause a timing collision. */
+    arq_ctx.pending_flow_hint = false;
     update_connected_state_from_turn_locked();
     HLOGD("arq", "Turn -> ISS (%s)", reason ? reason : "role change");
 }
@@ -2619,7 +2624,8 @@ static bool do_slot_tx_locked(time_t now)
         return true;
     }
 
-    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack)
+    if (arq_ctx.pending_flow_hint && !arq_ctx.waiting_ack &&
+        arq_ctx.turn_role == ARQ_TURN_IRS)
     {
         if (send_turn_control_locked(ARQ_SUBTYPE_FLOW_HINT, arq_ctx.flow_hint_value ? 1 : 0) == 0)
         {
