@@ -3882,10 +3882,14 @@ static void handle_control_frame_locked(uint8_t subtype,
              * Without ack_has_data we fall through and send an explicit TURN_REQ instead,
              * preventing the "both sides become IRS" deadlock. */
             arq_ctx.outstanding_has_turn_req = false;
+            arq_ctx.peer_backlog_nonzero = ack_has_data;
             become_irs_locked("piggyback turn");
             mark_link_activity_locked(now);
             mark_success_locked();
-            schedule_flow_hint_locked();
+            /* Do NOT call schedule_flow_hint_locked() here: the new ISS already
+             * knows IRS has data (TURN_REQ was piggybacked in the data frame).
+             * An immediate FLOW_HINT TX would collide with the new ISS's next
+             * retry ~400 ms later, causing the retry to be missed. */
             update_payload_mode_locked();
             return;
         }

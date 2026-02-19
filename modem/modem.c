@@ -1197,6 +1197,7 @@ void *rx_thread(void *g_modem)
     rx_decoder_state_t payload_decoder = {0};
     int last_pref_rx_mode = -1;
     int last_pref_tx_mode = -1;
+    bool was_tx = false;
 
     while (!shutdown_)
     {
@@ -1233,7 +1234,18 @@ void *rx_thread(void *g_modem)
         {
             // Half-duplex local TX: drain capture at low cost and skip demod work.
             drain_capture_buffer_fast(RX_TX_DRAIN_SAMPLES);
+            was_tx = true;
             continue;
+        }
+
+        /* PTT just dropped: flush the capture buffer to discard audio that
+         * accumulated during TX (drain rate < input rate → backlog builds up).
+         * Without this flush, the decoders chew through stale TX-era samples
+         * and miss the start of the peer's ACK/reply frame. */
+        if (was_tx)
+        {
+            clear_buffer(capture_buffer);
+            was_tx = false;
         }
 
         if (rx_decoder_bind_mode(&control_decoder, FREEDV_MODE_DATAC13) < 0 ||
