@@ -3867,13 +3867,19 @@ static void handle_control_frame_locked(uint8_t subtype,
             update_payload_mode_locked();
             return;
         }
+        /* Update peer_backlog from ACK's has_data bit (bit 7 of byte 6): this is
+         * fresher than any prior FLOW_HINT.  When ack_has_data=false we clear the
+         * flag so we do NOT immediately send TURN_REQ → TURN_ACK(0) (a wasted
+         * round-trip).  The proactive path (do_slot_tx_locked) will set
+         * pending_turn_req once a FLOW_HINT(1) from IRS raises peer_backlog again. */
+        arq_ctx.peer_backlog_nonzero = ack_has_data;
         arq_ctx.outstanding_has_turn_req = false;
         if (arq_ctx.turn_role == ARQ_TURN_ISS &&
             arq_ctx.app_tx_len == 0 &&
+            arq_ctx.peer_backlog_nonzero &&
             !arq_ctx.pending_turn_req &&
             !arq_ctx.turn_req_in_flight)
         {
-            /* Proactively offer turn after draining local backlog (UUCP is request/response). */
             arq_ctx.pending_turn_req = true;
         }
         mark_link_activity_locked(now);
