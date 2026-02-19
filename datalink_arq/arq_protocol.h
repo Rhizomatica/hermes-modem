@@ -14,49 +14,51 @@
 #include <stdint.h>
 
 /* ======================================================================
- * Protocol version
+ * Protocol version (informational — not carried in wire frames)
  * ====================================================================== */
 
-#define ARQ_PROTO_VERSION_NEW  3   /* v3: 10-byte header, ack_delay field     */
-#define ARQ_PROTO_VERSION_COMPAT 2 /* v2: 9-byte header (old nodes)           */
+#define ARQ_PROTO_VERSION  3   /* v3: 8-byte header, no proto_ver field on wire */
 
 /* ======================================================================
- * Frame header layout (v3, 10 bytes)
+ * Frame header layout (v3, 8 bytes total)
  *
- *  Byte 0: packet_type  — set by write_frame_header() from framer.h
- *                         (PACKET_TYPE_ARQ_CONTROL or PACKET_TYPE_ARQ_DATA)
- *  Byte 1: proto_ver    — ARQ_PROTO_VERSION_NEW (3)
- *  Byte 2: subtype      — arq_subtype_t
+ * Proto_ver field removed — both sides always run the same binary.
+ * ack_delay reduced to 1 byte (10ms units, max 2.55s — covers all real delays).
+ * HAS_SNR bit removed — snr_raw==0 already signals "unknown".
+ *
+ *  Byte 0: framer byte — set/validated by write_frame_header()/parse_frame_header()
+ *            bits [7:6] = packet_type (PACKET_TYPE_ARQ_CONTROL or PACKET_TYPE_ARQ_DATA)
+ *            bits [5:0] = CRC6 of bytes [1..frame_size-1]
+ *  Byte 1: subtype      — arq_subtype_t
+ *  Byte 2: flags        — bit7=TURN_REQ, bit6=HAS_DATA, bits[5:0]=spare
  *  Byte 3: session_id   — random byte chosen by caller at connect time
  *  Byte 4: tx_seq       — sender's frame sequence number
  *  Byte 5: rx_ack_seq   — last sequence number received from peer
- *  Byte 6: flags        — bit7=TURN_REQ, bit6=HAS_DATA, bit5=HAS_SNR
- *  Byte 7: snr_raw      — local RX SNR feedback to peer (see below), 0=unknown
- *  Byte 8: ack_delay_hi — IRS→ISS ACK delay in 10ms units, big-endian hi byte
- *  Byte 9: ack_delay_lo — IRS→ISS ACK delay in 10ms units, big-endian lo byte
+ *  Byte 6: snr_raw      — local RX SNR feedback to peer; 0=unknown
+ *                         encoded as uint8_t: (int)round(snr_dB) + 128, clamped 1-255
+ *  Byte 7: ack_delay    — IRS→ISS: time from data_rx to ack_tx, in 10ms units; 0=unknown
+ *                         ISS computes: OTA_RTT = (ack_rx_ms - data_tx_start_ms) - ack_delay×10
  *
- * SNR encoding:  snr_raw = (uint8_t)(clamp((int)round(snr_dB) + 128, 1, 255))
- *                0 = unknown;  range roughly -127..+127 dB (in practice -30..+30)
+ * CONNECT frames (CALL/ACCEPT) use a separate compact layout — see below.
+ * They are identified by: DATAC13 mode + PACKET_TYPE_ARQ_DATA from framer byte.
  *
- * ack_delay:  filled by IRS before transmitting ACK.
- *   value = (ack_tx_start_ms - data_rx_ms) / 10
- *   ISS computes: OTA_RTT = (ack_rx_ms - data_tx_start_ms) - ack_delay_decoded
+ * Payload bytes (DATA frames only) follow immediately after byte 7.
  * ====================================================================== */
 
-#define ARQ_HDR_VERSION_IDX   1
-#define ARQ_HDR_SUBTYPE_IDX   2
+#define ARQ_HDR_SUBTYPE_IDX   1
+#define ARQ_HDR_FLAGS_IDX     2
 #define ARQ_HDR_SESSION_IDX   3
 #define ARQ_HDR_SEQ_IDX       4
 #define ARQ_HDR_ACK_IDX       5
-#define ARQ_HDR_FLAGS_IDX     6
-#define ARQ_HDR_SNR_IDX       7
-#define ARQ_HDR_DELAY_HI_IDX  8
-#define ARQ_HDR_DELAY_LO_IDX  9
-#define ARQ_FRAME_HDR_SIZE    10  /* bytes 0-9 inclusive */
+#define ARQ_HDR_SNR_IDX       6
+#define ARQ_HDR_DELAY_IDX     7
+#define ARQ_FRAME_HDR_SIZE    8   /* bytes 0-7 inclusive */
 
-/* CONNECT frames (CALL/ACCEPT) use a compact layout that fits into 14 bytes.
- * They do NOT use the standard 10-byte header.  The packet_type byte (byte 0)
- * is the only shared field.
+/* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC13 only.
+ * Uses PACKET_TYPE_ARQ_DATA (framer routes it as data).
+ * Distinguished from regular DATA by the fact that these are always sent
+ * in DATAC13 mode; the receiver's DATAC13 decoder hands them to ARQ which
+ * checks packet_type and frame_size to identify them.
  *
  *  Byte 0: packet_type (PACKET_TYPE_ARQ_DATA, set by write_frame_header)
  *  Byte 1: connect_meta  = (session_id & 0x7F) | (is_accept ? 0x80 : 0x00)
@@ -67,16 +69,15 @@
 #define ARQ_CONNECT_SESSION_MASK      0x7F
 #define ARQ_CONNECT_ACCEPT_FLAG       0x80
 #define ARQ_CONTROL_FRAME_SIZE        14
-#define ARQ_CONNECT_META_SIZE         2   /* packet_type + connect_meta byte */
+#define ARQ_CONNECT_META_SIZE         2   /* framer byte + connect_meta byte */
 #define ARQ_CONNECT_MAX_ENCODED       (ARQ_CONTROL_FRAME_SIZE - ARQ_CONNECT_META_SIZE)
 
 /* ======================================================================
- * Flags byte (byte 6)
+ * Flags byte (byte 2)
  * ====================================================================== */
 
-#define ARQ_FLAG_TURN_REQ  0x80  /* bit 7: sender requests turn (ISS→IRS) */
-#define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued          */
-#define ARQ_FLAG_HAS_SNR   0x20  /* bit 5: snr_raw field is valid          */
+#define ARQ_FLAG_TURN_REQ  0x80  /* bit 7: sender requests role turn          */
+#define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued (IRS→ISS)   */
 
 /* ======================================================================
  * Frame subtypes
@@ -104,15 +105,14 @@ typedef enum
 
 typedef struct
 {
-    uint8_t  packet_type;   /* PACKET_TYPE_ARQ_CONTROL or _DATA              */
-    uint8_t  proto_ver;
-    uint8_t  subtype;       /* arq_subtype_t                                 */
+    uint8_t  packet_type;   /* PACKET_TYPE_ARQ_CONTROL or _DATA   (from framer byte) */
+    uint8_t  subtype;       /* arq_subtype_t                                         */
+    uint8_t  flags;         /* ARQ_FLAG_* bitmask                                    */
     uint8_t  session_id;
     uint8_t  tx_seq;
     uint8_t  rx_ack_seq;
-    uint8_t  flags;         /* ARQ_FLAG_* bitmask                            */
-    uint8_t  snr_raw;       /* 0=unknown; decode via arq_protocol_decode_snr */
-    uint16_t ack_delay_raw; /* 0=unknown; 10ms units; decode via _decode_ack_delay */
+    uint8_t  snr_raw;       /* 0=unknown; decode via arq_protocol_decode_snr         */
+    uint8_t  ack_delay_raw; /* 0=unknown; 10ms units; decode via _decode_ack_delay   */
 } arq_frame_hdr_t;
 
 /* ======================================================================
@@ -179,7 +179,7 @@ int arq_protocol_encode_hdr(uint8_t *buf, size_t buf_len, const arq_frame_hdr_t 
 
 /**
  * @brief Decode the ARQ header from the first bytes of buf.
- * @return 0 on success, -1 if too short or proto_ver mismatch.
+ * @return 0 on success, -1 if buf too short.
  */
 int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t *hdr);
 
@@ -196,14 +196,14 @@ uint8_t arq_protocol_encode_snr(float snr_db);
 float arq_protocol_decode_snr(uint8_t snr_raw);
 
 /**
- * @brief Encode ack_delay_ms to the 16-bit wire value (10ms units).
+ * @brief Encode ack_delay_ms to the 8-bit wire value (10ms units, max 2.55s).
  */
-uint16_t arq_protocol_encode_ack_delay(uint32_t delay_ms);
+uint8_t arq_protocol_encode_ack_delay(uint32_t delay_ms);
 
 /**
- * @brief Decode the 16-bit wire ack_delay to milliseconds.
+ * @brief Decode the 8-bit wire ack_delay to milliseconds.
  */
-uint32_t arq_protocol_decode_ack_delay(uint16_t raw);
+uint32_t arq_protocol_decode_ack_delay(uint8_t raw);
 
 /**
  * @brief Look up mode timing entry for a FreeDV mode.

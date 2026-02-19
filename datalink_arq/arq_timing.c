@@ -48,7 +48,7 @@ void arq_timing_record_tx_end(arq_timing_ctx_t *ctx, int seq)
 }
 
 void arq_timing_record_ack_rx(arq_timing_ctx_t *ctx, int seq,
-                               uint16_t ack_delay_raw, int peer_snr_x10)
+                               uint8_t ack_delay_raw, int peer_snr_x10)
 {
     /* TODO Phase 3: compute RTT, emit HLOGT */
     (void)ctx;

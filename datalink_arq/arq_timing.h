@@ -73,7 +73,7 @@ void arq_timing_record_tx_end(arq_timing_ctx_t *ctx, int seq);
  * @param peer_snr_x10   Peer-reported SNR * 10.
  */
 void arq_timing_record_ack_rx(arq_timing_ctx_t *ctx, int seq,
-                               uint16_t ack_delay_raw, int peer_snr_x10);
+                               uint8_t ack_delay_raw, int peer_snr_x10);
 
 /** @brief Record data frame decoded (IRS side); logs [TMG] data_rx. */
 void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
