@@ -58,6 +58,12 @@ bool arq_modem_dequeue(arq_action_t *action, int timeout_ms);
  * ====================================================================== */
 
 /**
+ * @brief Register the PTT event injection function (called from arq.c init).
+ * @param fn  Callback: mode >= 0 and ptt_on=true → TX_STARTED; ptt_on=false → TX_COMPLETE.
+ */
+void arq_modem_set_event_fn(void (*fn)(int mode, bool ptt_on));
+
+/**
  * @brief Notify ARQ that PTT has gone ON.
  * @param mode       FreeDV mode of the frame now on air.
  * @param frame_size Frame size in bytes.

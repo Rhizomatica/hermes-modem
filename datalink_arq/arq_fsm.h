@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "arq.h"  /* CALLSIGN_MAX_SIZE, arq_action_t/type, arq_info */
+#include "arq_timing.h"  /* arq_timing_ctx_t */
 
 /* ======================================================================
  * Level 1 — Connection FSM states
@@ -221,6 +222,12 @@ typedef struct
  * @brief Register FSM action callbacks (call once before first dispatch).
  */
 void arq_fsm_set_callbacks(const arq_fsm_callbacks_t *cbs);
+
+/**
+ * @brief Register timing context for recording (call once at init).
+ * @param timing Pointer to the arq_timing_ctx_t to record into.
+ */
+void arq_fsm_set_timing(arq_timing_ctx_t *timing);
 
 /* ======================================================================
  * FSM public API (implemented in arq_fsm.c)

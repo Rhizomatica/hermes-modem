@@ -31,6 +31,7 @@
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
+#include "../datalink_arq/arq_modem.h"
 #include "tcp_interfaces.h"
 #include "freedv_api.h"
 #include "fsk.h"
@@ -611,6 +612,8 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     /* === STEP 2: Key transmitter and send pre-generated audio === */
 
     ptt_on();
+    arq_modem_ptt_on(freedv_get_mode(g_modem->freedv),
+                     freedv_get_bits_per_modem_frame(g_modem->freedv) / 8);
     
     /* Wait for radio relay to switch (10ms for your radio) */
     usleep(10000);
@@ -625,6 +628,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     usleep(TAIL_TIME_US);
 
     ptt_off();
+    arq_modem_ptt_off();
 
     free(tx_buffer);
     free(mod_out_short);
