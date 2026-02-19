@@ -27,8 +27,8 @@
  * HAS_SNR bit removed — snr_raw==0 already signals "unknown".
  *
  *  Byte 0: framer byte — set/validated by write_frame_header()/parse_frame_header()
- *            bits [7:6] = packet_type (PACKET_TYPE_ARQ_CONTROL or PACKET_TYPE_ARQ_DATA)
- *            bits [5:0] = CRC6 of bytes [1..frame_size-1]
+ *            bits [7:5] = packet_type (3 bits: PACKET_TYPE_ARQ_CONTROL=0, ARQ_DATA=1, ARQ_CALL=2)
+ *            bits [4:0] = CRC5 of bytes [1..frame_size-1]
  *  Byte 1: subtype      — arq_subtype_t
  *  Byte 2: flags        — bit7=TURN_REQ, bit6=HAS_DATA, bits[5:0]=spare
  *  Byte 3: session_id   — random byte chosen by caller at connect time
@@ -40,7 +40,7 @@
  *                         ISS computes: OTA_RTT = (ack_rx_ms - data_tx_start_ms) - ack_delay×10
  *
  * CONNECT frames (CALL/ACCEPT) use a separate compact layout — see below.
- * They are identified by: DATAC13 mode + PACKET_TYPE_ARQ_DATA from framer byte.
+ * They are identified by PACKET_TYPE_ARQ_CALL in the framer byte.
  *
  * Payload bytes (DATA frames only) follow immediately after byte 7.
  * ====================================================================== */
@@ -55,12 +55,9 @@
 #define ARQ_FRAME_HDR_SIZE    8   /* bytes 0-7 inclusive */
 
 /* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC13 only.
- * Uses PACKET_TYPE_ARQ_DATA (framer routes it as data).
- * Distinguished from regular DATA by the fact that these are always sent
- * in DATAC13 mode; the receiver's DATAC13 decoder hands them to ARQ which
- * checks packet_type and frame_size to identify them.
+ * Uses PACKET_TYPE_ARQ_CALL in the framer byte.
  *
- *  Byte 0: packet_type (PACKET_TYPE_ARQ_DATA, set by write_frame_header)
+ *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL | CRC5, set by write_frame_header)
  *  Byte 1: connect_meta  = (session_id & 0x7F) | (is_accept ? 0x80 : 0x00)
  *  Bytes 2-13: arithmetic-encoded "DST|SRC" callsign string (12 bytes max)
  */
@@ -210,5 +207,117 @@ uint32_t arq_protocol_decode_ack_delay(uint8_t raw);
  * @return Pointer to timing entry, or NULL if mode is unknown.
  */
 const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode);
+
+/* ======================================================================
+ * Frame builder API
+ *
+ * Each function fills `buf` (caller-provided) with a complete ready-to-TX
+ * frame (framer byte + header/payload) and returns the total byte count,
+ * or -1 if buf_len < required size or arguments are invalid.
+ *
+ * The framer byte (byte 0, CRC5 + packet_type) is written by
+ * write_frame_header() inside each builder.
+ *
+ * For control frames, frame_size = ARQ_CONTROL_FRAME_SIZE (14 bytes).
+ * Callers typically allocate INT_BUFFER_SIZE and pass ARQ_CONTROL_FRAME_SIZE.
+ * ====================================================================== */
+
+/* --- Control frames (all use PACKET_TYPE_ARQ_CONTROL) --- */
+
+/** ACK frame. flags = ARQ_FLAG_HAS_DATA when IRS has pending TX data. */
+int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
+                            uint8_t session_id, uint8_t rx_ack_seq,
+                            uint8_t flags, uint8_t snr_raw,
+                            uint8_t ack_delay_raw);
+
+/** DISCONNECT frame. */
+int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
+                                   uint8_t session_id, uint8_t snr_raw);
+
+/** KEEPALIVE frame. */
+int arq_protocol_build_keepalive(uint8_t *buf, size_t buf_len,
+                                  uint8_t session_id, uint8_t snr_raw);
+
+/** KEEPALIVE_ACK frame. */
+int arq_protocol_build_keepalive_ack(uint8_t *buf, size_t buf_len,
+                                      uint8_t session_id, uint8_t snr_raw);
+
+/**
+ * TURN_REQ frame.
+ * @param rx_ack_seq  Last seq received from current ISS (so ISS can flush pending retries).
+ */
+int arq_protocol_build_turn_req(uint8_t *buf, size_t buf_len,
+                                 uint8_t session_id, uint8_t rx_ack_seq,
+                                 uint8_t snr_raw);
+
+/** TURN_ACK frame. */
+int arq_protocol_build_turn_ack(uint8_t *buf, size_t buf_len,
+                                 uint8_t session_id, uint8_t snr_raw);
+
+/**
+ * MODE_REQ frame.
+ * @param freedv_mode  Requested payload FreeDV mode (FREEDV_MODE_DATAC*).
+ */
+int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
+                                 uint8_t session_id, uint8_t snr_raw,
+                                 int freedv_mode);
+
+/** MODE_ACK frame — accept peer's mode request. */
+int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
+                                 uint8_t session_id, uint8_t snr_raw,
+                                 int freedv_mode);
+
+/* --- Data frame (PACKET_TYPE_ARQ_DATA) --- */
+
+/**
+ * DATA frame — 8-byte header + payload bytes.
+ * @param flags       ARQ_FLAG_TURN_REQ | ARQ_FLAG_HAS_DATA (bitmask).
+ * @param payload     Payload bytes (must be <= buf_len - ARQ_FRAME_HDR_SIZE).
+ * @param payload_len Number of payload bytes.
+ */
+int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
+                             uint8_t session_id, uint8_t tx_seq,
+                             uint8_t rx_ack_seq, uint8_t flags,
+                             uint8_t snr_raw,
+                             const uint8_t *payload, size_t payload_len);
+
+/* --- CALL/ACCEPT compact frames (PACKET_TYPE_ARQ_CALL) --- */
+
+/**
+ * Build a CALL frame.
+ * @param src  Local callsign.
+ * @param dst  Remote callsign.
+ * @return Total frame bytes (ARQ_CONTROL_FRAME_SIZE = 14) on success, -1 on error.
+ */
+int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
+                             uint8_t session_id,
+                             const char *src, const char *dst);
+
+/**
+ * Build an ACCEPT frame.
+ * @param src  Local callsign.
+ * @param dst  Remote callsign.
+ */
+int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
+                               uint8_t session_id,
+                               const char *src, const char *dst);
+
+/**
+ * Parse a CALL frame; extract callsigns.
+ * @param session_id_out  Receives the session_id byte.
+ * @param src_out         Buffer for local (transmitting) callsign, CALLSIGN_MAX_SIZE bytes.
+ * @param dst_out         Buffer for remote callsign, CALLSIGN_MAX_SIZE bytes.
+ * @return 0 on success, -1 on parse error.
+ */
+int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
+                             uint8_t *session_id_out,
+                             char *src_out, char *dst_out);
+
+/**
+ * Parse an ACCEPT frame; same layout as CALL.
+ */
+int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
+                               uint8_t *session_id_out,
+                               char *src_out, char *dst_out);
 
 #endif /* ARQ_PROTOCOL_H_ */

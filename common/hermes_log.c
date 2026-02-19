@@ -414,6 +414,13 @@ unsigned long hermes_log_dropped_count(void)
     return atomic_load_explicit(&g_log.dropped, memory_order_relaxed);
 }
 
+uint64_t hermes_uptime_ms(void)
+{
+    if (g_log.startup_mono_ms == 0)
+        return 0;
+    return mono_ms_now() - g_log.startup_mono_ms;
+}
+
 void hermes_logf(hermes_log_level_t level, const char *component, const char *fmt, ...)
 {
     hermes_log_entry_t entry;

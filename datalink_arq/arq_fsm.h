@@ -160,7 +160,6 @@ typedef struct
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */
-    uint64_t deadline_ms;             /* next absolute monotonic deadline      */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
     uint64_t startup_deadline_ms;     /* end of DATAC13-only startup period    */
 
@@ -179,7 +178,49 @@ typedef struct
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
     uint64_t last_rx_ms;              /* last successful frame decode time     */
+
+    /* --- Timer mechanism --- */
+    uint64_t       deadline_ms;       /* absolute monotonic deadline           */
+    arq_event_id_t deadline_event;   /* event to fire when deadline fires     */
 } arq_session_t;
+
+/* ======================================================================
+ * FSM action callbacks
+ *
+ * Registered once at startup via arq_fsm_set_callbacks().
+ * All callbacks are called from the ARQ event-loop thread.
+ * ====================================================================== */
+
+typedef struct
+{
+    /** Enqueue a complete TX frame to the modem action queue. */
+    void (*send_tx_frame)(int packet_type, int mode,
+                          size_t frame_size, const uint8_t *frame);
+
+    /** Notify TCP interface that a connection is established. */
+    void (*notify_connected)(const char *remote_call);
+
+    /** Notify TCP interface of disconnection.
+     *  @param to_no_client  true = client disconnected too; clear arq_conn. */
+    void (*notify_disconnected)(bool to_no_client);
+
+    /** Deliver received data bytes to the TCP data stream. */
+    void (*deliver_rx_data)(const uint8_t *data, size_t len);
+
+    /** Return bytes available in the TX buffer. */
+    int  (*tx_backlog)(void);
+
+    /** Read up to len bytes from the TX buffer; returns bytes actually read. */
+    int  (*tx_read)(uint8_t *buf, size_t len);
+
+    /** Send BUFFER status (bytes remaining) to TCP interface. */
+    void (*send_buffer_status)(int backlog_bytes);
+} arq_fsm_callbacks_t;
+
+/**
+ * @brief Register FSM action callbacks (call once before first dispatch).
+ */
+void arq_fsm_set_callbacks(const arq_fsm_callbacks_t *cbs);
 
 /* ======================================================================
  * FSM public API (implemented in arq_fsm.c)

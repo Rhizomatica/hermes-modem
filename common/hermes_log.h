@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef enum
 {
@@ -21,6 +22,14 @@ int  hermes_log_set_file(const char *path, hermes_log_level_t min_level, bool js
 void hermes_log_close_file(void);
 unsigned long hermes_log_dropped_count(void);
 void hermes_logf(hermes_log_level_t level, const char *component, const char *fmt, ...);
+
+/**
+ * @brief Return milliseconds elapsed since hermes_log_init().
+ *
+ * Uses CLOCK_MONOTONIC; always increases, unaffected by wall-clock changes.
+ * Returns 0 before hermes_log_init() is called.
+ */
+uint64_t hermes_uptime_ms(void);
 
 #define HLOGD(component, fmt, ...) hermes_logf(HERMES_LOG_LEVEL_DEBUG,  component, fmt, ##__VA_ARGS__)
 #define HLOGT(component, fmt, ...) hermes_logf(HERMES_LOG_LEVEL_TIMING, component, fmt, ##__VA_ARGS__)
