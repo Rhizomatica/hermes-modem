@@ -286,7 +286,7 @@ enum {
 
 #define ARQ_CALL_RETRY_SLOTS 4
 #define ARQ_ACCEPT_RETRY_SLOTS 3
-#define ARQ_DATA_RETRY_SLOTS 6
+#define ARQ_DATA_RETRY_SLOTS 10
 #define ARQ_CONNECT_GRACE_SLOTS 2
 #define ARQ_CHANNEL_GUARD_MS 400
 #define ARQ_ACK_REPLY_EXTRA_GUARD_MS 0
@@ -2329,6 +2329,9 @@ static void enter_connected_locked(void)
 {
     time_t now = time(NULL);
     arq_ctx.payload_mode = FREEDV_MODE_DATAC4;
+    arq_ctx.slot_len_s = mode_slot_len_s(FREEDV_MODE_DATAC4);
+    arq_ctx.tx_period_s = arq_ctx.slot_len_s;
+    arq_ctx.ack_timeout_s = ack_timeout_s_for_mode(FREEDV_MODE_DATAC4);
     arq_ctx.call_retries_left = 0;
     arq_ctx.accept_retries_left = 0;
     arq_ctx.pending_call = false;
