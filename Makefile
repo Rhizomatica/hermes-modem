@@ -41,7 +41,10 @@ endif
 
 include config.mk
 
-.PHONY: all internal_deps utils clean doxygen doxygen-clean FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean FORCE
+
+prefix ?= /usr
+bindir ?= $(prefix)/bin
 
 DOXYGEN ?= doxygen
 DOXYFILE ?= Doxyfile
@@ -60,6 +63,9 @@ MERCURY_LINK_INPUTS = \
 all: internal_deps utils
 	$(MAKE) mercury
 	$(MAKE) -C utils
+
+install: all
+	install -D -m 755 mercury $(DESTDIR)$(bindir)/mercury
 
 mercury: $(MERCURY_LINK_INPUTS)
 	$(CC) -o mercury  \
