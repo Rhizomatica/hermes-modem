@@ -589,6 +589,13 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                         hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
         }
+        else if (ev->id == ARQ_EV_RX_TURN_REQ)
+        {
+            /* Peer requests the TX turn — yield and send TURN_ACK. */
+            send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_ACK);
+            if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
+            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        }
         break;
 
     case ARQ_DFLOW_DATA_TX:
