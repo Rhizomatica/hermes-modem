@@ -31,6 +31,7 @@
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
+#include "../datalink_arq/arq_modem.h"
 #include "tcp_interfaces.h"
 #include "freedv_api.h"
 #include "fsk.h"
@@ -611,6 +612,8 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     /* === STEP 2: Key transmitter and send pre-generated audio === */
 
     ptt_on();
+    arq_modem_ptt_on(freedv_get_mode(g_modem->freedv),
+                     freedv_get_bits_per_modem_frame(g_modem->freedv) / 8);
     
     /* Wait for radio relay to switch (10ms for your radio) */
     usleep(10000);
@@ -625,6 +628,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     usleep(TAIL_TIME_US);
 
     ptt_off();
+    arq_modem_ptt_off();
 
     free(tx_buffer);
     free(mod_out_short);
@@ -874,20 +878,13 @@ static void process_received_frame(const uint8_t *data,
     tnc_send_bitrate(bitrate_level_from_payload_mode(payload_mode), bitrate_bps);
 
     frame_type = parse_frame_header((uint8_t *)data, payload_nbytes);
-    if (frame_type == PACKET_TYPE_ARQ_DATA &&
-        payload_nbytes == 14 &&
-        arq_policy_ready &&
-        arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes))
-    {
-        HLOGD("modem-rx", "Frame rx bytes=%zu type=%d frame_bytes=%zu",
-              payload_nbytes,
-              PACKET_TYPE_ARQ_CONTROL,
-              frame_bytes);
-        return;
-    }
 
     switch (frame_type)
     {
+    case PACKET_TYPE_ARQ_CALL:
+        if (arq_policy_ready)
+            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes);
+        break;
     case PACKET_TYPE_ARQ_CONTROL:
     case PACKET_TYPE_ARQ_DATA:
         if (arq_policy_ready)

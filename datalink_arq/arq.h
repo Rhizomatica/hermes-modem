@@ -28,10 +28,11 @@
 
 #define HEADER_SIZE 1
 
-#define PACKET_ARQ_CONTROL 0x00
-#define PACKET_ARQ_DATA 0x01
-#define PACKET_BROADCAST_CONTROL 0x02
-#define PACKET_BROADCAST_PAYLOAD 0x03
+#define PACKET_ARQ_CONTROL       0x00
+#define PACKET_ARQ_DATA          0x01
+#define PACKET_ARQ_CALL          0x02
+#define PACKET_BROADCAST_CONTROL 0x03
+#define PACKET_BROADCAST_PAYLOAD 0x04
 
 #include <stdbool.h>
 #include <stddef.h>
