@@ -323,6 +323,19 @@ static void enter_idle_iss(arq_session_t *sess)
     }
 }
 
+/* Called when a remote frame grants ISS role.  Defers any DATA_TX by
+ * ARQ_CHANNEL_GUARD_MS so we don't collide with the remote's final audio
+ * still draining through hardware (FreeDV decoder fires ~150ms early). */
+static void enter_idle_iss_guarded(arq_session_t *sess)
+{
+    if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+        dflow_enter(sess, ARQ_DFLOW_DATA_TX,
+                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                    ARQ_EV_TIMER_ACK);
+    else
+        dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+}
+
 static void enter_idle_irs(arq_session_t *sess)
 {
     dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
@@ -406,7 +419,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-            enter_idle_iss(sess);   /* caller sends data first */
+            enter_idle_iss_guarded(sess);   /* caller sends data first */
         }
         break;
 
@@ -602,7 +615,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_DATA_TX:
-        if (ev->id == ARQ_EV_TX_STARTED)
+        if (ev->id == ARQ_EV_TIMER_ACK)
+        {
+            /* Channel guard elapsed — now safe to transmit data. */
+            send_data_frame(sess);
+        }
+        else if (ev->id == ARQ_EV_TX_STARTED)
         {
             if (g_timing)
                 arq_timing_record_tx_start(g_timing, (int)sess->tx_seq,
@@ -643,7 +661,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                enter_idle_iss(sess);
+                enter_idle_iss_guarded(sess);
             }
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
@@ -789,7 +807,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_RX_TURN_ACK)
         {
             if (g_timing) arq_timing_record_turn(g_timing, true, "turn_ack");
-            enter_idle_iss(sess);
+            enter_idle_iss_guarded(sess);
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
@@ -833,7 +851,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->role == ARQ_ROLE_CALLER)
                 enter_idle_irs(sess);
             else
-                enter_idle_iss(sess);
+                enter_idle_iss_guarded(sess);
         }
         else if (ev->id == ARQ_EV_RX_KEEPALIVE)
         {
@@ -842,7 +860,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->role == ARQ_ROLE_CALLER)
                 enter_idle_irs(sess);
             else
-                enter_idle_iss(sess);
+                enter_idle_iss_guarded(sess);
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
