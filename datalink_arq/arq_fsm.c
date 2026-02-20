@@ -334,14 +334,12 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = ev->session_id;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
-        send_call_accept(sess, true);
-        {
-            const arq_mode_timing_t *tm =
-                arq_protocol_mode_timing(sess->control_mode);
-            float interval = tm ? tm->retry_interval_s : 7.0f;
-            sess_enter(sess, ARQ_CONN_ACCEPTING,
-                       deadline_from_s(interval), ARQ_EV_TIMER_RETRY);
-        }
+        /* Do NOT send ACCEPT immediately: the caller's PTT-OFF may not have
+         * happened yet when we decode the last samples of their CALL frame.
+         * Wait ARQ_CHANNEL_GUARD_MS so their relay is in RX before we TX. */
+        sess_enter(sess, ARQ_CONN_ACCEPTING,
+                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   ARQ_EV_TIMER_RETRY);
         break;
 
     case ARQ_EV_APP_CONNECT:
@@ -636,14 +634,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
 
-            /* Compute and send ACK */
-            uint32_t delay_ms   = 0;
-            uint64_t now        = hermes_uptime_ms();
-            if (sess->last_rx_ms > 0 && now > sess->last_rx_ms)
-                delay_ms = (uint32_t)(now - sess->last_rx_ms);
-            send_ack(sess, arq_protocol_encode_ack_delay(delay_ms));
-
-            dflow_enter(sess, ARQ_DFLOW_DATA_RX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS relay to switch
+             * back to RX before our ACK preamble arrives.  ACK is sent
+             * when TIMER_ACK fires in DATA_RX. */
+            dflow_enter(sess, ARQ_DFLOW_DATA_RX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
         }
         else if (ev->id == ARQ_EV_TIMER_PEER_BACKLOG)
         {
@@ -673,21 +669,18 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_DATA_RX:
-        if (ev->id == ARQ_EV_TX_COMPLETE)
+        if (ev->id == ARQ_EV_TIMER_ACK)
         {
-            if (sess->peer_has_data)
-                enter_idle_irs(sess);
-            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
-            {
-                if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
-                enter_idle_iss(sess);
-            }
-            else
-                enter_idle_irs(sess);
+            /* Channel guard elapsed — now safe to transmit ACK */
+            uint32_t delay_ms = (uint32_t)(hermes_uptime_ms() - sess->last_rx_ms);
+            send_ack(sess, arq_protocol_encode_ack_delay(delay_ms));
+            if (g_timing)
+                arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
+            dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
         else if (ev->id == ARQ_EV_RX_DATA)
         {
-            /* Another frame while still sending ACK; update seq */
+            /* Another frame arrived during guard window; update bookkeeping */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
