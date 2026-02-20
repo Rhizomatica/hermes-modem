@@ -178,6 +178,11 @@ typedef struct
     bool     disconnect_to_no_client;  /* after disconnect: clear arq_info     */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
 
+    /* --- Retransmit buffer --- */
+    uint8_t  tx_retransmit_buf[256];  /* last-sent data frame bytes           */
+    int      tx_retransmit_len;       /* 0 = no saved frame                   */
+    uint8_t  tx_retransmit_seq;       /* tx_seq the saved frame belongs to    */
+
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
     uint64_t last_rx_ms;              /* last successful frame decode time     */

@@ -263,21 +263,26 @@ static void send_data_frame(arq_session_t *sess)
     if (!tm)
         return;
 
-    /* user_bytes = modem payload capacity minus the 8-byte ARQ header.
-     * The payload buffer is pre-zeroed to user_bytes so the CRC5 (computed
-     * over all frame bytes) always covers the full modem slot, even for
-     * partial last-frames.  The actual number of valid bytes is encoded in
-     * the ack_delay header field (ARQ_DATA_LEN_FULL=0 means full frame). */
     if ((int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
         return;
     size_t user_bytes = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
 
     uint8_t frame[INT_BUFFER_SIZE];
     uint8_t payload[INT_BUFFER_SIZE];
-    memset(payload, 0, user_bytes);   /* pre-zero so CRC5 covers full slot */
+    memset(payload, 0, user_bytes);
     int payload_len = g_cbs.tx_read(payload, user_bytes);
     if (payload_len <= 0)
+    {
+        /* TX ring buffer drained — retransmit the saved frame for this seq. */
+        if (sess->tx_retransmit_len > 0 &&
+            sess->tx_retransmit_seq == sess->tx_seq &&
+            (size_t)sess->tx_retransmit_len <= sizeof(sess->tx_retransmit_buf))
+        {
+            send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode,
+                       (size_t)sess->tx_retransmit_len, sess->tx_retransmit_buf);
+        }
         return;
+    }
 
     /* 0 = full frame; else = exact valid byte count (receiver trims) */
     uint8_t payload_valid = ((size_t)payload_len == user_bytes)
@@ -296,7 +301,14 @@ static void send_data_frame(arq_session_t *sess)
     if (n <= 0)
         return;
 
-    /* n == tm->payload_bytes always now; no extra padding needed */
+    /* Save for potential retransmission if ACK is lost. */
+    if ((size_t)n <= sizeof(sess->tx_retransmit_buf))
+    {
+        memcpy(sess->tx_retransmit_buf, frame, (size_t)n);
+        sess->tx_retransmit_len = n;
+        sess->tx_retransmit_seq = sess->tx_seq;
+    }
+
     send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode, (size_t)n, frame);
     if (g_timing)
         arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,
@@ -659,6 +671,22 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                         deadline_from_s(tm ? tm->ack_timeout_s : 9.0f),
                         ARQ_EV_TIMER_ACK);
         }
+        else if (ev->id == ARQ_EV_RX_TURN_REQ)
+        {
+            /* TURN_REQ arrived while we are in the guard phase (TIMER_ACK
+             * deadline not yet fired — frame not queued yet).  Yield cleanly:
+             * we have not started TX so no retransmit state is touched. */
+            if (sess->deadline_event == ARQ_EV_TIMER_ACK &&
+                sess->deadline_ms != UINT64_MAX)
+            {
+                if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
+                dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+            /* else: TX is already queued/in-progress; ignore here and let
+             * WAIT_ACK handle the next TURN_REQ once TX_COMPLETE fires. */
+        }
         break;
 
     case ARQ_DFLOW_WAIT_ACK:
@@ -672,6 +700,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                                          (uint8_t)ev->ack_delay_raw,
                                          sess->peer_snr_x10);
             sess->tx_seq++;
+            sess->tx_retransmit_len = 0;  /* ACKed — discard retransmit buffer */
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
                 g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
@@ -809,16 +838,6 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * already knows we will transmit — safe to take the ISS role. */
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
                 enter_idle_iss(sess);
-            }
-            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
-            {
-                /* Data arrived during ACK TX (APP_DATA_READY was ignored).
-                 * Apply channel guard before TURN_REQ so the remote's decoder
-                 * has time to reset after our ACK preamble. */
-                sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
-                dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
-                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
-                            ARQ_EV_TIMER_ACK);
             }
             else
                 enter_idle_irs(sess);
