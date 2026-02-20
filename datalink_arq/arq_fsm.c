@@ -512,6 +512,15 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     switch (ev->id)
     {
+    case ARQ_EV_TIMER_ACK:
+        /* Initial DISCONNECT send after channel guard. */
+        send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        tm = arq_protocol_mode_timing(sess->control_mode);
+        sess->deadline_ms    = deadline_from_s(tm ? tm->retry_interval_s : 7.0f);
+        sess->deadline_event = ARQ_EV_TIMER_RETRY;
+        HLOGD(LOG_COMP, "Disconnect tx (initial, after guard)");
+        break;
+
     case ARQ_EV_RX_DISCONNECT:
         HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(to_no_client);
@@ -549,13 +558,14 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_APP_DISCONNECT:
-        send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        /* Don't transmit DISCONNECT immediately — apply ARQ_CHANNEL_GUARD_MS
+         * so that if we were mid-TX (DATA_TX) the remote's ACK can be sent
+         * without colliding with our DISCONNECT preamble. */
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess->disconnect_to_no_client = false;
-        tm = arq_protocol_mode_timing(sess->control_mode);
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
-                   ARQ_EV_TIMER_RETRY);
+                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   ARQ_EV_TIMER_ACK);
         return;
 
     case ARQ_EV_RX_DISCONNECT:
@@ -803,14 +813,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
             {
                 /* Data arrived during ACK TX (APP_DATA_READY was ignored).
-                 * Send TURN_REQ immediately rather than waiting 15s. */
-                send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
+                 * Apply channel guard before TURN_REQ so the remote's decoder
+                 * has time to reset after our ACK preamble. */
                 sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
-                const arq_mode_timing_t *tm2 =
-                    arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
-                            deadline_from_s(tm2 ? tm2->retry_interval_s : 7.0f),
-                            ARQ_EV_TIMER_RETRY);
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
             }
             else
                 enter_idle_irs(sess);
@@ -818,7 +826,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_TURN_REQ_TX:
-        if (ev->id == ARQ_EV_TX_COMPLETE)
+        if (ev->id == ARQ_EV_TIMER_ACK)
+        {
+            /* Deferred send — guard elapsed after completing previous TX. */
+            send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
+        }
+        else if (ev->id == ARQ_EV_TX_COMPLETE)
         {
             tm = arq_protocol_mode_timing(sess->control_mode);
             dflow_enter(sess, ARQ_DFLOW_TURN_REQ_WAIT,
