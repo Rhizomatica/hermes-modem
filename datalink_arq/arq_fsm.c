@@ -9,6 +9,7 @@
 #include "arq_fsm.h"
 #include "arq_protocol.h"
 #include "arq_timing.h"
+#include "arq.h"
 
 #include <limits.h>
 #include <string.h>
@@ -177,12 +178,13 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     int n;
+    const char *my_call = arq_conn.my_call_sign;
     if (is_accept)
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
-                                      sess->remote_call, sess->remote_call);
+                                      my_call, sess->remote_call);
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    sess->remote_call, sess->remote_call);
+                                    my_call, sess->remote_call);
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame);
 }
@@ -249,9 +251,16 @@ static void send_data_frame(arq_session_t *sess)
     if (!tm)
         return;
 
+    /* user_bytes = modem payload capacity minus the 8-byte ARQ header.
+     * The total frame written to the cbuf must equal tm->payload_bytes
+     * so the modem size-check in modem.c passes. */
+    if ((int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
+        return;
+    size_t user_bytes = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
+
     uint8_t frame[INT_BUFFER_SIZE];
     uint8_t payload[INT_BUFFER_SIZE];
-    int payload_len = g_cbs.tx_read(payload, (size_t)tm->payload_bytes);
+    int payload_len = g_cbs.tx_read(payload, user_bytes);
     if (payload_len <= 0)
         return;
 
@@ -263,14 +272,21 @@ static void send_data_frame(arq_session_t *sess)
                                     sess->session_id, sess->tx_seq,
                                     sess->rx_expected, 0, snr_raw,
                                     payload, (size_t)payload_len);
-    if (n > 0)
+    if (n <= 0)
+        return;
+
+    /* Zero-pad to the full modem slot so action_frame_size check passes */
+    if ((size_t)n < (size_t)tm->payload_bytes)
     {
-        send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode, (size_t)n, frame);
-        if (g_timing)
-            arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,
-                                       sess->payload_mode,
-                                       g_cbs.tx_backlog());
+        memset(frame + n, 0, (size_t)tm->payload_bytes - (size_t)n);
+        n = tm->payload_bytes;
     }
+
+    send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode, (size_t)n, frame);
+    if (g_timing)
+        arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,
+                                   sess->payload_mode,
+                                   g_cbs.tx_backlog());
 }
 
 /* ======================================================================

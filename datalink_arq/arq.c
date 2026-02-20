@@ -463,8 +463,9 @@ int arq_init(size_t frame_size, int mode)
 
     arq_timing_init(&g_timing);
     arq_fsm_init(&g_sess);
-    g_sess.payload_mode = mode;
-    g_sess.control_mode = FREEDV_MODE_DATAC13;
+    /* payload_mode and control_mode are set by arq_fsm_init().
+     * arq_set_active_modem_mode() will update payload_mode dynamically
+     * as the modem switches modes during the session. */
 
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,
