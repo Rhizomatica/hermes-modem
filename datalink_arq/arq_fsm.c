@@ -347,6 +347,16 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
     {
+    case ARQ_EV_TX_COMPLETE:
+        /* Deferred from RX_DISCONNECT: fire now that DISCONNECT ACK is sent,
+         * giving the TCP data thread time to drain data_rx_buffer_arq. */
+        if (sess->pending_disconnect_notify)
+        {
+            sess->pending_disconnect_notify = false;
+            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        }
+        break;
+
     case ARQ_EV_APP_LISTEN:
         sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
@@ -550,7 +560,9 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_DISCONNECT:
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        /* Defer notify until TX_COMPLETE so data_rx_buffer_arq has time to
+         * drain to the TCP socket before UUCP sees the DISCONNECTED signal. */
+        sess->pending_disconnect_notify = true;
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         return;
@@ -787,6 +799,18 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * already knows we will transmit — safe to take the ISS role. */
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
                 enter_idle_iss(sess);
+            }
+            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+            {
+                /* Data arrived during ACK TX (APP_DATA_READY was ignored).
+                 * Send TURN_REQ immediately rather than waiting 15s. */
+                send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
+                sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
+                const arq_mode_timing_t *tm2 =
+                    arq_protocol_mode_timing(sess->control_mode);
+                dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
+                            deadline_from_s(tm2 ? tm2->retry_interval_s : 7.0f),
+                            ARQ_EV_TIMER_RETRY);
             }
             else
                 enter_idle_irs(sess);

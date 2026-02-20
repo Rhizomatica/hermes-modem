@@ -176,6 +176,7 @@ typedef struct
 
     /* --- Teardown flags --- */
     bool     disconnect_to_no_client;  /* after disconnect: clear arq_info     */
+    bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
 
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
