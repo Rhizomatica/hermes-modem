@@ -165,8 +165,23 @@ static void dflow_enter(arq_session_t *sess, arq_dflow_state_t new_state,
 
 static void send_frame(int ptype, int mode, size_t len, const uint8_t *frame)
 {
-    if (g_cbs.send_tx_frame)
-        g_cbs.send_tx_frame(ptype, mode, len, frame);
+    if (!g_cbs.send_tx_frame)
+        return;
+
+    /* Pad short frames (e.g. 8-byte control headers) to the modem slot size
+     * so the action.frame_size check and fallback buffer path both pass. */
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+    size_t slot = tm ? (size_t)tm->payload_bytes : len;
+    if (len < slot) {
+        uint8_t padded[INT_BUFFER_SIZE];
+        memcpy(padded, frame, len);
+        memset(padded + len, 0, slot - len);
+        write_frame_header(padded, ptype, slot);
+        g_cbs.send_tx_frame(ptype, mode, slot, padded);
+        return;
+    }
+
+    g_cbs.send_tx_frame(ptype, mode, len, frame);
 }
 
 static uint64_t deadline_from_s(float seconds)
@@ -237,9 +252,6 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
                                    sess->rx_expected, flags, snr_raw, ack_delay_raw);
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame);
-
-    if (g_timing)
-        arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected);
 }
 
 static void send_data_frame(arq_session_t *sess)
