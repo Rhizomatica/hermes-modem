@@ -269,20 +269,26 @@ static void send_data_frame(arq_session_t *sess)
 
     uint8_t frame[INT_BUFFER_SIZE];
     uint8_t payload[INT_BUFFER_SIZE];
+
+    /* Retransmit without consuming ring-buffer bytes.  Checked BEFORE tx_read
+     * so that retries always replay the saved frame and never corrupt the byte
+     * stream by sending fresh (out-of-order) data. */
+    if (sess->tx_retransmit_len > 0 &&
+        sess->tx_retransmit_seq == sess->tx_seq)
+    {
+        send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode,
+                   (size_t)sess->tx_retransmit_len, sess->tx_retransmit_buf);
+        if (g_timing)
+            arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,
+                                       sess->payload_mode,
+                                       g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+        return;
+    }
+
     memset(payload, 0, user_bytes);
     int payload_len = g_cbs.tx_read(payload, user_bytes);
     if (payload_len <= 0)
-    {
-        /* TX ring buffer drained — retransmit the saved frame for this seq. */
-        if (sess->tx_retransmit_len > 0 &&
-            sess->tx_retransmit_seq == sess->tx_seq &&
-            (size_t)sess->tx_retransmit_len <= sizeof(sess->tx_retransmit_buf))
-        {
-            send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode,
-                       (size_t)sess->tx_retransmit_len, sess->tx_retransmit_buf);
-        }
-        return;
-    }
+        return;  /* no data and no saved frame */
 
     /* 0 = full frame; else = exact valid byte count (receiver trims) */
     uint8_t payload_valid = ((size_t)payload_len == user_bytes)
@@ -434,6 +440,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
+            sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->startup_deadline_ms =
                 hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
@@ -481,6 +488,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->role        = ARQ_ROLE_CALLEE;
         sess->tx_seq      = 0;
         sess->rx_expected = 0;
+        sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
         sess->startup_deadline_ms =
             hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
@@ -666,7 +674,6 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_tx_end(g_timing, (int)sess->tx_seq);
             tm = arq_protocol_mode_timing(sess->payload_mode);
-            sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
                         deadline_from_s(tm ? tm->ack_timeout_s : 9.0f),
                         ARQ_EV_TIMER_ACK);
@@ -701,6 +708,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                                          sess->peer_snr_x10);
             sess->tx_seq++;
             sess->tx_retransmit_len = 0;  /* ACKed — discard retransmit buffer */
+            sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;  /* fresh counter for next seq */
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
                 g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
