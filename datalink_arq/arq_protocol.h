@@ -140,6 +140,8 @@ typedef struct
 
 /* Timing constants shared across modules */
 #define ARQ_CHANNEL_GUARD_MS          300   /* channel guard after PTT-OFF (ms)    */
+#define ARQ_TURN_WAIT_AFTER_ACK_MS   3000  /* IRS post-ACK wait before TURN_REQ:
+                                            * ISS guard(150ms)+frame(2510ms)+margin */
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
 #define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries before giving up       */
 #define ARQ_ACCEPT_RETRY_SLOTS        3     /* ACCEPT retries before returning     */

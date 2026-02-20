@@ -839,6 +839,18 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
                 enter_idle_iss(sess);
             }
+            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+            {
+                /* Data arrived during ACK TX (APP_DATA_READY ignored, HAS_DATA
+                 * not set).  The ISS may start a new DATA_TX within ~150ms of
+                 * our PTT-OFF.  Wait ARQ_TURN_WAIT_AFTER_ACK_MS so that ISS's
+                 * frame arrives (cancelling this timer via RX_DATA) if it has
+                 * more data.  If no frame by then, ISS has nothing to send and
+                 * it is safe to request the turn without colliding. */
+                dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
+                            hermes_uptime_ms() + ARQ_TURN_WAIT_AFTER_ACK_MS,
+                            ARQ_EV_TIMER_PEER_BACKLOG);
+            }
             else
                 enter_idle_irs(sess);
         }

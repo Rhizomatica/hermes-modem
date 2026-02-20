@@ -167,14 +167,15 @@ static void cb_notify_connected(const char *remote_call)
 static void cb_notify_disconnected(bool to_no_client)
 {
     (void)to_no_client;
+    bool was_connected = arq_conn.dst_addr[0] != '\0';
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
     arq_conn.TRX = RX;
     tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
-    /* If the client still has LISTEN ON active, automatically return to
-     * LISTENING so incoming calls are accepted without needing a new LISTEN ON
-     * from the TNC client (UUCP doesn't re-send it after a disconnect). */
-    if (arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
+    /* Return to LISTENING automatically after a real session ends.
+     * Only fire if we were actually connected (dst_addr was set): avoids
+     * spurious APP_LISTEN from APP_DISCONNECT-in-DISCONNECTED handlers. */
+    if (was_connected && arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
     {
         arq_event_t ev = { .id = ARQ_EV_APP_LISTEN };
         evq_push(&ev);
