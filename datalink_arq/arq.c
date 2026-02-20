@@ -589,8 +589,8 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
-    (void)sync; (void)rx_status; (void)frame_decoded;
-    if (snr > -100.0f && snr < 100.0f)
+    (void)sync; (void)rx_status;
+    if (frame_decoded && snr > -100.0f && snr < 100.0f)
     {
         if (g_sess.local_snr_x10 == 0)
             g_sess.local_snr_x10 = (int)(snr * 10.0f);

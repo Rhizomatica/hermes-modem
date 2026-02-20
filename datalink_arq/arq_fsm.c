@@ -574,6 +574,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             send_data_frame(sess);
         }
+        else if (ev->id == ARQ_EV_RX_DATA)
+        {
+            /* Peer sent data while we hold the TX turn — receive it and ACK.
+             * Data payload was already delivered in arq_handle_incoming_frame(). */
+            if (g_timing)
+                arq_timing_record_data_rx(g_timing, (int)ev->seq,
+                                          (int)ev->data_bytes,
+                                          sess->local_snr_x10);
+            sess->rx_expected   = ev->seq + 1;
+            sess->last_rx_ms    = hermes_uptime_ms();
+            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            dflow_enter(sess, ARQ_DFLOW_DATA_RX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
+        }
         break;
 
     case ARQ_DFLOW_DATA_TX:
@@ -702,8 +717,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_DFLOW_DATA_RX:
         if (ev->id == ARQ_EV_TIMER_ACK)
         {
-            /* Channel guard elapsed — now safe to transmit ACK */
+            /* Channel guard elapsed — now safe to transmit ACK.
+             * Capture HAS_DATA state before sending so ACK_TX → TX_COMPLETE
+             * knows whether a piggyback turn is valid. */
             uint32_t delay_ms = (uint32_t)(hermes_uptime_ms() - sess->last_rx_ms);
+            sess->acktx_had_has_data = g_cbs.tx_backlog && g_cbs.tx_backlog() > 0;
             send_ack(sess, arq_protocol_encode_ack_delay(delay_ms));
             if (g_timing)
                 arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
@@ -727,8 +745,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             if (sess->peer_has_data)
                 enter_idle_irs(sess);
-            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+            else if (sess->acktx_had_has_data)
             {
+                /* Piggyback turn: HAS_DATA was set in the ACK so the remote
+                 * already knows we will transmit — safe to take the ISS role. */
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
                 enter_idle_iss(sess);
             }
@@ -854,7 +874,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
           arq_dflow_state_name(sess->dflow_state),
           arq_event_name(ev->id));
 
-    /* Track last RX time and local SNR from any received frame */
+    /* Track last RX time from any received frame */
     switch (ev->id)
     {
     case ARQ_EV_RX_DATA:
@@ -867,9 +887,6 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_KEEPALIVE:
     case ARQ_EV_RX_KEEPALIVE_ACK:
         sess->last_rx_ms = hermes_uptime_ms();
-        if (ev->snr_encoded != 0)
-            sess->local_snr_x10 =
-                (int)(arq_protocol_decode_snr((uint8_t)ev->snr_encoded) * 10.0f);
         break;
     default:
         break;

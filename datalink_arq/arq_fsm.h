@@ -166,6 +166,7 @@ typedef struct
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
+    bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     int      local_snr_x10;           /* local SNR EMA * 10                   */
     uint64_t peer_busy_until_ms;      /* remote TX busy guard expiry          */
