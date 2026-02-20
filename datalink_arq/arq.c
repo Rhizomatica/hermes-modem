@@ -171,6 +171,14 @@ static void cb_notify_disconnected(bool to_no_client)
     arq_conn.TRX = RX;
     tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
+    /* If the client still has LISTEN ON active, automatically return to
+     * LISTENING so incoming calls are accepted without needing a new LISTEN ON
+     * from the TNC client (UUCP doesn't re-send it after a disconnect). */
+    if (arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
+    {
+        arq_event_t ev = { .id = ARQ_EV_APP_LISTEN };
+        evq_push(&ev);
+    }
 }
 
 static void cb_deliver_rx_data(const uint8_t *data, size_t len)
