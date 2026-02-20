@@ -591,10 +591,13 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
         {
-            /* Peer requests the TX turn — yield and send TURN_ACK. */
-            send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_ACK);
+            /* Yield TX turn — guard ARQ_CHANNEL_GUARD_MS before sending
+             * TURN_ACK so we don't collide with the remote's final TX audio
+             * (FreeDV decoder fires ~150ms before remote PTT-OFF). */
             if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
-            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
         }
         break;
 
@@ -669,9 +672,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
         {
-            send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_ACK);
             if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
-            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
         }
         break;
 
@@ -718,6 +722,13 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
                         deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
                         ARQ_EV_TIMER_RETRY);
+        }
+        else if (ev->id == ARQ_EV_RX_TURN_REQ)
+        {
+            /* Remote missed our TURN_ACK — re-send with channel guard. */
+            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
         }
         break;
 
@@ -799,7 +810,9 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_TURN_ACK_TX:
-        if (ev->id == ARQ_EV_TX_COMPLETE)
+        if (ev->id == ARQ_EV_TIMER_ACK)
+            send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_ACK);
+        else if (ev->id == ARQ_EV_TX_COMPLETE)
             enter_idle_irs(sess);
         break;
 
