@@ -395,13 +395,20 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
 
     if (hdr.packet_type == PACKET_TYPE_ARQ_DATA)
     {
-        ev.id         = ARQ_EV_RX_DATA;
-        size_t payload_len = (frame_size > ARQ_FRAME_HDR_SIZE)
-                             ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
-        ev.data_bytes = payload_len;
-        /* Deliver payload bytes immediately to RX buffer */
-        if (payload_len > 0)
-            cb_deliver_rx_data(data + ARQ_FRAME_HDR_SIZE, payload_len);
+        ev.id = ARQ_EV_RX_DATA;
+        size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
+                            ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
+        /* ack_delay_raw is repurposed in DATA frames: 0 = full frame (all
+         * slot_bytes are valid), else = exact number of valid leading bytes.
+         * See ARQ_DATA_LEN_FULL in arq_protocol.h. */
+        size_t valid_bytes = (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL)
+                             ? slot_bytes
+                             : (size_t)hdr.ack_delay_raw;
+        if (valid_bytes > slot_bytes)
+            valid_bytes = slot_bytes;   /* sanity cap */
+        ev.data_bytes = valid_bytes;
+        if (valid_bytes > 0)
+            cb_deliver_rx_data(data + ARQ_FRAME_HDR_SIZE, valid_bytes);
     }
     else if (hdr.packet_type == PACKET_TYPE_ARQ_CONTROL)
     {

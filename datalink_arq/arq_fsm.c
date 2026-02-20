@@ -252,17 +252,25 @@ static void send_data_frame(arq_session_t *sess)
         return;
 
     /* user_bytes = modem payload capacity minus the 8-byte ARQ header.
-     * The total frame written to the cbuf must equal tm->payload_bytes
-     * so the modem size-check in modem.c passes. */
+     * The payload buffer is pre-zeroed to user_bytes so the CRC5 (computed
+     * over all frame bytes) always covers the full modem slot, even for
+     * partial last-frames.  The actual number of valid bytes is encoded in
+     * the ack_delay header field (ARQ_DATA_LEN_FULL=0 means full frame). */
     if ((int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
         return;
     size_t user_bytes = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
 
     uint8_t frame[INT_BUFFER_SIZE];
     uint8_t payload[INT_BUFFER_SIZE];
+    memset(payload, 0, user_bytes);   /* pre-zero so CRC5 covers full slot */
     int payload_len = g_cbs.tx_read(payload, user_bytes);
     if (payload_len <= 0)
         return;
+
+    /* 0 = full frame; else = exact valid byte count (receiver trims) */
+    uint8_t payload_valid = ((size_t)payload_len == user_bytes)
+                            ? ARQ_DATA_LEN_FULL
+                            : (uint8_t)payload_len;
 
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
@@ -271,17 +279,12 @@ static void send_data_frame(arq_session_t *sess)
     int n = arq_protocol_build_data(frame, sizeof(frame),
                                     sess->session_id, sess->tx_seq,
                                     sess->rx_expected, 0, snr_raw,
-                                    payload, (size_t)payload_len);
+                                    payload_valid,
+                                    payload, user_bytes);
     if (n <= 0)
         return;
 
-    /* Zero-pad to the full modem slot so action_frame_size check passes */
-    if ((size_t)n < (size_t)tm->payload_bytes)
-    {
-        memset(frame + n, 0, (size_t)tm->payload_bytes - (size_t)n);
-        n = tm->payload_bytes;
-    }
-
+    /* n == tm->payload_bytes always now; no extra padding needed */
     send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode, (size_t)n, frame);
     if (g_timing)
         arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,

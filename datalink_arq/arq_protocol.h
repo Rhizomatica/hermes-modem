@@ -160,6 +160,13 @@ typedef struct
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
 
+/* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
+ *   0               = full frame (all user bytes are valid data)
+ *   1 .. user_bytes = only this many leading bytes are valid; rest is padding
+ * This lets partial last-frames be transmitted with correct CRC5 (the slot is
+ * always filled to the full modem payload, CRC5 covers all bytes). */
+#define ARQ_DATA_LEN_FULL             0
+
 /* Mode table (defined in arq_protocol.c) */
 extern const arq_mode_timing_t arq_mode_table[];
 extern const int                arq_mode_table_count;
@@ -278,7 +285,7 @@ int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
                              uint8_t session_id, uint8_t tx_seq,
                              uint8_t rx_ack_seq, uint8_t flags,
-                             uint8_t snr_raw,
+                             uint8_t snr_raw, uint8_t payload_valid,
                              const uint8_t *payload, size_t payload_len);
 
 /* --- CALL/ACCEPT compact frames (PACKET_TYPE_ARQ_CALL) --- */
