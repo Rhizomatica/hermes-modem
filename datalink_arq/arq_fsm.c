@@ -454,6 +454,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev);
 
 static void enter_idle_iss(arq_session_t *sess)
 {
+    sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -470,6 +471,7 @@ static void enter_idle_iss(arq_session_t *sess)
  * still draining through hardware (FreeDV decoder fires ~150ms early). */
 static void enter_idle_iss_guarded(arq_session_t *sess)
 {
+    sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         /* Attempt mode negotiation when startup window has passed and we
