@@ -383,7 +383,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     return true;
 }
 
-void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
+void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
 {
     if (!data || frame_size < ARQ_FRAME_HDR_SIZE) return;
 
@@ -416,6 +416,7 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
         if (valid_bytes > slot_bytes)
             valid_bytes = slot_bytes;   /* sanity cap */
         ev.data_bytes = valid_bytes;
+        ev.rx_snr     = rx_snr;
         if (valid_bytes > 0 && valid_bytes <= sizeof(ev.payload))
         {
             memcpy(ev.payload, data + ARQ_FRAME_HDR_SIZE, valid_bytes);

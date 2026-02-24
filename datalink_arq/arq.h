@@ -182,8 +182,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
  * @brief Handle incoming regular ARQ control/data frame.
  * @param data Frame bytes.
  * @param frame_size Frame length in bytes.
+ * @param rx_snr Local receive SNR at decode time (dB); 0.0 = unknown.
  */
-void arq_handle_incoming_frame(uint8_t *data, size_t frame_size);
+void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr);
 
 /**
  * @brief Feed decoder/link metrics into ARQ adaptation.

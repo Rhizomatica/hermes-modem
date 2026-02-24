@@ -132,6 +132,12 @@ typedef struct
     uint8_t  payload[512];
     size_t   payload_len;
 
+    /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
+     * Carried in-band so the FSM can update local_snr_x10 without relying on
+     * the cross-thread arq_update_link_metrics() write, which races with the
+     * event queue push in modem.c. */
+    float    rx_snr;
+
     /* Call setup */
     char     remote_call[CALLSIGN_MAX_SIZE];
 } arq_event_t;
@@ -163,6 +169,7 @@ typedef struct
     int      control_mode;             /* always FREEDV_MODE_DATAC13           */
     int      speed_level;              /* mode selection ladder index          */
     int      mode_upgrade_count;       /* hysteresis counter for upgrade       */
+    int      pending_payload_mode;     /* mode requested in MODE_REQ (for retry) */
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */

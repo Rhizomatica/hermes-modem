@@ -888,7 +888,7 @@ static void process_received_frame(const uint8_t *data,
     case PACKET_TYPE_ARQ_CONTROL:
     case PACKET_TYPE_ARQ_DATA:
         if (arq_policy_ready)
-            arq_handle_incoming_frame((uint8_t *)data, payload_nbytes);
+            arq_handle_incoming_frame((uint8_t *)data, payload_nbytes, snr_est);
         break;
     case PACKET_TYPE_BROADCAST_CONTROL:
     case PACKET_TYPE_BROADCAST_DATA:
