@@ -416,8 +416,11 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size)
         if (valid_bytes > slot_bytes)
             valid_bytes = slot_bytes;   /* sanity cap */
         ev.data_bytes = valid_bytes;
-        if (valid_bytes > 0)
-            cb_deliver_rx_data(data + ARQ_FRAME_HDR_SIZE, valid_bytes);
+        if (valid_bytes > 0 && valid_bytes <= sizeof(ev.payload))
+        {
+            memcpy(ev.payload, data + ARQ_FRAME_HDR_SIZE, valid_bytes);
+            ev.payload_len = valid_bytes;
+        }
     }
     else if (hdr.packet_type == PACKET_TYPE_ARQ_CONTROL)
     {

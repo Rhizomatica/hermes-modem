@@ -189,6 +189,23 @@ static uint64_t deadline_from_s(float seconds)
     return hermes_uptime_ms() + (uint64_t)(seconds * 1000.0f + 0.5f);
 }
 
+/** Deliver RX payload to the application only if the sequence number matches
+ *  what we expect.  Returns true if data was delivered (new frame), false if
+ *  it was a duplicate that was silently dropped. */
+static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
+{
+    if (ev->seq != sess->rx_expected)
+    {
+        HLOGD(LOG_COMP, "Duplicate data seq=%d (expected=%d) — suppressed",
+              (int)ev->seq, (int)sess->rx_expected);
+        return false;
+    }
+    if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
+        g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
+    sess->rx_expected = ev->seq + 1;
+    return true;
+}
+
 static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -631,13 +648,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_DATA)
         {
-            /* Peer sent data while we hold the TX turn — receive it and ACK.
-             * Data payload was already delivered in arq_handle_incoming_frame(). */
+            /* Peer sent data while we hold the TX turn — receive it and ACK. */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->rx_expected   = ev->seq + 1;
+            deliver_rx_checked(sess, ev);
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             dflow_enter(sess, ARQ_DFLOW_DATA_RX,
@@ -747,6 +763,29 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                            ARQ_EV_TIMER_RETRY);
             }
         }
+        else if (ev->id == ARQ_EV_RX_DATA)
+        {
+            /* Peer sent DATA while we await ACK — this means the peer received
+             * our frame (it wouldn't send new DATA otherwise).  Treat as an
+             * implicit ACK: advance our tx_seq and accept the incoming data. */
+            HLOGD(LOG_COMP, "RX_DATA in WAIT_ACK — implicit ACK for seq=%d",
+                  (int)sess->tx_seq);
+            sess->tx_seq++;
+            sess->tx_retransmit_len = 0;
+            sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
+            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+
+            if (g_timing)
+                arq_timing_record_data_rx(g_timing, (int)ev->seq,
+                                          (int)ev->data_bytes,
+                                          sess->local_snr_x10);
+            deliver_rx_checked(sess, ev);
+            sess->last_rx_ms = hermes_uptime_ms();
+
+            dflow_enter(sess, ARQ_DFLOW_DATA_RX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
+        }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
         {
             if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
@@ -759,12 +798,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_DFLOW_IDLE_IRS:
         if (ev->id == ARQ_EV_RX_DATA)
         {
-            /* Record data arrival and deliver payload */
+            /* Record data arrival and deliver payload (with duplicate check) */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->rx_expected   = ev->seq + 1;
+            deliver_rx_checked(sess, ev);
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
 
@@ -824,12 +863,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_DATA)
         {
-            /* Another frame arrived during guard window; update bookkeeping */
+            /* Another frame arrived during guard window; deliver with seq check */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->rx_expected   = ev->seq + 1;
+            deliver_rx_checked(sess, ev);
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
         }
@@ -1001,6 +1040,18 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_KEEPALIVE:
     case ARQ_EV_RX_KEEPALIVE_ACK:
         sess->last_rx_ms = hermes_uptime_ms();
+        /* Session ID validation: drop frames from a different session when
+         * we are in CONNECTED or DISCONNECTING state (CALL/ACCEPT frames
+         * are handled separately and carry session_id in their own format). */
+        if ((sess->conn_state == ARQ_CONN_CONNECTED ||
+             sess->conn_state == ARQ_CONN_DISCONNECTING) &&
+            ev->id != ARQ_EV_RX_CALL && ev->id != ARQ_EV_RX_ACCEPT &&
+            ev->session_id != 0 && ev->session_id != sess->session_id)
+        {
+            HLOGD(LOG_COMP, "Session ID mismatch: got %d expected %d — dropped",
+                  (int)ev->session_id, (int)sess->session_id);
+            return;
+        }
         break;
     default:
         break;

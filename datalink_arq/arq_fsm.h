@@ -127,6 +127,11 @@ typedef struct
     int      mode;            /* requested/applied FreeDV mode                */
     size_t   data_bytes;      /* payload byte count (DATA frames)             */
 
+    /* Received data payload — carried through event queue so the FSM can
+     * validate sequence numbers before delivering to the application. */
+    uint8_t  payload[512];
+    size_t   payload_len;
+
     /* Call setup */
     char     remote_call[CALLSIGN_MAX_SIZE];
 } arq_event_t;
