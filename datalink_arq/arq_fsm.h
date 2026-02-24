@@ -170,6 +170,9 @@ typedef struct
     int      speed_level;              /* mode selection ladder index          */
     int      mode_upgrade_count;       /* hysteresis counter for upgrade       */
     int      pending_payload_mode;     /* mode requested in MODE_REQ (for retry) */
+    int      peer_payload_mode;        /* mode we last saw peer TX data in;
+                                        * used as TX mode when IRS gains turn
+                                        * to stay in sync with peer's decoder  */
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */

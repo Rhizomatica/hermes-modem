@@ -123,8 +123,9 @@ void arq_fsm_init(arq_session_t *sess)
     sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
-    sess->control_mode   = FREEDV_MODE_DATAC13;
-    sess->payload_mode   = FREEDV_MODE_DATAC4;
+    sess->control_mode      = FREEDV_MODE_DATAC13;
+    sess->payload_mode      = FREEDV_MODE_DATAC4;
+    sess->peer_payload_mode = FREEDV_MODE_DATAC4;  /* mirrors initial payload_mode */
 }
 
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
@@ -405,7 +406,8 @@ static void send_data_frame(arq_session_t *sess)
         if (g_timing)
             arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,
                                        sess->payload_mode,
-                                       g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                                       g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0,
+                                       0);  /* retransmit — no new bytes consumed */
         return;
     }
 
@@ -443,7 +445,8 @@ static void send_data_frame(arq_session_t *sess)
     if (g_timing)
         arq_timing_record_tx_queue(g_timing, (int)sess->tx_seq,
                                    sess->payload_mode,
-                                   g_cbs.tx_backlog());
+                                   g_cbs.tx_backlog(),
+                                   payload_len);  /* new data bytes consumed */
 }
 
 /* ======================================================================
@@ -452,9 +455,15 @@ static void send_data_frame(arq_session_t *sess)
 
 static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev);
 
-static void enter_idle_iss(arq_session_t *sess)
+static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
 {
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
+    /* When IRS gains the turn it must TX in the mode that ISS's payload decoder
+     * is configured for.  We track this as peer_payload_mode (updated each time
+     * we successfully decode a DATA frame from the peer).  Overwriting payload_mode
+     * here keeps the two sides in sync even when MODE_ACK is lost in transit. */
+    if (gained_turn)
+        sess->payload_mode = sess->peer_payload_mode;
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -469,9 +478,11 @@ static void enter_idle_iss(arq_session_t *sess)
 /* Called when a remote frame grants ISS role.  Defers any DATA_TX by
  * ARQ_CHANNEL_GUARD_MS so we don't collide with the remote's final audio
  * still draining through hardware (FreeDV decoder fires ~150ms early). */
-static void enter_idle_iss_guarded(arq_session_t *sess)
+static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
 {
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
+    if (gained_turn)
+        sess->payload_mode = sess->peer_payload_mode;
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         /* Attempt mode negotiation when startup window has passed and we
@@ -582,7 +593,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-            enter_idle_iss_guarded(sess);   /* caller sends data first */
+            enter_idle_iss_guarded(sess, false);   /* caller sends data first */
         }
         break;
 
@@ -768,6 +779,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             /* Peer sent data while we hold the TX turn — receive it and ACK. */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
+            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -854,7 +866,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                enter_idle_iss_guarded(sess);
+                enter_idle_iss_guarded(sess, false);  /* ISS retaining turn */
             }
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
@@ -890,6 +902,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                   (int)sess->tx_seq);
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
+            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
             sess->tx_seq++;
             sess->tx_retransmit_len = 0;
             sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
@@ -918,6 +931,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             /* Record data arrival and deliver payload (with duplicate check) */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
+            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -998,6 +1012,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             /* Another frame arrived during guard window; deliver with seq check */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
+            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
             if (g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -1018,7 +1033,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 /* Piggyback turn: HAS_DATA was set in the ACK so the remote
                  * already knows we will transmit — safe to take the ISS role. */
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
-                enter_idle_iss(sess);
+                enter_idle_iss(sess, true);  /* IRS gaining turn — use peer's observed mode */
             }
             else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
             {
@@ -1056,7 +1071,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_RX_TURN_ACK)
         {
             if (g_timing) arq_timing_record_turn(g_timing, true, "turn_ack");
-            enter_idle_iss_guarded(sess);
+            enter_idle_iss_guarded(sess, true);  /* IRS gaining turn */
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
@@ -1100,7 +1115,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->role == ARQ_ROLE_CALLER)
                 enter_idle_irs(sess);
             else
-                enter_idle_iss_guarded(sess);
+                enter_idle_iss_guarded(sess, false);
         }
         else if (ev->id == ARQ_EV_RX_KEEPALIVE)
         {
@@ -1109,7 +1124,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->role == ARQ_ROLE_CALLER)
                 enter_idle_irs(sess);
             else
-                enter_idle_iss_guarded(sess);
+                enter_idle_iss_guarded(sess, false);
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
@@ -1157,7 +1172,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       sess->payload_mode, ev->mode);
                 sess->payload_mode = ev->mode;
             }
-            enter_idle_iss_guarded(sess);
+            enter_idle_iss_guarded(sess, false);  /* ISS confirmed mode — retain turn */
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
@@ -1172,7 +1187,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             {
                 HLOGW(LOG_COMP, "MODE_REQ timeout — staying at mode %d",
                       sess->payload_mode);
-                enter_idle_iss(sess);
+                enter_idle_iss(sess, false);  /* ISS stays, no turn change */
             }
         }
         break;

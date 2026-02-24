@@ -405,6 +405,18 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     if (hdr.packet_type == PACKET_TYPE_ARQ_DATA)
     {
         ev.id = ARQ_EV_RX_DATA;
+        /* Infer the FreeDV mode from frame_size by matching the mode table.
+         * This lets the FSM track what mode the peer was actually transmitting
+         * in (for decoder-sync enforcement on role switch). */
+        ev.mode = FREEDV_MODE_DATAC13;   /* safe default */
+        for (int i = 0; i < arq_mode_table_count; i++)
+        {
+            if ((int)frame_size == arq_mode_table[i].payload_bytes)
+            {
+                ev.mode = arq_mode_table[i].freedv_mode;
+                break;
+            }
+        }
         size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
                             ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
         /* ack_delay_raw is repurposed in DATA frames: 0 = full frame (all

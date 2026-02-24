@@ -34,11 +34,14 @@ void arq_timing_init(arq_timing_ctx_t *ctx)
 }
 
 void arq_timing_record_tx_queue(arq_timing_ctx_t *ctx, int seq, int mode,
-                                int backlog_bytes)
+                                int backlog_bytes, int payload_bytes)
 {
     ctx->tx_queue_ms = hermes_uptime_ms();
-    HLOGT(LOG_COMP, "tx_queue seq=%d mode=%s backlog=%d",
-          seq, mode_name(mode), backlog_bytes);
+    if (payload_bytes > 0)
+        ctx->tx_bytes += (uint64_t)payload_bytes;
+    HLOGT(LOG_COMP, "tx_queue seq=%d mode=%s backlog=%d bytes=%d tx_total=%llu",
+          seq, mode_name(mode), backlog_bytes, payload_bytes,
+          (unsigned long long)ctx->tx_bytes);
 }
 
 void arq_timing_record_tx_start(arq_timing_ctx_t *ctx, int seq, int mode,
@@ -83,8 +86,8 @@ void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
     ctx->last_snr_local_x10 = snr_x10;
     ctx->rx_bytes          += (uint64_t)bytes;
     ctx->frames_rx++;
-    HLOGT(LOG_COMP, "data_rx seq=%d bytes=%d snr_local=%.1f",
-          seq, bytes, (float)snr_x10 / 10.0f);
+    HLOGT(LOG_COMP, "data_rx seq=%d bytes=%d snr_local=%.1f rx_total=%llu",
+          seq, bytes, (float)snr_x10 / 10.0f, (unsigned long long)ctx->rx_bytes);
 }
 
 void arq_timing_record_ack_tx(arq_timing_ctx_t *ctx, int seq)

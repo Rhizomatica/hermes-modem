@@ -56,9 +56,10 @@ typedef struct
 /** @brief Zero-initialise a timing context at session start. */
 void arq_timing_init(arq_timing_ctx_t *ctx);
 
-/** @brief Record frame queued for TX; logs [TMG] tx_queue. */
+/** @brief Record frame queued for TX; logs [TMG] tx_queue.
+ *  @param payload_bytes  Actual application bytes in this frame (0 for retransmits). */
 void arq_timing_record_tx_queue(arq_timing_ctx_t *ctx, int seq, int mode,
-                                int backlog_bytes);
+                                int backlog_bytes, int payload_bytes);
 
 /** @brief Record PTT ON; logs [TMG] tx_start. */
 void arq_timing_record_tx_start(arq_timing_ctx_t *ctx, int seq, int mode,
