@@ -904,13 +904,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                         hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
         }
-        else if (ev->id == ARQ_EV_RX_TURN_REQ)
-        {
-            if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
-            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
-                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
-                        ARQ_EV_TIMER_ACK);
-        }
+        /* TURN_REQ is intentionally ignored in WAIT_ACK: the ISS must not
+         * give up its role while a data frame is still unacknowledged.
+         * The peer's TURN_REQ will be honoured after the ACK arrives and
+         * the ISS enters IDLE_ISS (or after retries are exhausted). */
         break;
 
     case ARQ_DFLOW_IDLE_IRS:
