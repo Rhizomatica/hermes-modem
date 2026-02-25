@@ -149,7 +149,7 @@ typedef struct
                                             * ISS guard(500ms)+frame(2510ms)+margin */
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
 #define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries before giving up       */
-#define ARQ_ACCEPT_RETRY_SLOTS        3     /* ACCEPT retries before returning     */
+#define ARQ_ACCEPT_RETRY_SLOTS        4     /* ACCEPT retries before returning     */
 #define ARQ_DATA_RETRY_SLOTS          10    /* DATA retries before disconnect      */
 #define ARQ_DISCONNECT_RETRY_SLOTS    2     /* DISCONNECT frame retries            */
 #define ARQ_CONNECT_GRACE_SLOTS       2     /* extra wait slots for ACCEPT         */

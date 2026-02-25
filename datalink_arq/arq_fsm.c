@@ -613,6 +613,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
+            sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->startup_deadline_ms =
                 hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
@@ -661,6 +662,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->role        = ARQ_ROLE_CALLEE;
         sess->tx_seq      = 0;
         sess->rx_expected = 0;
+        sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
         sess->startup_deadline_ms =
             hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
@@ -672,6 +674,13 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         enter_idle_irs(sess);       /* callee receives first; process incoming data */
         if (ev->id == ARQ_EV_RX_DATA)
             fsm_dflow(sess, ev);
+        break;
+
+    case ARQ_EV_RX_CALL:
+        /* Caller is still retrying CALL (our previous ACCEPT was lost). Reset
+         * the retry counter so the ACCEPTING window stays open long enough for
+         * the caller to decode the next ACCEPT and start sending data. */
+        sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         break;
 
     case ARQ_EV_TIMER_RETRY:
