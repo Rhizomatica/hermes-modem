@@ -428,11 +428,21 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
                             ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
         /* ack_delay_raw is repurposed in DATA frames: 0 = full frame (all
-         * slot_bytes are valid), else = exact number of valid leading bytes.
-         * See ARQ_DATA_LEN_FULL in arq_protocol.h. */
-        size_t valid_bytes = (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL)
-                             ? slot_bytes
-                             : (size_t)hdr.ack_delay_raw;
+         * slot_bytes are valid), else = bits [7:0] of the valid byte count.
+         * ARQ_FLAG_LEN_HI in the flags byte carries bit 8, allowing counts
+         * up to 511 (needed for DATAC1 which has 502-byte payloads).
+         * See ARQ_DATA_LEN_FULL / ARQ_FLAG_LEN_HI in arq_protocol.h. */
+        size_t valid_bytes;
+        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL)
+        {
+            valid_bytes = slot_bytes;
+        }
+        else
+        {
+            valid_bytes = (size_t)hdr.ack_delay_raw;
+            if (hdr.flags & ARQ_FLAG_LEN_HI)
+                valid_bytes |= 0x100u;
+        }
         if (valid_bytes > slot_bytes)
             valid_bytes = slot_bytes;   /* sanity cap */
         ev.data_bytes = valid_bytes;

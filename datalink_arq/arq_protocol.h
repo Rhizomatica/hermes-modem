@@ -75,6 +75,11 @@
 
 #define ARQ_FLAG_TURN_REQ  0x80  /* bit 7: sender requests role turn          */
 #define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued (IRS→ISS)   */
+#define ARQ_FLAG_LEN_HI    0x20  /* bit 5: DATA frames only — payload_valid    *
+                                  * field carries bits [7:0] of valid byte     *
+                                  * count; this flag carries bit 8, allowing   *
+                                  * counts up to 511 (needed for DATAC1 which  *
+                                  * has 502-byte payloads).                    */
 
 /* ======================================================================
  * Frame subtypes

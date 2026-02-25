@@ -416,10 +416,23 @@ static void send_data_frame(arq_session_t *sess)
     if (payload_len <= 0)
         return;  /* no data and no saved frame */
 
-    /* 0 = full frame; else = exact valid byte count (receiver trims) */
-    uint8_t payload_valid = ((size_t)payload_len == user_bytes)
-                            ? ARQ_DATA_LEN_FULL
-                            : (uint8_t)payload_len;
+    /* 0 = full frame; else = exact valid byte count (receiver trims).
+     * payload_len can exceed 255 for DATAC1 (up to 502 bytes), so we
+     * cannot fit it in uint8_t directly.  Carry bit 8 of the count in
+     * ARQ_FLAG_LEN_HI (bit 5 of the flags byte); bits [7:0] go in the
+     * payload_valid (ack_delay_raw) byte.  This allows lengths up to 511. */
+    uint8_t payload_valid;
+    uint8_t data_flags = 0;
+    if ((size_t)payload_len == user_bytes)
+    {
+        payload_valid = ARQ_DATA_LEN_FULL;
+    }
+    else
+    {
+        payload_valid = (uint8_t)(payload_len & 0xFF);
+        if (payload_len > 0xFF)
+            data_flags = ARQ_FLAG_LEN_HI;
+    }
 
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
@@ -427,7 +440,7 @@ static void send_data_frame(arq_session_t *sess)
 
     int n = arq_protocol_build_data(frame, sizeof(frame),
                                     sess->session_id, sess->tx_seq,
-                                    sess->rx_expected, 0, snr_raw,
+                                    sess->rx_expected, data_flags, snr_raw,
                                     payload_valid,
                                     payload, user_bytes);
     if (n <= 0)
