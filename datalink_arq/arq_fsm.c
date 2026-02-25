@@ -1032,8 +1032,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
                 sess->payload_mode = ev->mode;
-                send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, ev->mode);
-                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
+                 * before our MODE_ACK preamble arrives (same guard used by
+                 * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
+                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
             }
         }
         break;
@@ -1101,8 +1105,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGI(LOG_COMP, "MODE_REQ: switching payload mode %d -> %d",
                       sess->payload_mode, ev->mode);
                 sess->payload_mode = ev->mode;
-                send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, ev->mode);
-                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
+                 * before our MODE_ACK preamble arrives (same guard used by
+                 * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
+                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
             }
         }
         break;
@@ -1305,8 +1313,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_MODE_ACK_TX:
-        /* IRS: MODE_ACK sent (payload_mode already updated), waiting for TX. */
-        if (ev->id == ARQ_EV_TX_COMPLETE)
+        /* IRS: channel guard elapsed — now safe to send MODE_ACK. */
+        if (ev->id == ARQ_EV_TIMER_ACK)
+            send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, sess->payload_mode);
+        /* IRS: MODE_ACK transmission finished. */
+        else if (ev->id == ARQ_EV_TX_COMPLETE)
             enter_idle_irs(sess);
         break;
 
