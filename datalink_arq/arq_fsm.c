@@ -237,6 +237,12 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
  *  Returns current payload_mode if no change is warranted. */
 static int select_best_mode(const arq_session_t *sess, int backlog)
 {
+    /* Don't upgrade if the backlog fits in a single frame at the current mode.
+     * MODE_REQ/MODE_ACK airtime overhead is never worthwhile for one frame. */
+    const arq_mode_timing_t *cur = arq_protocol_mode_timing(sess->payload_mode);
+    if (cur && backlog <= cur->payload_bytes - ARQ_FRAME_HDR_SIZE)
+        return sess->payload_mode;
+
     float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
 
     /* Upgrade path: prefer fastest mode that both SNR and backlog support. */
