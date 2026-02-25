@@ -547,11 +547,15 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
             samples_silence = fsk_settle_samples;
     }
 
+    /* 100ms head silence before preamble — gives the radio RX→TX relay and
+     * the peer's audio path time to settle before the preamble arrives. */
+    int samples_head = FREEDV_FS_8000 * 100 / 1000;
+
     /* Calculate max buffer size needed:
-     * preamble + (frames * n_mod_out) + postamble + silence */
+     * head silence + preamble + (frames * n_mod_out) + postamble + tail silence */
     int max_preamble = freedv_get_n_tx_modem_samples(freedv) * 2;  /* conservative estimate */
     int max_postamble = max_preamble;
-    size_t max_samples = max_preamble + (frames_per_burst * n_mod_out) + max_postamble + samples_silence;
+    size_t max_samples = (size_t)samples_head + max_preamble + (frames_per_burst * n_mod_out) + max_postamble + samples_silence;
 
     /* Allocate temporary buffer for all modulated audio */
     int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
@@ -570,6 +574,10 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
 
     /* === STEP 1: Generate all modulated audio into temp buffer === */
+
+    /* Head silence: allow relay/audio path to settle before preamble */
+    for (int i = 0; i < samples_head; i++)
+        tx_buffer[total_samples++] = 0;
 
     /* Generate preamble */
     int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
@@ -753,6 +761,7 @@ typedef struct {
     int demod_cap;
     uint8_t *bytes_out;
     size_t bytes_cap;
+    int last_sync;      /* previous sync state, for change detection */
 } rx_decoder_state_t;
 
 typedef struct {
@@ -985,8 +994,19 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
 
+        /* Print SNR on sync state change so the user sees when the decoder
+         * acquires or loses lock, without waiting for a full decoded frame. */
+        if (sync != state->last_sync)
+        {
+            printf("[modem-rx] %s sync=%d snr=%.1f dB\n",
+                   mode_name_from_enum(state->mode), sync, snr_est);
+            state->last_sync = sync;
+        }
+
         if (nbytes_out > 0)
         {
+            printf("[modem-rx] Decoded frame %s bytes=%zu snr=%.1f dB\n",
+                   mode_name_from_enum(state->mode), nbytes_out, snr_est);
             HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
                   state->mode,
                   mode_name_from_enum(state->mode),
