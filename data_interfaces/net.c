@@ -287,8 +287,19 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
         attempted_send = 1;
         n = send(cli_ctl_sockfd, buffer, tx_size, MSG_NOSIGNAL);
 
-        if (n != (ssize_t) tx_size)
+        if (n < 0)
+        {
+            /* EAGAIN/EWOULDBLOCK: non-blocking socket whose send buffer is
+             * momentarily full.  This is a transient condition; drop the
+             * message but do NOT tear down the connection. */
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                net_set_status(CTL_TCP_PORT, NET_RESTART);
+        }
+        else if (n != (ssize_t) tx_size)
+        {
+            /* Partial write — peer is closing or kernel is misbehaving. */
             net_set_status(CTL_TCP_PORT, NET_RESTART);
+        }
     }
 
     if (port_type == DATA_TCP_PORT && net_get_status(DATA_TCP_PORT) == NET_CONNECTED)
@@ -296,8 +307,15 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
         attempted_send = 1;
         n = send(cli_data_sockfd, buffer, tx_size, MSG_NOSIGNAL);
 
-        if (n != (ssize_t) tx_size)
+        if (n < 0)
+        {
+            if (errno != EAGAIN && errno != EWOULDBLOCK)
+                net_set_status(DATA_TCP_PORT, NET_RESTART);
+        }
+        else if (n != (ssize_t) tx_size)
+        {
             net_set_status(DATA_TCP_PORT, NET_RESTART);
+        }
     }
 
     pthread_mutex_unlock(&write_mutex[port_type]);
