@@ -968,6 +968,29 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
          * give up its role while a data frame is still unacknowledged.
          * The peer's TURN_REQ will be honoured after the ACK arrives and
          * the ISS enters IDLE_ISS (or after retries are exhausted). */
+        else if (ev->id == ARQ_EV_RX_MODE_REQ)
+        {
+            if (arq_protocol_mode_timing(ev->mode) != NULL &&
+                ev->mode != FREEDV_MODE_DATAC13)
+            {
+                /* Peer has taken ISS and is requesting a mode switch.  The peer
+                 * only enters ISS after receiving our pending frame (via DATA_RX
+                 * → ACK_TX → piggyback or TURN_REQ), so this is an implicit ACK.
+                 * Advance tx_seq, accept the new mode, send MODE_ACK, then hand
+                 * the turn to the peer (MODE_ACK_TX TX_COMPLETE → IDLE_IRS). */
+                HLOGI(LOG_COMP,
+                      "MODE_REQ in WAIT_ACK (implicit ACK) tx_seq=%d mode %d->%d",
+                      (int)sess->tx_seq, sess->payload_mode, ev->mode);
+                sess->tx_seq++;
+                sess->tx_retransmit_len = 0;
+                sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
+                if (g_cbs.send_buffer_status)
+                    g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                sess->payload_mode = ev->mode;
+                send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, ev->mode);
+                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            }
+        }
         break;
 
     case ARQ_DFLOW_IDLE_IRS:
