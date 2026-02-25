@@ -903,29 +903,47 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_DATA)
         {
-            /* Peer sent DATA while we await ACK — this means the peer received
-             * our frame (it wouldn't send new DATA otherwise).  Treat as an
-             * implicit ACK: advance our tx_seq and accept the incoming data. */
-            HLOGD(LOG_COMP, "RX_DATA in WAIT_ACK — implicit ACK for seq=%d",
-                  (int)sess->tx_seq);
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
-            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
-            sess->tx_seq++;
-            sess->tx_retransmit_len = 0;
-            sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
-            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
-
-            if (g_timing)
-                arq_timing_record_data_rx(g_timing, (int)ev->seq,
-                                          (int)ev->data_bytes,
-                                          sess->local_snr_x10);
-            deliver_rx_checked(sess, ev);
+            sess->peer_payload_mode = ev->mode;
             sess->last_rx_ms = hermes_uptime_ms();
 
-            dflow_enter(sess, ARQ_DFLOW_DATA_RX,
-                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
-                        ARQ_EV_TIMER_ACK);
+            if (ev->seq == sess->rx_expected)
+            {
+                /* Peer sent new DATA while we await ACK for our frame —
+                 * implicit ACK: peer received our frame (it wouldn't send
+                 * new DATA otherwise).  Advance tx_seq and accept the data. */
+                HLOGD(LOG_COMP,
+                      "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for tx_seq=%d",
+                      (int)ev->seq, (int)sess->tx_seq);
+                sess->tx_seq++;
+                sess->tx_retransmit_len = 0;
+                sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
+                sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+                if (g_cbs.send_buffer_status)
+                    g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                if (deliver_rx_checked(sess, ev) && g_timing)
+                    arq_timing_record_data_rx(g_timing, (int)ev->seq,
+                                              (int)ev->data_bytes,
+                                              sess->local_snr_x10);
+                dflow_enter(sess, ARQ_DFLOW_DATA_RX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+            else
+            {
+                /* Duplicate frame (our ACK was lost; peer is retransmitting).
+                 * This is NOT an implicit ACK of our own pending tx_seq.
+                 * Retransmit our data immediately so the peer can ACK it;
+                 * DATA_TX→TX_COMPLETE returns to WAIT_ACK via the normal path.
+                 * Do NOT advance tx_seq — our frame is still unacknowledged. */
+                HLOGD(LOG_COMP,
+                      "RX_DATA in WAIT_ACK (dup seq=%d expected=%d) — re-TX our seq=%d",
+                      (int)ev->seq, (int)sess->rx_expected, (int)sess->tx_seq);
+                deliver_rx_checked(sess, ev);  /* logs dup; no delivery */
+                dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                send_data_frame(sess);
+            }
         }
         /* TURN_REQ is intentionally ignored in WAIT_ACK: the ISS must not
          * give up its role while a data frame is still unacknowledged.
