@@ -160,6 +160,11 @@ static void cb_notify_connected(const char *remote_call)
 {
     snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
     arq_conn.TRX = RX;
+    /* Flush any stale RX bytes from the previous session before notifying
+     * UUCP.  Moved here from cb_notify_disconnected so that the last bytes
+     * of the previous session have time to drain to the TCP socket before
+     * the buffer is cleared (clearing on disconnect races with UUCP reads). */
+    clear_buffer(data_rx_buffer_arq);
     tnc_send_connected();
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
@@ -170,14 +175,13 @@ static void cb_notify_disconnected(bool to_no_client)
     bool was_connected = arq_conn.dst_addr[0] != '\0';
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
     arq_conn.TRX = RX;
-    /* Flush stale session bytes so the next UUCP session starts clean.
-     * Without this, TX bytes buffered by the previous uucico and RX bytes
-     * not yet drained by it leak into the new session and corrupt the
-     * UUCP handshake ("Bad response to handshake string"). */
+    /* Flush stale TX bytes from the previous session.  RX bytes are flushed
+     * at connection start (cb_notify_connected) instead of here, so that the
+     * last delivered bytes have time to drain to the TCP socket before the
+     * next session clears the buffer. */
     pthread_mutex_lock(&g_app_tx_mtx);
     clear_buffer(g_app_tx_buf);
     pthread_mutex_unlock(&g_app_tx_mtx);
-    clear_buffer(data_rx_buffer_arq);
     tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
     /* Return to LISTENING automatically after a real session ends.

@@ -497,6 +497,17 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         send_data_frame(sess);
     }
+    else if (sess->pending_disconnect)
+    {
+        /* TX buffer is empty and last ACK received — fire the deferred DISCONNECT. */
+        HLOGD(LOG_COMP, "Deferred DISCONNECT: TX buffer drained — disconnecting now");
+        sess->pending_disconnect      = false;
+        sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
+        sess->disconnect_to_no_client = false;
+        sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   ARQ_EV_TIMER_ACK);
+    }
     else
     {
         dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -760,9 +771,22 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_APP_DISCONNECT:
-        /* Don't transmit DISCONNECT immediately — apply ARQ_CHANNEL_GUARD_MS
-         * so that if we were mid-TX (DATA_TX) the remote's ACK can be sent
-         * without colliding with our DISCONNECT preamble. */
+        /* If data is still buffered or a frame is in flight, defer DISCONNECT
+         * until the TX buffer drains and the last ACK is received.  Without
+         * this guard the final bytes of a UUCP transfer can be abandoned
+         * before they are transmitted. */
+        if ((g_cbs.tx_backlog && g_cbs.tx_backlog() > 0) ||
+            sess->dflow_state == ARQ_DFLOW_DATA_TX ||
+            sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
+        {
+            HLOGD(LOG_COMP,
+                  "APP_DISCONNECT deferred — backlog=%d dflow=%s",
+                  g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0,
+                  arq_dflow_state_name(sess->dflow_state));
+            sess->pending_disconnect = true;
+            return;
+        }
+        sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess->disconnect_to_no_client = false;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,

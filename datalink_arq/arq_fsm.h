@@ -192,6 +192,7 @@ typedef struct
     /* --- Teardown flags --- */
     bool     disconnect_to_no_client;  /* after disconnect: clear arq_info     */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
+    bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
 
     /* --- Retransmit buffer --- */
     uint8_t  tx_retransmit_buf[1024];  /* last-sent data frame bytes; must be
