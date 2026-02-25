@@ -630,6 +630,10 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->rx_expected = 0;
             sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+            sess->payload_mode         = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
+            sess->peer_payload_mode    = FREEDV_MODE_DATAC4;
+            sess->pending_payload_mode = 0;
+            sess->mode_upgrade_count   = 0;
             sess->startup_deadline_ms =
                 hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
@@ -679,6 +683,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->rx_expected = 0;
         sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+        sess->payload_mode         = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
+        sess->peer_payload_mode    = FREEDV_MODE_DATAC4;
+        sess->pending_payload_mode = 0;
+        sess->mode_upgrade_count   = 0;
         sess->startup_deadline_ms =
             hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
