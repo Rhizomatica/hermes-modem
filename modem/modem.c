@@ -1250,19 +1250,15 @@ void *rx_thread(void *g_modem)
          * accumulated during TX (drain rate < input rate → backlog builds up).
          * Without this flush, the decoders chew through stale TX-era samples
          * and miss the start of the peer's ACK/reply frame.
-         * Also reset OFDM sync state and clear sample accumulators: samples
-         * retained in demod_count from before PTT cause timing misalignment
-         * and false-sync acquisition on the first post-TX frame. */
+         * Also reset the decoder sample accumulators (demod_count=0) so that
+         * pre-TX samples queued in demod_in are not mixed with post-TX audio,
+         * which would cause OFDM timing misalignment on the first post-TX frame.
+         * Do NOT call freedv_set_sync(UNSYNC) here: that destroys any partial
+         * sync already acquired on a peer frame that overlapped our TX burst
+         * (e.g. a DATA frame arriving during a short 2.5s ACCEPT or ACK reply). */
         if (was_tx)
         {
             clear_buffer(capture_buffer);
-            pthread_mutex_lock(&modem_freedv_lock);
-            if (control_decoder.freedv)
-                freedv_set_sync(control_decoder.freedv, FREEDV_SYNC_UNSYNC);
-            if (payload_decoder.freedv &&
-                payload_decoder.freedv != control_decoder.freedv)
-                freedv_set_sync(payload_decoder.freedv, FREEDV_SYNC_UNSYNC);
-            pthread_mutex_unlock(&modem_freedv_lock);
             control_decoder.demod_count = 0;
             payload_decoder.demod_count = 0;
             was_tx = false;
