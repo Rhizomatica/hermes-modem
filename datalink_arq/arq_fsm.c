@@ -514,9 +514,13 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
     }
 }
 
-/* Called when a remote frame grants ISS role.  Defers any DATA_TX by
- * ARQ_CHANNEL_GUARD_MS so we don't collide with the remote's final audio
- * still draining through hardware (FreeDV decoder fires ~150ms early). */
+/* Called when a remote frame grants ISS role.  Defers DATA_TX by
+ * ARQ_ISS_POST_ACK_GUARD_MS so the peer's decoder has enough time to
+ * switch from TX back to RX and re-acquire OFDM sync before our preamble
+ * arrives.  Larger than ARQ_CHANNEL_GUARD_MS because ack_rx fires ~168ms
+ * before the peer's ACK PTT-OFF, so the effective gap at the peer is only
+ * (guard + 100ms head) - 168ms; at 500ms that was only 432ms — too tight
+ * for DATAC1 re-sync, causing ~39% first-frame misses. */
 static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
 {
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
@@ -531,7 +535,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
             return;
 
         dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                    hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                     ARQ_EV_TIMER_ACK);
     }
     else

@@ -145,6 +145,16 @@ typedef struct
 
 /* Timing constants shared across modules */
 #define ARQ_CHANNEL_GUARD_MS          500   /* channel guard after PTT-OFF (ms)    */
+#define ARQ_ISS_POST_ACK_GUARD_MS     900   /* ISS guard before resuming DATA TX
+                                            * after receiving an ACK from the IRS.
+                                            * Larger than ARQ_CHANNEL_GUARD_MS:
+                                            * ack_rx fires ~168ms before IRS PTT-OFF,
+                                            * so the effective gap at IRS is only
+                                            * (guard + 100ms head) - 168ms.
+                                            * At 500ms: gap=432ms, too tight for
+                                            * DATAC1 re-sync after IRS ACK TX.
+                                            * At 900ms: gap=832ms — 492ms of clear
+                                            * air before the DATAC1 preamble. */
 #define ARQ_TURN_WAIT_AFTER_ACK_MS   3500  /* IRS post-ACK wait before TURN_REQ:
                                             * ISS guard(500ms)+frame(2510ms)+margin */
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
