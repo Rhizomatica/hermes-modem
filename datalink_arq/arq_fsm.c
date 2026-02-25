@@ -440,6 +440,15 @@ static void send_data_frame(arq_session_t *sess)
         sess->tx_retransmit_len = n;
         sess->tx_retransmit_seq = sess->tx_seq;
     }
+    else
+    {
+        /* Frame too large for retransmit buffer — retries would consume fresh
+         * ring bytes and corrupt the stream.  This must not happen; it means
+         * tx_retransmit_buf needs to be enlarged. */
+        HLOGE(LOG_COMP, "FATAL: retransmit buf too small (%zu < %d) for seq=%d mode=%d",
+              sizeof(sess->tx_retransmit_buf), n,
+              (int)sess->tx_seq, sess->payload_mode);
+    }
 
     send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode, (size_t)n, frame);
     if (g_timing)
