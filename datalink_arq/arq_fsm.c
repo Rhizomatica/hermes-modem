@@ -789,11 +789,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
-            if (g_timing)
+            if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            deliver_rx_checked(sess, ev);
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             dflow_enter(sess, ARQ_DFLOW_DATA_RX,
@@ -937,15 +936,15 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_DFLOW_IDLE_IRS:
         if (ev->id == ARQ_EV_RX_DATA)
         {
-            /* Record data arrival and deliver payload (with duplicate check) */
+            /* Deliver payload with duplicate check; only count in timing if
+             * actually delivered (retransmits must not inflate rx_total). */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
-            if (g_timing)
+            if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            deliver_rx_checked(sess, ev);
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
 
@@ -1022,11 +1021,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
-            if (g_timing)
+            if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            deliver_rx_checked(sess, ev);
             sess->last_rx_ms    = hermes_uptime_ms();
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
         }

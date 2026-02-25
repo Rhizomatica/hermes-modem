@@ -170,6 +170,14 @@ static void cb_notify_disconnected(bool to_no_client)
     bool was_connected = arq_conn.dst_addr[0] != '\0';
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
     arq_conn.TRX = RX;
+    /* Flush stale session bytes so the next UUCP session starts clean.
+     * Without this, TX bytes buffered by the previous uucico and RX bytes
+     * not yet drained by it leak into the new session and corrupt the
+     * UUCP handshake ("Bad response to handshake string"). */
+    pthread_mutex_lock(&g_app_tx_mtx);
+    clear_buffer(g_app_tx_buf);
+    pthread_mutex_unlock(&g_app_tx_mtx);
+    clear_buffer(data_rx_buffer_arq);
     tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
     /* Return to LISTENING automatically after a real session ends.

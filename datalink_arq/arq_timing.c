@@ -116,7 +116,7 @@ void arq_timing_record_turn(arq_timing_ctx_t *ctx, bool to_iss,
 
 void arq_timing_record_connect(arq_timing_ctx_t *ctx, int mode)
 {
-    (void)ctx;
+    arq_timing_init(ctx);  /* reset per-session counters */
     HLOGT(LOG_COMP, "connect mode=%s", mode_name(mode));
 }
 
