@@ -158,9 +158,9 @@ typedef struct
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold peer payload mode after activity */
 #define ARQ_SNR_HYST_DB               1.0f
-#define ARQ_SNR_MIN_DATAC4_DB        -4.0f  /* target MPP SNR for DATAC4  (codec2 README) */
-#define ARQ_SNR_MIN_DATAC3_DB         6.0f  /* effective threshold 7 dB (min+hyst)  */
-#define ARQ_SNR_MIN_DATAC1_DB        11.0f  /* effective threshold 12 dB (min+hyst) */
+#define ARQ_SNR_MIN_DATAC4_DB        -4.0f  /* target MPP SNR (codec2 README) */
+#define ARQ_SNR_MIN_DATAC3_DB        -1.0f
+#define ARQ_SNR_MIN_DATAC1_DB         3.0f
 #define ARQ_BACKLOG_MIN_DATAC3        56
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
