@@ -1071,7 +1071,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 /* Piggyback turn: HAS_DATA was set in the ACK so the remote
                  * already knows we will transmit — safe to take the ISS role. */
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
-                enter_idle_iss(sess, true);  /* IRS gaining turn — use peer's observed mode */
+                enter_idle_iss_guarded(sess, true);  /* IRS gaining turn — use peer's observed mode */
             }
             else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
             {
