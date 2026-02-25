@@ -194,7 +194,7 @@ typedef struct
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
 
     /* --- Retransmit buffer --- */
-    uint8_t  tx_retransmit_buf[600];  /* last-sent data frame bytes; must be
+    uint8_t  tx_retransmit_buf[1024];  /* last-sent data frame bytes; must be
                                        * >= max frame: 8 hdr + 502 DATAC1
                                        * payload = 510 bytes (was 256, too
                                        * small → DATAC1 retries consumed fresh
