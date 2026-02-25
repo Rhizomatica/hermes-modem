@@ -994,15 +994,6 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
 
-        /* Print SNR on sync state change so the user sees when the decoder
-         * acquires or loses lock, without waiting for a full decoded frame. */
-        if (sync != state->last_sync)
-        {
-            printf("[modem-rx] %s sync=%d snr=%.1f dB\n",
-                   mode_name_from_enum(state->mode), sync, snr_est);
-            state->last_sync = sync;
-        }
-
         if (nbytes_out > 0)
         {
             printf("[modem-rx] Decoded frame %s bytes=%zu snr=%.1f dB\n",
