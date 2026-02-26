@@ -403,7 +403,9 @@ int main(int argc, char *argv[])
     {
         hermes_log_set_level(verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
         if (log_file_path)
-            hermes_log_set_file(log_file_path, HERMES_LOG_LEVEL_TIMING, log_file_jsonl);
+            hermes_log_set_file(log_file_path,
+                                verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_TIMING,
+                                log_file_jsonl);
         HLOGI("main", "Async logger initialized (min_level=%s)", verbose ? "DEBUG" : "INFO");
     }
     else
