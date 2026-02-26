@@ -538,6 +538,18 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
                     hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                     ARQ_EV_TIMER_ACK);
     }
+    else if (sess->pending_disconnect)
+    {
+        /* TX buffer is empty — honour a DISCONNECT that was deferred while
+         * a frame was in flight.  Same path as enter_idle_iss(). */
+        HLOGD(LOG_COMP, "Deferred DISCONNECT: TX buffer drained — disconnecting now");
+        sess->pending_disconnect      = false;
+        sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
+        sess->disconnect_to_no_client = false;
+        sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   ARQ_EV_TIMER_ACK);
+    }
     else
         dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
 }
