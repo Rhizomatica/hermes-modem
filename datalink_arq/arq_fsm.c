@@ -783,13 +783,13 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_APP_DISCONNECT:
-        /* If data is still buffered or a frame is in flight, defer DISCONNECT
-         * until the TX buffer drains and the last ACK is received.  Without
-         * this guard the final bytes of a UUCP transfer can be abandoned
-         * before they are transmitted. */
+        /* Defer DISCONNECT only while a frame is physically being transmitted
+         * (PTT on) or the TX buffer still has unsent bytes.  We must NOT defer
+         * when in WAIT_ACK: the frame is already sent (PTT off) and the peer
+         * may never ACK it; waiting up to 10×12 s before honouring the
+         * application's explicit disconnect request is unacceptable. */
         if ((g_cbs.tx_backlog && g_cbs.tx_backlog() > 0) ||
-            sess->dflow_state == ARQ_DFLOW_DATA_TX ||
-            sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
+            sess->dflow_state == ARQ_DFLOW_DATA_TX)
         {
             HLOGD(LOG_COMP,
                   "APP_DISCONNECT deferred — backlog=%d dflow=%s",
@@ -943,6 +943,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
+            /* Honour a disconnect that was deferred while a frame was in
+             * flight (DATA_TX).  The PTT is now off; stop retrying. */
+            if (sess->pending_disconnect)
+            {
+                HLOGI(LOG_COMP,
+                      "Pending DISCONNECT: aborting retry seq=%d",
+                      (int)sess->tx_seq);
+                sess->pending_disconnect      = false;
+                sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
+                sess->disconnect_to_no_client = false;
+                sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                           hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                           ARQ_EV_TIMER_ACK);
+                return;
+            }
             if (sess->tx_retries_left > 0)
             {
                 sess->tx_retries_left--;
