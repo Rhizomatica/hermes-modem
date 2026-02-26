@@ -33,7 +33,6 @@
 #include <sched.h>
 #endif
 
-
 #include "freedv_api.h"
 #include "ldpc_codes.h"
 #include "arq.h"
