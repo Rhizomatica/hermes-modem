@@ -35,7 +35,7 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output);
  *             The peer may also send its own DATA frame after the ACK (piggybacking
  *             when HAS_DATA flag is set), so ack_timeout must cover that full reply:
  *   DATAC13: TX ~2.5s + 0.5s guard + ~2.5s ACK return ≈ 5.5s → 6s
- *   DATAC4:  0.5s guard + ~3.0s DATAC13 ACK + ~6.5s DATAC4 DATA + 1.0s margin ≈ 11.0s → 15s
+ *   DATAC4:  0.5s guard + ~3.0s DATAC13 ACK + ~6.5s DATAC4 DATA + 1.0s margin ≈ 11.0s → 11s
  *            (If peer has no data the ACK alone arrives at ~3.5s, but with data
  *             the full reply takes ~10s; without enough margin the retry fires
  *             mid-DATA-TX causing an RF collision that prevents any decode.)
@@ -47,7 +47,7 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output);
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload_bytes */
     {  FREEDV_MODE_DATAC13,   2.5f,      1.0f,      6.0f,        7.0f,           14 },
-    {  FREEDV_MODE_DATAC4,    5.7f,      1.0f,      15.0f,       16.0f,          54 },
+    {  FREEDV_MODE_DATAC4,    5.7f,      1.0f,      11.0f,       12.0f,          54 },
     {  FREEDV_MODE_DATAC3,    4.0f,      1.0f,      9.0f,        10.0f,          126 },
     {  FREEDV_MODE_DATAC1,    6.5f,      1.0f,      12.0f,       13.0f,          510 },
 };
