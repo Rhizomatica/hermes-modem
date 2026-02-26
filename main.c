@@ -47,6 +47,7 @@
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
+
 int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC3,
                        FREEDV_MODE_DATAC0,
