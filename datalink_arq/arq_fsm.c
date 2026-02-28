@@ -274,8 +274,12 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
 
 /** Compute desired payload mode based on peer_snr_x10, TX backlog, and the
  *  reliability ladder.  Returns current payload_mode if no change is warranted.
- *  The ladder caps upgrades (both SNR and ladder must permit a higher mode).
- *  SNR-driven downgrades bypass the ladder (safety always wins). */
+ *
+ *  SNR gates upgrades: both SNR and ladder must permit a higher mode.
+ *  Downgrades are driven exclusively by the reliability ladder (via
+ *  record_tx_outcome → speed_level--).  SNR is deliberately NOT used to
+ *  force downgrades: a stable link just below the SNR threshold but with
+ *  zero retries should stay at the current mode. */
 static int select_best_mode(const arq_session_t *sess, int backlog)
 {
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
@@ -297,14 +301,10 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
         lmax     >= FREEDV_MODE_DATAC3)
         return FREEDV_MODE_DATAC3;
 
-    /* Downgrade path: fall back if SNR is now too low for the current mode.
-     * These checks bypass the ladder — SNR safety always applies. */
-    if (sess->payload_mode == FREEDV_MODE_DATAC1 &&
-        peer_snr < ARQ_SNR_MIN_DATAC1_DB - ARQ_SNR_HYST_DB)
-        return FREEDV_MODE_DATAC3;
-    if (sess->payload_mode == FREEDV_MODE_DATAC3 &&
-        peer_snr < ARQ_SNR_MIN_DATAC3_DB - ARQ_SNR_HYST_DB)
-        return FREEDV_MODE_DATAC4;
+    /* Downgrade path: ladder-only.  If speed_level fell (due to retries),
+     * the ladder cap is now below payload_mode — signal the needed downgrade. */
+    if (sess->payload_mode > lmax)
+        return lmax;
 
     return sess->payload_mode; /* no change */
 }
