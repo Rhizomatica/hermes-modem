@@ -243,8 +243,8 @@ static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool r
 
     if (is_payload_split_mode(snapshot->preferred_rx_mode))
         mode = snapshot->preferred_rx_mode;
-    else if (is_payload_split_mode(snapshot->payload_mode))
-        mode = snapshot->payload_mode;
+    else if (is_payload_split_mode(snapshot->peer_rx_mode))
+        mode = snapshot->peer_rx_mode;  /* peer's TX mode = what our decoder must match */
 
     return mode;
 }

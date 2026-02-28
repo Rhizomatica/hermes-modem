@@ -179,6 +179,8 @@ typedef struct
 #define ARQ_BACKLOG_MIN_DATAC3        56
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
+#define ARQ_LADDER_LEVELS             3     /* 0=DATAC4, 1=DATAC3, 2=DATAC1     */
+#define ARQ_LADDER_UP_SUCCESSES       4     /* clean ACKs required to step up    */
 
 /* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
  *   0               = full frame (all user bytes are valid data)

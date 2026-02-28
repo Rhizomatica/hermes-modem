@@ -123,9 +123,11 @@ void arq_fsm_init(arq_session_t *sess)
     sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
-    sess->control_mode      = FREEDV_MODE_DATAC13;
-    sess->payload_mode      = FREEDV_MODE_DATAC4;
-    sess->peer_payload_mode = FREEDV_MODE_DATAC4;  /* mirrors initial payload_mode */
+    sess->control_mode   = FREEDV_MODE_DATAC13;
+    sess->payload_mode   = FREEDV_MODE_DATAC4;  /* my TX mode, starts at safest level */
+    sess->peer_rx_mode   = FREEDV_MODE_DATAC4;  /* RX decoder, starts at safest level */
+    sess->speed_level    = 0;
+    sess->tx_success_count = 0;
 }
 
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
@@ -233,8 +235,47 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
         send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame);
 }
 
-/** Compute desired payload mode based on peer_snr_x10 and TX backlog.
- *  Returns current payload_mode if no change is warranted. */
+/** Map reliability ladder level to the maximum FreeDV mode allowed. */
+static int ladder_max_mode(int level)
+{
+    if (level >= 2) return FREEDV_MODE_DATAC1;
+    if (level >= 1) return FREEDV_MODE_DATAC3;
+    return FREEDV_MODE_DATAC4;
+}
+
+/** Record the outcome of a TX frame.  Called with clean=true when an ACK
+ *  arrived with no retries consumed, or clean=false on the first retry.
+ *  Steps the speed_level ladder up (slowly) or down (immediately). */
+static void record_tx_outcome(arq_session_t *sess, bool clean)
+{
+    if (!clean)
+    {
+        /* Any retry → step down immediately to improve reliability */
+        if (sess->speed_level > 0)
+        {
+            sess->speed_level--;
+            HLOGD(LOG_COMP, "Ladder step-down to %d (retry)", sess->speed_level);
+        }
+        sess->tx_success_count = 0;
+    }
+    else
+    {
+        sess->tx_success_count++;
+        if (sess->tx_success_count >= ARQ_LADDER_UP_SUCCESSES &&
+            sess->speed_level < ARQ_LADDER_LEVELS - 1)
+        {
+            sess->speed_level++;
+            sess->tx_success_count = 0;
+            HLOGD(LOG_COMP, "Ladder step-up to %d (%d clean ACKs)",
+                  sess->speed_level, ARQ_LADDER_UP_SUCCESSES);
+        }
+    }
+}
+
+/** Compute desired payload mode based on peer_snr_x10, TX backlog, and the
+ *  reliability ladder.  Returns current payload_mode if no change is warranted.
+ *  The ladder caps upgrades (both SNR and ladder must permit a higher mode).
+ *  SNR-driven downgrades bypass the ladder (safety always wins). */
 static int select_best_mode(const arq_session_t *sess, int backlog)
 {
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
@@ -244,16 +285,20 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
         return sess->payload_mode;
 
     float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
+    int   lmax     = ladder_max_mode(sess->speed_level);
 
-    /* Upgrade path: prefer fastest mode that both SNR and backlog support. */
+    /* Upgrade path: prefer fastest mode that SNR, backlog, AND ladder permit. */
     if (peer_snr >= ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB &&
-        backlog  >= ARQ_BACKLOG_MIN_DATAC1)
+        backlog  >= ARQ_BACKLOG_MIN_DATAC1 &&
+        lmax     >= FREEDV_MODE_DATAC1)
         return FREEDV_MODE_DATAC1;
     if (peer_snr >= ARQ_SNR_MIN_DATAC3_DB + ARQ_SNR_HYST_DB &&
-        backlog  >= ARQ_BACKLOG_MIN_DATAC3)
+        backlog  >= ARQ_BACKLOG_MIN_DATAC3 &&
+        lmax     >= FREEDV_MODE_DATAC3)
         return FREEDV_MODE_DATAC3;
 
-    /* Downgrade path: fall back if SNR is now too low for the current mode. */
+    /* Downgrade path: fall back if SNR is now too low for the current mode.
+     * These checks bypass the ladder — SNR safety always applies. */
     if (sess->payload_mode == FREEDV_MODE_DATAC1 &&
         peer_snr < ARQ_SNR_MIN_DATAC1_DB - ARQ_SNR_HYST_DB)
         return FREEDV_MODE_DATAC3;
@@ -291,12 +336,12 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         return false;
 
     sess->mode_upgrade_count = 0;
-    sess->pending_payload_mode = desired_mode;
+    sess->pending_tx_mode = desired_mode;
     sess->tx_retries_left = ARQ_MODE_REQ_RETRIES;
 
-    HLOGI(LOG_COMP, "Mode negotiation: %d -> %d (peer_snr=%.1f dB, backlog=%d)",
+    HLOGI(LOG_COMP, "Mode negotiation: %d -> %d (peer_snr=%.1f dB, ladder=%d, backlog=%d)",
           sess->payload_mode, desired_mode,
-          (float)sess->peer_snr_x10 / 10.0f, backlog);
+          (float)sess->peer_snr_x10 / 10.0f, sess->speed_level, backlog);
 
     send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_REQ, desired_mode);
     dflow_enter(sess, ARQ_DFLOW_MODE_REQ_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -485,13 +530,8 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev);
 
 static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
 {
+    (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
-    /* When IRS gains the turn it must TX in the mode that ISS's payload decoder
-     * is configured for.  We track this as peer_payload_mode (updated each time
-     * we successfully decode a DATA frame from the peer).  Overwriting payload_mode
-     * here keeps the two sides in sync even when MODE_ACK is lost in transit. */
-    if (gained_turn)
-        sess->payload_mode = sess->peer_payload_mode;
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -523,9 +563,8 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
  * for DATAC1 re-sync, causing ~39% first-frame misses. */
 static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
 {
+    (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
-    if (gained_turn)
-        sess->payload_mode = sess->peer_payload_mode;
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         /* Attempt mode negotiation when startup window has passed and we
@@ -642,10 +681,12 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->rx_expected = 0;
             sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
-            sess->payload_mode         = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
-            sess->peer_payload_mode    = FREEDV_MODE_DATAC4;
-            sess->pending_payload_mode = 0;
-            sess->mode_upgrade_count   = 0;
+            sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
+            sess->peer_rx_mode       = FREEDV_MODE_DATAC4;
+            sess->pending_tx_mode    = 0;
+            sess->mode_upgrade_count = 0;
+            sess->speed_level        = 0;
+            sess->tx_success_count   = 0;
             sess->startup_deadline_ms =
                 hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
@@ -695,10 +736,12 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->rx_expected = 0;
         sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
-        sess->payload_mode         = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
-        sess->peer_payload_mode    = FREEDV_MODE_DATAC4;
-        sess->pending_payload_mode = 0;
-        sess->mode_upgrade_count   = 0;
+        sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
+        sess->peer_rx_mode       = FREEDV_MODE_DATAC4;
+        sess->pending_tx_mode    = 0;
+        sess->mode_upgrade_count = 0;
+        sess->speed_level        = 0;
+        sess->tx_success_count   = 0;
         sess->startup_deadline_ms =
             hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
@@ -864,7 +907,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             /* Peer sent data while we hold the TX turn — receive it and ACK. */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
-            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
+            sess->peer_rx_mode = ev->mode;   /* track peer's actual TX mode */
             if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -932,6 +975,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             /* peer_snr_x10 = IRS's local SNR = quality of IRS receiving our data */
             update_peer_snr(sess, ev);
+            record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
             if (g_timing)
                 arq_timing_record_ack_rx(g_timing, (int)sess->tx_seq,
                                          (uint8_t)ev->ack_delay_raw,
@@ -973,6 +1017,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->tx_retries_left > 0)
             {
                 sess->tx_retries_left--;
+                record_tx_outcome(sess, false);  /* retry → ladder step-down */
                 if (g_timing)
                     arq_timing_record_retry(g_timing, (int)sess->tx_seq,
                                             ARQ_DATA_RETRY_SLOTS - sess->tx_retries_left,
@@ -996,7 +1041,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
-            sess->peer_payload_mode = ev->mode;
+            sess->peer_rx_mode = ev->mode;
             sess->last_rx_ms = hermes_uptime_ms();
 
             if (ev->seq == sess->rx_expected)
@@ -1007,6 +1052,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGD(LOG_COMP,
                       "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for tx_seq=%d",
                       (int)ev->seq, (int)sess->tx_seq);
+                record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
                 sess->tx_seq++;
                 sess->tx_retransmit_len = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
@@ -1048,17 +1094,18 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 /* Peer has taken ISS and is requesting a mode switch.  The peer
                  * only enters ISS after receiving our pending frame (via DATA_RX
                  * → ACK_TX → piggyback or TURN_REQ), so this is an implicit ACK.
-                 * Advance tx_seq, accept the new mode, send MODE_ACK, then hand
-                 * the turn to the peer (MODE_ACK_TX TX_COMPLETE → IDLE_IRS). */
+                 * Advance tx_seq, update RX decoder mode (not our TX mode), send
+                 * MODE_ACK, then hand turn to peer (MODE_ACK_TX → IDLE_IRS). */
                 HLOGI(LOG_COMP,
-                      "MODE_REQ in WAIT_ACK (implicit ACK) tx_seq=%d mode %d->%d",
-                      (int)sess->tx_seq, sess->payload_mode, ev->mode);
+                      "MODE_REQ in WAIT_ACK (implicit ACK) tx_seq=%d peer_rx_mode %d->%d (my TX %d unchanged)",
+                      (int)sess->tx_seq, sess->peer_rx_mode, ev->mode, sess->payload_mode);
+                record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
                 sess->tx_seq++;
                 sess->tx_retransmit_len = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
-                sess->payload_mode = ev->mode;
+                sess->peer_rx_mode = ev->mode;  /* update RX decoder; our TX mode unchanged */
                 /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
                  * before our MODE_ACK preamble arrives (same guard used by
                  * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
@@ -1076,7 +1123,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * actually delivered (retransmits must not inflate rx_total). */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
-            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
+            sess->peer_rx_mode = ev->mode;   /* track peer's actual TX mode */
             if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -1125,13 +1172,15 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_MODE_REQ)
         {
-            /* ISS requests a mode change.  Accept if it is a valid payload mode. */
+            /* ISS requests a mode change.  Accept if it is a valid payload mode.
+             * Per-direction: only update our RX decoder (peer_rx_mode), not our
+             * own TX mode (payload_mode), which is managed independently. */
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
                 ev->mode != FREEDV_MODE_DATAC13)
             {
-                HLOGI(LOG_COMP, "MODE_REQ: switching payload mode %d -> %d",
-                      sess->payload_mode, ev->mode);
-                sess->payload_mode = ev->mode;
+                HLOGI(LOG_COMP, "MODE_REQ: peer TX mode %d -> %d (my TX mode %d unchanged)",
+                      sess->peer_rx_mode, ev->mode, sess->payload_mode);
+                sess->peer_rx_mode = ev->mode;
                 /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
                  * before our MODE_ACK preamble arrives (same guard used by
                  * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
@@ -1160,7 +1209,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             /* Another frame arrived during guard window; deliver with seq check */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
-            sess->peer_payload_mode = ev->mode;   /* track peer's actual TX mode */
+            sess->peer_rx_mode = ev->mode;   /* track peer's actual TX mode */
             if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -1228,7 +1277,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * IDLE_IRS once the peer finishes its burst. */
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
-            sess->peer_payload_mode = ev->mode;
+            sess->peer_rx_mode = ev->mode;
             if (deliver_rx_checked(sess, ev) && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
@@ -1346,7 +1395,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             {
                 sess->tx_retries_left--;
                 send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_REQ,
-                                      sess->pending_payload_mode);
+                                      sess->pending_tx_mode);
                 dflow_enter(sess, ARQ_DFLOW_MODE_REQ_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             }
             else
@@ -1359,9 +1408,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_MODE_ACK_TX:
-        /* IRS: channel guard elapsed — now safe to send MODE_ACK. */
+        /* IRS: channel guard elapsed — now safe to send MODE_ACK.
+         * Confirm the RX decoder mode we accepted, not our TX mode. */
         if (ev->id == ARQ_EV_TIMER_ACK)
-            send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, sess->payload_mode);
+            send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, sess->peer_rx_mode);
         /* IRS: MODE_ACK transmission finished. */
         else if (ev->id == ARQ_EV_TX_COMPLETE)
             enter_idle_irs(sess);
