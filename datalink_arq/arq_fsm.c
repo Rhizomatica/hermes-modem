@@ -1220,6 +1220,25 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing) arq_timing_record_turn(g_timing, true, "turn_ack");
             enter_idle_iss_guarded(sess, true);  /* IRS gaining turn */
         }
+        else if (ev->id == ARQ_EV_RX_DATA)
+        {
+            /* Peer sent DATA instead of TURN_ACK — they have priority and
+             * will not yield.  Abandon our turn request, receive the data,
+             * and send an ACK.  The turn can be requested again later from
+             * IDLE_IRS once the peer finishes its burst. */
+            update_local_snr(sess, ev);
+            update_peer_snr(sess, ev);
+            sess->peer_payload_mode = ev->mode;
+            if (deliver_rx_checked(sess, ev) && g_timing)
+                arq_timing_record_data_rx(g_timing, (int)ev->seq,
+                                          (int)ev->data_bytes,
+                                          sess->local_snr_x10);
+            sess->last_rx_ms    = hermes_uptime_ms();
+            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            dflow_enter(sess, ARQ_DFLOW_DATA_RX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
+        }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
             if (sess->tx_retries_left > 0)
