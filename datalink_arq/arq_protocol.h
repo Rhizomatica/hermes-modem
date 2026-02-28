@@ -168,7 +168,7 @@ typedef struct
 #define ARQ_KEEPALIVE_MISS_LIMIT      5     /* missed keepalives before disconnect */
 #define ARQ_TURN_REQ_RETRIES          2
 #define ARQ_MODE_REQ_RETRIES          2
-#define ARQ_MODE_SWITCH_HYST_COUNT    1     /* consecutive observations before mode change */
+#define ARQ_MODE_SWITCH_HYST_COUNT    3     /* consecutive observations before mode change */
 #define ARQ_STARTUP_MAX_S             8     /* DATAC13-only startup window         */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold peer payload mode after activity */
