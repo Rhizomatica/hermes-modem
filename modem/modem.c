@@ -1238,6 +1238,30 @@ void *rx_thread(void *g_modem)
 
         if (arq_policy_ready && arq_snapshot.trx == TX)
         {
+            /* On the first TX iteration (PTT just went ON), reset the decoder
+             * sync state.  Calling freedv_set_sync(UNSYNC) here is safe because
+             * no peer frame can arrive while we are transmitting (half-duplex).
+             * The decoders then spend the entire TX window in SEARCH state so
+             * that when the peer's ACK preamble arrives ~500ms after PTT-OFF
+             * they acquire sync reliably.
+             * Calling UNSYNC at PTT-OFF (was the original Fix 12) caused
+             * handshake failures because by then the peer's reply was already
+             * arriving and UNSYNC discarded partial sync already acquired. */
+            if (!was_tx)
+            {
+                pthread_mutex_lock(&modem_freedv_lock);
+                if (control_decoder.freedv)
+                {
+                    freedv_set_sync(control_decoder.freedv, FREEDV_SYNC_UNSYNC);
+                    control_decoder.demod_count = 0;
+                }
+                if (payload_decoder.freedv)
+                {
+                    freedv_set_sync(payload_decoder.freedv, FREEDV_SYNC_UNSYNC);
+                    payload_decoder.demod_count = 0;
+                }
+                pthread_mutex_unlock(&modem_freedv_lock);
+            }
             // Half-duplex local TX: drain capture at low cost and skip demod work.
             drain_capture_buffer_fast(RX_TX_DRAIN_SAMPLES);
             was_tx = true;
@@ -1246,14 +1270,9 @@ void *rx_thread(void *g_modem)
 
         /* PTT just dropped: flush the capture buffer to discard audio that
          * accumulated during TX (drain rate < input rate → backlog builds up).
-         * Without this flush, the decoders chew through stale TX-era samples
-         * and miss the start of the peer's ACK/reply frame.
-         * Also reset the decoder sample accumulators (demod_count=0) so that
-         * pre-TX samples queued in demod_in are not mixed with post-TX audio,
-         * which would cause OFDM timing misalignment on the first post-TX frame.
-         * Do NOT call freedv_set_sync(UNSYNC) here: that destroys any partial
-         * sync already acquired on a peer frame that overlapped our TX burst
-         * (e.g. a DATA frame arriving during a short 2.5s ACCEPT or ACK reply). */
+         * Also reset demod_count so pre-TX samples are not mixed with post-TX
+         * audio (OFDM timing misalignment).  UNSYNC was already called at
+         * PTT-ON so the decoders are already in SEARCH state. */
         if (was_tx)
         {
             clear_buffer(capture_buffer);
