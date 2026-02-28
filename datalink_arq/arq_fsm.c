@@ -538,6 +538,18 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
                     hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                     ARQ_EV_TIMER_ACK);
     }
+    else if (sess->pending_disconnect)
+    {
+        /* TX buffer is empty — honour a DISCONNECT that was deferred while
+         * a frame was in flight.  Same path as enter_idle_iss(). */
+        HLOGD(LOG_COMP, "Deferred DISCONNECT: TX buffer drained — disconnecting now");
+        sess->pending_disconnect      = false;
+        sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
+        sess->disconnect_to_no_client = false;
+        sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   ARQ_EV_TIMER_ACK);
+    }
     else
         dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
 }
@@ -783,13 +795,13 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_APP_DISCONNECT:
-        /* If data is still buffered or a frame is in flight, defer DISCONNECT
-         * until the TX buffer drains and the last ACK is received.  Without
-         * this guard the final bytes of a UUCP transfer can be abandoned
-         * before they are transmitted. */
+        /* Defer DISCONNECT only while a frame is physically being transmitted
+         * (PTT on) or the TX buffer still has unsent bytes.  We must NOT defer
+         * when in WAIT_ACK: the frame is already sent (PTT off) and the peer
+         * may never ACK it; waiting up to 10×12 s before honouring the
+         * application's explicit disconnect request is unacceptable. */
         if ((g_cbs.tx_backlog && g_cbs.tx_backlog() > 0) ||
-            sess->dflow_state == ARQ_DFLOW_DATA_TX ||
-            sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
+            sess->dflow_state == ARQ_DFLOW_DATA_TX)
         {
             HLOGD(LOG_COMP,
                   "APP_DISCONNECT deferred — backlog=%d dflow=%s",
@@ -943,6 +955,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
+            /* Honour a disconnect that was deferred while a frame was in
+             * flight (DATA_TX).  The PTT is now off; stop retrying. */
+            if (sess->pending_disconnect)
+            {
+                HLOGI(LOG_COMP,
+                      "Pending DISCONNECT: aborting retry seq=%d",
+                      (int)sess->tx_seq);
+                sess->pending_disconnect      = false;
+                sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
+                sess->disconnect_to_no_client = false;
+                sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                           hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                           ARQ_EV_TIMER_ACK);
+                return;
+            }
             if (sess->tx_retries_left > 0)
             {
                 sess->tx_retries_left--;
@@ -1032,8 +1059,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
                 sess->payload_mode = ev->mode;
-                send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, ev->mode);
-                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
+                 * before our MODE_ACK preamble arrives (same guard used by
+                 * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
+                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
             }
         }
         break;
@@ -1101,8 +1132,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGI(LOG_COMP, "MODE_REQ: switching payload mode %d -> %d",
                       sess->payload_mode, ev->mode);
                 sess->payload_mode = ev->mode;
-                send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, ev->mode);
-                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
+                 * before our MODE_ACK preamble arrives (same guard used by
+                 * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
+                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
             }
         }
         break;
@@ -1184,6 +1219,25 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             if (g_timing) arq_timing_record_turn(g_timing, true, "turn_ack");
             enter_idle_iss_guarded(sess, true);  /* IRS gaining turn */
+        }
+        else if (ev->id == ARQ_EV_RX_DATA)
+        {
+            /* Peer sent DATA instead of TURN_ACK — they have priority and
+             * will not yield.  Abandon our turn request, receive the data,
+             * and send an ACK.  The turn can be requested again later from
+             * IDLE_IRS once the peer finishes its burst. */
+            update_local_snr(sess, ev);
+            update_peer_snr(sess, ev);
+            sess->peer_payload_mode = ev->mode;
+            if (deliver_rx_checked(sess, ev) && g_timing)
+                arq_timing_record_data_rx(g_timing, (int)ev->seq,
+                                          (int)ev->data_bytes,
+                                          sess->local_snr_x10);
+            sess->last_rx_ms    = hermes_uptime_ms();
+            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            dflow_enter(sess, ARQ_DFLOW_DATA_RX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
@@ -1305,8 +1359,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_MODE_ACK_TX:
-        /* IRS: MODE_ACK sent (payload_mode already updated), waiting for TX. */
-        if (ev->id == ARQ_EV_TX_COMPLETE)
+        /* IRS: channel guard elapsed — now safe to send MODE_ACK. */
+        if (ev->id == ARQ_EV_TIMER_ACK)
+            send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_ACK, sess->payload_mode);
+        /* IRS: MODE_ACK transmission finished. */
+        else if (ev->id == ARQ_EV_TX_COMPLETE)
             enter_idle_irs(sess);
         break;
 

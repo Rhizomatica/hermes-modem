@@ -892,17 +892,22 @@ void *tcp_server_thread(void *port_ptr)
 /*********** TNC / radio functions ***********/
 void ptt_on()
 {
-    char buffer[] = "PTT ON\r";
     arq_conn.TRX = TX;
-    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    /* Queue "PTT ON\r" asynchronously so a transient write failure on the
+     * non-blocking CTL socket does NOT set NET_RESTART and kill the DATA
+     * socket (which would send EOF to uucico and abort the UUCP session).
+     * The PTT state change (arq_conn.TRX = TX) is already synchronous and
+     * is what the modem RX thread actually polls; the TCP notification to
+     * uucpd is informational only. */
+    (void)tnc_queue_line("PTT ON\r");
     HLOGI("radio", "TX enabled (PTT ON)");
 }
 
 void ptt_off()
 {
-    char buffer[] = "PTT OFF\r";
     arq_conn.TRX = RX;
-    tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    /* Same reasoning as ptt_on(): queue asynchronously. */
+    (void)tnc_queue_line("PTT OFF\r");
     HLOGI("radio", "TX disabled (PTT OFF)");
 }
 

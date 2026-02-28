@@ -262,6 +262,14 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_DISCONNECT:
+        /* VARA TNC spec: send DISCONNECTED to host immediately on receiving
+         * DISCONNECT command, before the over-the-air exchange completes.
+         * This lets the host close the socket cleanly while the FSM handles
+         * the air-side teardown. */
+        tnc_send_disconnected();
+        ev.id = ARQ_EV_APP_DISCONNECT;
+        break;
+
     case ARQ_CMD_CLIENT_DISCONNECT:
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;

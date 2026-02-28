@@ -28,23 +28,33 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output);
 /* ======================================================================
  * Mode timing table
  *
- * Empirical values from OTA testing on NVIS paths.
- * ack_timeout_s is the maximum time from PTT-ON to ACK receipt.
- * Derivation (ARQ_CHANNEL_GUARD_MS=500, FreeDV decodes ~160ms before PTT-OFF
- *             so effective guard ≈ 340ms; rounded to 0.5s in budgets below):
- *   DATAC13: TX ~2.5s + 0.5s guard + ~2.5s ACK return ≈ 5.5s → 6s
- *   DATAC4:  TX ~5.7s + 0.5s guard + ~2.5s ACK return ≈ 8.7s → 9s
- *   DATAC3:  TX ~4.0s + 0.5s guard + ~2.5s ACK return ≈ 7.0s → 8s
- *   DATAC1:  TX ~6.5s + 0.5s guard + ~2.5s ACK return ≈ 9.5s → 11s
+ * All durations measured empirically from bench and OTA tests.
+ * ack_timeout_s is set at TX_COMPLETE (PTT-OFF) and must cover the worst
+ * case where the peer piggybbacks a DATA frame immediately after its ACK:
+ *
+ *   ack_timeout ≥ ACK_return + inter_frame_gap + piggybacked_DATA_dur + margin
+ *
+ * Measured constants (bench test, dummy loads):
+ *   ACK_return:      2848ms (PTT-OFF → ack_rx, mode-independent — ACK always DATAC13)
+ *   inter_frame_gap: ~1035ms (IRS ACK PTT-OFF → IRS DATA PTT-ON)
+ *   frame_dur DATAC4:  5800ms  (tx_start → tx_end, measured)
+ *   frame_dur DATAC3:  3820ms  (measured)
+ *   frame_dur DATAC1:  4810ms  (measured — table previously had wrong 6500ms)
+ *
+ *   DATAC13: no piggybacking (control-only) → 2848 + 1500ms margin ≈ 4.3s → 6s
+ *   DATAC4:  2848 + 1035 + 5800 + 1500ms margin ≈ 11.2s → 12s
+ *   DATAC3:  2848 + 1035 + 3820 + 1500ms margin ≈  9.2s →  9s
+ *   DATAC1:  2848 + 1035 + 4810 + 1500ms margin ≈ 10.2s → 11s
+ *
  * retry_interval_s = ack_timeout_s + ARQ_ACK_GUARD_S (1s)
  * ====================================================================== */
 
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload_bytes */
-    {  FREEDV_MODE_DATAC13,   2.5f,      1.0f,      6.0f,        7.0f,           14 },
-    {  FREEDV_MODE_DATAC4,    5.7f,      1.0f,      9.0f,        10.0f,          54 },
-    {  FREEDV_MODE_DATAC3,    4.0f,      1.0f,      8.0f,        9.0f,           126 },
-    {  FREEDV_MODE_DATAC1,    6.5f,      1.0f,      11.0f,       12.0f,          510 },
+    {  FREEDV_MODE_DATAC13,   2.50f,     1.0f,      6.0f,        7.0f,           14 },
+    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      12.0f,       13.0f,          54 },
+    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,       9.0f,       10.0f,          126 },
+    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      11.0f,       12.0f,          510 },
 };
 
 const int arq_mode_table_count =
