@@ -244,8 +244,10 @@ static int ladder_max_mode(int level)
 }
 
 /** Record the outcome of a TX frame.  Called with clean=true when an ACK
- *  arrived with no retries consumed, or clean=false on the first retry.
- *  Steps the speed_level ladder up (slowly) or down (immediately). */
+ *  arrived with no retries consumed, or clean=false when the frame has
+ *  been retransmitted at least once (the WAIT_ACK path may call this on
+ *  every retry). Steps the speed_level ladder up (slowly) or down
+ *  (immediately). */
 static void record_tx_outcome(arq_session_t *sess, bool clean)
 {
     if (!clean)
