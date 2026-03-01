@@ -174,7 +174,7 @@ typedef struct
                                         * towards ladder step-up               */
     int      mode_upgrade_count;       /* SNR hysteresis counter for upgrade   */
     int      pending_tx_mode;          /* mode requested in MODE_REQ (retry)   */
-    int      peer_rx_mode;             /* mode peer last TX'd in = my payload
+    int      peer_tx_mode;             /* mode peer last TX'd in = my payload
                                         * RX decoder mode when IRS; updated
                                         * from ev->mode on every DATA frame    */
 
