@@ -545,6 +545,7 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
 {
     (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
+    sess->tx_had_retry    = false;
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -578,6 +579,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
 {
     (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
+    sess->tx_had_retry    = false;
     if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
     {
         /* Attempt mode negotiation when startup window has passed and we
@@ -694,6 +696,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->rx_expected = 0;
             sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+            sess->tx_had_retry    = false;
             sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
             sess->peer_rx_mode       = FREEDV_MODE_DATAC4;
             sess->pending_tx_mode    = 0;
@@ -749,6 +752,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->rx_expected = 0;
         sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+        sess->tx_had_retry    = false;
         sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
         sess->peer_rx_mode       = FREEDV_MODE_DATAC4;
         sess->pending_tx_mode    = 0;
@@ -988,7 +992,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             /* peer_snr_x10 = IRS's local SNR = quality of IRS receiving our data */
             update_peer_snr(sess, ev);
-            record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
+            record_tx_outcome(sess, !sess->tx_had_retry);
             if (g_timing)
                 arq_timing_record_ack_rx(g_timing, (int)sess->tx_seq,
                                          (uint8_t)ev->ack_delay_raw,
@@ -996,6 +1000,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_seq++;
             sess->tx_retransmit_len = 0;  /* ACKed — discard retransmit buffer */
             sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;  /* fresh counter for next seq */
+            sess->tx_had_retry      = false;
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
                 g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
@@ -1030,7 +1035,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->tx_retries_left > 0)
             {
                 sess->tx_retries_left--;
-                record_tx_outcome(sess, false);  /* retry → ladder step-down */
+                sess->tx_had_retry = true;  /* record for outcome at ACK time */
                 if (g_timing)
                     arq_timing_record_retry(g_timing, (int)sess->tx_seq,
                                             ARQ_DATA_RETRY_SLOTS - sess->tx_retries_left,
@@ -1065,10 +1070,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGD(LOG_COMP,
                       "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for tx_seq=%d",
                       (int)ev->seq, (int)sess->tx_seq);
-                record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
+                record_tx_outcome(sess, !sess->tx_had_retry);
                 sess->tx_seq++;
                 sess->tx_retransmit_len = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
+                sess->tx_had_retry      = false;
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
@@ -1112,10 +1118,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGI(LOG_COMP,
                       "MODE_REQ in WAIT_ACK (implicit ACK) tx_seq=%d peer_rx_mode %d->%d (my TX %d unchanged)",
                       (int)sess->tx_seq, sess->peer_rx_mode, ev->mode, sess->payload_mode);
-                record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
+                record_tx_outcome(sess, !sess->tx_had_retry);
                 sess->tx_seq++;
                 sess->tx_retransmit_len = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
+                sess->tx_had_retry      = false;
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
                 sess->peer_rx_mode = ev->mode;  /* update RX decoder; our TX mode unchanged */
