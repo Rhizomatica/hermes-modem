@@ -243,6 +243,17 @@ static int ladder_max_mode(int level)
     return FREEDV_MODE_DATAC4;
 }
 
+/** Map a payload mode to its ladder rank (DATAC4=0, DATAC3=1, DATAC1=2).
+ *  FREEDV_MODE_* numeric values are not ordered by speed, so this rank is
+ *  needed for correct relational comparisons against speed_level.
+ *  Any mode that is not one of the three ladder modes returns 0 (slowest). */
+static int mode_ladder_rank(int mode)
+{
+    if (mode == FREEDV_MODE_DATAC1) return 2;
+    if (mode == FREEDV_MODE_DATAC3) return 1;
+    return 0; /* DATAC4 or unrecognised mode → treat as slowest */
+}
+
 /** Record the outcome of a TX frame.  Called with clean=true when an ACK
  *  arrived with no retries consumed, or clean=false when the frame has
  *  been retransmitted at least once (the WAIT_ACK path may call this on
@@ -291,22 +302,24 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
         return sess->payload_mode;
 
     float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
-    int   lmax     = ladder_max_mode(sess->speed_level);
+    int   level    = sess->speed_level;
 
-    /* Upgrade path: prefer fastest mode that SNR, backlog, AND ladder permit. */
+    /* Upgrade path: prefer fastest mode that SNR, backlog, AND ladder permit.
+     * Use speed_level rank directly — FREEDV_MODE_* numerics are not ordered
+     * by throughput, so mode-constant comparisons would be incorrect. */
     if (peer_snr >= ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB &&
         backlog  >= ARQ_BACKLOG_MIN_DATAC1 &&
-        lmax     >= FREEDV_MODE_DATAC1)
+        level    >= 2)
         return FREEDV_MODE_DATAC1;
     if (peer_snr >= ARQ_SNR_MIN_DATAC3_DB + ARQ_SNR_HYST_DB &&
         backlog  >= ARQ_BACKLOG_MIN_DATAC3 &&
-        lmax     >= FREEDV_MODE_DATAC3)
+        level    >= 1)
         return FREEDV_MODE_DATAC3;
 
     /* Downgrade path: ladder-only.  If speed_level fell (due to retries),
      * the ladder cap is now below payload_mode — signal the needed downgrade. */
-    if (sess->payload_mode > lmax)
-        return lmax;
+    if (mode_ladder_rank(sess->payload_mode) > level)
+        return ladder_max_mode(level);
 
     return sess->payload_mode; /* no change */
 }
