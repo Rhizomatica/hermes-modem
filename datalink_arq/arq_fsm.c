@@ -243,6 +243,17 @@ static int ladder_max_mode(int level)
     return FREEDV_MODE_DATAC4;
 }
 
+/** Map a FreeDV payload mode to a comparable rank: higher rank = faster/more
+ *  aggressive mode.  DATAC1 (=10) is fastest, DATAC3 (=12) is medium, and
+ *  DATAC4 (=18) is slowest — the numeric constants decrease as throughput
+ *  increases, so direct integer comparisons between them are misleading. */
+static int mode_rank(int mode)
+{
+    if (mode == FREEDV_MODE_DATAC1) return 2;
+    if (mode == FREEDV_MODE_DATAC3) return 1;
+    return 0; /* DATAC4 or any other conservative mode */
+}
+
 /** Record the outcome of a TX frame.  Called with clean=true when an ACK
  *  arrived with no retries consumed, or clean=false on the first retry.
  *  Steps the speed_level ladder up (slowly) or down (immediately). */
@@ -294,16 +305,16 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
     /* Upgrade path: prefer fastest mode that SNR, backlog, AND ladder permit. */
     if (peer_snr >= ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB &&
         backlog  >= ARQ_BACKLOG_MIN_DATAC1 &&
-        lmax     >= FREEDV_MODE_DATAC1)
+        mode_rank(lmax) >= mode_rank(FREEDV_MODE_DATAC1))
         return FREEDV_MODE_DATAC1;
     if (peer_snr >= ARQ_SNR_MIN_DATAC3_DB + ARQ_SNR_HYST_DB &&
         backlog  >= ARQ_BACKLOG_MIN_DATAC3 &&
-        lmax     >= FREEDV_MODE_DATAC3)
+        mode_rank(lmax) >= mode_rank(FREEDV_MODE_DATAC3))
         return FREEDV_MODE_DATAC3;
 
     /* Downgrade path: ladder-only.  If speed_level fell (due to retries),
      * the ladder cap is now below payload_mode — signal the needed downgrade. */
-    if (sess->payload_mode > lmax)
+    if (mode_rank(sess->payload_mode) > mode_rank(lmax))
         return lmax;
 
     return sess->payload_mode; /* no change */
