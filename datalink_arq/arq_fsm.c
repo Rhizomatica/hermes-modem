@@ -126,8 +126,10 @@ void arq_fsm_init(arq_session_t *sess)
     sess->control_mode   = FREEDV_MODE_DATAC13;
     sess->payload_mode   = FREEDV_MODE_DATAC4;  /* my TX mode, starts at safest level */
     sess->peer_rx_mode   = FREEDV_MODE_DATAC4;  /* RX decoder, starts at safest level */
-    sess->speed_level    = 0;
-    sess->tx_success_count = 0;
+    sess->speed_level        = 0;
+    sess->tx_success_count   = 0;
+    sess->mode_upgrade_count = 0;  /* hysteresis counter; must start at zero */
+    sess->pending_tx_mode    = 0;  /* 0 = no MODE_REQ in progress            */
 }
 
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
