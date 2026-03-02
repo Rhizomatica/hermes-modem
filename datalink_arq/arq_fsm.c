@@ -152,6 +152,11 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = hermes_uptime_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
+    /* Reset data-flow state when returning to idle connection states so that
+     * a stale dflow_state (e.g. WAIT_ACK) from a prior session never leaks
+     * into the next LISTENING/ACCEPTING cycle. */
+    if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
+        sess->dflow_state = ARQ_DFLOW_IDLE_ISS;
 }
 
 static void dflow_enter(arq_session_t *sess, arq_dflow_state_t new_state,
@@ -774,11 +779,25 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         break;
 
+    case ARQ_EV_TX_COMPLETE:
+        /* ACCEPT frame just finished transmitting.  The peer (caller) will
+         * start its first DATA frame (DATAC4, ~5800 ms) almost immediately
+         * after our PTT drops.  The deadline that was set in TIMER_RETRY was
+         * relative to when TIMER_RETRY fired — not to TX_COMPLETE — so it
+         * only left ~4400 ms of RX window after PTT-OFF, which is shorter
+         * than one DATAC4 frame.  Reset the deadline here so we always have
+         * a full 7000 ms window (500 ms channel-guard + 5800 ms DATAC4 +
+         * 700 ms margin) measured from the moment our TX actually ends. */
+        sess->deadline_ms = hermes_uptime_ms() + 7000;
+        break;
+
     case ARQ_EV_TIMER_RETRY:
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
             send_call_accept(sess, true);
+            /* deadline is now managed via TX_COMPLETE above; set a generous
+             * fallback here in case TX_COMPLETE is missed for any reason */
             tm = arq_protocol_mode_timing(sess->control_mode);
             sess->deadline_ms = deadline_from_s(tm ? tm->retry_interval_s : 7.0f);
         }
