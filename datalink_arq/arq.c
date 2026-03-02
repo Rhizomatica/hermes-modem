@@ -184,10 +184,13 @@ static void cb_notify_disconnected(bool to_no_client)
     pthread_mutex_unlock(&g_app_tx_mtx);
     tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
-    /* Return to LISTENING automatically after a real session ends.
-     * Only fire if we were actually connected (dst_addr was set): avoids
-     * spurious APP_LISTEN from APP_DISCONNECT-in-DISCONNECTED handlers. */
-    if (was_connected && arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
+    /* Return to LISTENING after any disconnection (failed call, cancelled call,
+     * or ended session) as long as listen mode is active.  The was_connected
+     * guard was thought to prevent spurious APP_LISTEN from APP_DISCONNECT-in-
+     * DISCONNECTED, but fsm_disconnected has no APP_DISCONNECT handler, so
+     * notify_disconnected is never called from that path. */
+    (void)was_connected;
+    if (arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
     {
         arq_event_t ev = { .id = ARQ_EV_APP_LISTEN };
         evq_push(&ev);
