@@ -1049,6 +1049,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->tx_retries_left > 0)
             {
                 sess->tx_retries_left--;
+                record_tx_outcome(sess, false);  /* ladder step-down on first retry */
                 if (g_timing)
                     arq_timing_record_retry(g_timing, (int)sess->tx_seq,
                                             ARQ_DATA_RETRY_SLOTS - sess->tx_retries_left,
