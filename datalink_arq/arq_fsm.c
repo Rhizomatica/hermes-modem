@@ -988,12 +988,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_tx_mode = ev->mode;   /* track peer's actual TX mode */
-            if (deliver_rx_checked(sess, ev) && g_timing)
+            bool new_frame = deliver_rx_checked(sess, ev);
+            if (new_frame && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
             sess->last_rx_ms    = hermes_uptime_ms();
-            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            /* A duplicate (new_frame=false) means the sender is still the
+             * active ISS — it is retransmitting because it hasn't received
+             * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
+             * calls enter_idle_irs() instead of taking a spurious piggyback
+             * turn that would place both sides into ISS simultaneously. */
+            sess->peer_has_data = new_frame
+                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
+                                  : true;
             dflow_enter(sess, ARQ_DFLOW_DATA_RX,
                         hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
@@ -1207,12 +1215,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_tx_mode = ev->mode;   /* track peer's actual TX mode */
-            if (deliver_rx_checked(sess, ev) && g_timing)
+            bool new_frame = deliver_rx_checked(sess, ev);
+            if (new_frame && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
             sess->last_rx_ms    = hermes_uptime_ms();
-            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            /* A duplicate (new_frame=false) means the sender is still the
+             * active ISS — it is retransmitting because it hasn't received
+             * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
+             * calls enter_idle_irs() instead of taking a spurious piggyback
+             * turn that would place both sides into ISS simultaneously. */
+            sess->peer_has_data = new_frame
+                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
+                                  : true;
 
             /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS relay to switch
              * back to RX before our ACK preamble arrives.  ACK is sent
@@ -1293,12 +1309,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_tx_mode = ev->mode;   /* track peer's actual TX mode */
-            if (deliver_rx_checked(sess, ev) && g_timing)
+            bool new_frame = deliver_rx_checked(sess, ev);
+            if (new_frame && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
             sess->last_rx_ms    = hermes_uptime_ms();
-            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            /* A duplicate (new_frame=false) means the sender is still the
+             * active ISS — it is retransmitting because it hasn't received
+             * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
+             * calls enter_idle_irs() instead of taking a spurious piggyback
+             * turn that would place both sides into ISS simultaneously. */
+            sess->peer_has_data = new_frame
+                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
+                                  : true;
         }
         break;
 
@@ -1361,12 +1385,23 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_tx_mode = ev->mode;
-            if (deliver_rx_checked(sess, ev) && g_timing)
+            bool new_frame = deliver_rx_checked(sess, ev);
+            if (new_frame && g_timing)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->last_rx_ms    = hermes_uptime_ms();
-            sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+            sess->last_rx_ms = hermes_uptime_ms();
+            /* A duplicate (new_frame=false) means the sender is still the
+             * active ISS — it is retransmitting because it hasn't received
+             * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
+             * calls enter_idle_irs() instead of taking a spurious piggyback
+             * turn that would place both sides into ISS simultaneously.
+             * NOTE: deliver_rx_checked() increments rx_expected on success,
+             * so (ev->seq == sess->rx_expected) is never true after the call;
+             * the return value is the only correct new/dup discriminator. */
+            sess->peer_has_data = new_frame
+                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
+                                  : true;
             dflow_enter(sess, ARQ_DFLOW_DATA_RX,
                         hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
