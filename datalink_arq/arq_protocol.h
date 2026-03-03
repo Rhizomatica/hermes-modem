@@ -164,8 +164,11 @@ typedef struct
                                             * air before the DATAC1 preamble. */
 #define ARQ_TURN_WAIT_AFTER_ACK_MS   3500  /* IRS post-ACK wait before TURN_REQ:
                                             * ISS guard(900ms)+frame(2510ms)+margin */
-#define ARQ_ACCEPT_RX_WINDOW_MS      7000  /* ACCEPTING RX window after ACCEPT TX:
-                                            * guard(700)+DATAC4(5800)+margin(500)  */
+#define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
+                                            * ISS_guard(900)+DATAC4(5800)+margin(2300)
+                                            * Old value 7000 left only ~300ms margin
+                                            * and raced with TIMER_RETRY, causing
+                                            * 3-4 wasted ACCEPT retries (~28s).    */
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
 #define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries before giving up       */
 #define ARQ_ACCEPT_RETRY_SLOTS        4     /* ACCEPT retries before returning     */

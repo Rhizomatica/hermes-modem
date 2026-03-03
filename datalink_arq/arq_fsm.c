@@ -640,6 +640,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = (uint8_t)(hermes_uptime_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
+        sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         send_call_accept(sess, false);
         {
             const arq_mode_timing_t *tm =
@@ -698,8 +699,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->mode_upgrade_count = 0;
             sess->speed_level        = 0;
             sess->tx_success_count   = 0;
-            sess->startup_deadline_ms =
-                hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            sess->pending_disconnect = false;  /* clear stale deferred disconnect */
+            sess->startup_deadline_ms =                hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call);
             if (g_timing)
@@ -736,6 +737,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->mode_upgrade_count = 0;
             sess->speed_level        = 0;
             sess->tx_success_count   = 0;
+            sess->pending_disconnect = false;  /* clear stale deferred disconnect */
             sess->startup_deadline_ms =
                 hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
@@ -927,6 +929,8 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_DISCONNECT:
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        /* Peer-initiated disconnect supersedes any locally deferred one. */
+        sess->pending_disconnect = false;
         /* Defer notify until TX_COMPLETE so data_rx_buffer_arq has time to
          * drain to the TCP socket before UUCP sees the DISCONNECTED signal. */
         sess->pending_disconnect_notify = true;
