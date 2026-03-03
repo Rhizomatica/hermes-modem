@@ -259,11 +259,11 @@ static int mode_rank(int mode)
     return 0; /* DATAC4 or any other conservative mode */
 }
 
-/** Record the outcome of a TX frame.  Called with clean=true when an ACK
- *  arrived with no retries consumed, or clean=false when the frame has
- *  been retransmitted at least once (the WAIT_ACK path may call this on
- *  every retry). Steps the speed_level ladder up (slowly) or down
- *  (immediately). */
+/** Record the outcome of a TX frame.  Called once per frame when its fate is
+ *  known: clean=true when ACK arrived with no retries consumed, clean=false
+ *  when the frame was retransmitted at least once.  Steps speed_level ladder
+ *  up (slowly, after consecutive clean ACKs) or down (immediately on any
+ *  non-clean outcome). */
 static void record_tx_outcome(arq_session_t *sess, bool clean)
 {
     if (!clean)
@@ -786,9 +786,9 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * relative to when TIMER_RETRY fired — not to TX_COMPLETE — so it
          * only left ~4400 ms of RX window after PTT-OFF, which is shorter
          * than one DATAC4 frame.  Reset the deadline here so we always have
-         * a full 7000 ms window (500 ms channel-guard + 5800 ms DATAC4 +
-         * 700 ms margin) measured from the moment our TX actually ends. */
-        sess->deadline_ms = hermes_uptime_ms() + 7000;
+         * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC4 frame +
+         * margin) measured from the moment our TX actually ends. */
+        sess->deadline_ms = hermes_uptime_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1049,7 +1049,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->tx_retries_left > 0)
             {
                 sess->tx_retries_left--;
-                record_tx_outcome(sess, false);  /* ladder step-down on first retry */
+                /* Ladder step-down happens once per frame in the RX_ACK /
+                 * implicit-ACK handler via record_tx_outcome(), NOT here.
+                 * Calling it on every retry would cause double/triple penalty
+                 * when the ACK handler also calls it. */
                 if (g_timing)
                     arq_timing_record_retry(g_timing, (int)sess->tx_seq,
                                             ARQ_DATA_RETRY_SLOTS - sess->tx_retries_left,
