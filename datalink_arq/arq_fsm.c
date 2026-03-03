@@ -672,6 +672,18 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
                    ARQ_EV_TIMER_RETRY);
         break;
 
+    case ARQ_EV_RX_ACCEPT:
+        /* We gave up CALLING (retries exhausted) and returned to LISTENING,
+         * but the callee is still retrying ACCEPT from our earlier CALL.
+         * We already told the TNC "DISCONNECTED", so we can't reconnect.
+         * Send a DISCONNECT to tell the peer to stop retrying. */
+        if (ev->session_id == sess->session_id)
+        {
+            HLOGI(LOG_COMP, "Stale ACCEPT in LISTENING — sending DISCONNECT to peer");
+            send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        }
+        break;
+
     case ARQ_EV_APP_CONNECT:
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         fsm_disconnected(sess, ev);
@@ -839,6 +851,16 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         {
             sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
+        break;
+
+    case ARQ_EV_APP_CONNECT:
+        /* UUCP retried CONNECT while we're still accepting a previous call.
+         * Abort the accept cycle and start calling.  The remote has likely
+         * given up its CALLING attempt already (its retries exhausted), so
+         * continuing to send ACCEPTs is pointless.  Transition through
+         * DISCONNECTED → CALLING so the new session gets a fresh ID. */
+        sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        fsm_disconnected(sess, ev);
         break;
 
     case ARQ_EV_APP_DISCONNECT:
