@@ -680,6 +680,37 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
 
+    case ARQ_EV_RX_DATA:
+    case ARQ_EV_RX_ACK:
+        /* Safety net: if IRS fell from ACCEPTING→LISTENING (ACCEPT retries
+         * exhausted) but the ISS is already sending DATA/ACK, accept the
+         * connection now — same logic as fsm_accepting RX_DATA handler. */
+        if (ev->session_id == sess->session_id)
+        {
+            sess->role        = ARQ_ROLE_CALLEE;
+            sess->tx_seq      = 0;
+            sess->rx_expected = 0;
+            sess->tx_retransmit_len = 0;
+            sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+            sess->payload_mode       = FREEDV_MODE_DATAC4;
+            sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+            sess->pending_tx_mode    = 0;
+            sess->mode_upgrade_count = 0;
+            sess->speed_level        = 0;
+            sess->tx_success_count   = 0;
+            sess->startup_deadline_ms =
+                hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            if (g_cbs.notify_connected)
+                g_cbs.notify_connected(sess->remote_call);
+            if (g_timing)
+                arq_timing_record_connect(g_timing, sess->control_mode);
+            sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            enter_idle_irs(sess);
+            if (ev->id == ARQ_EV_RX_DATA)
+                fsm_dflow(sess, ev);
+        }
+        break;
+
     default:
         break;
     }
@@ -711,6 +742,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
                 g_cbs.notify_connected(sess->remote_call);
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
+            sess->need_initial_guard = true;  /* guard first DATA so IRS can reset decoders */
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             enter_idle_iss_guarded(sess, false);   /* caller sends data first */
         }
@@ -931,8 +963,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_APP_DATA_READY && g_cbs.tx_backlog &&
             g_cbs.tx_backlog() > 0)
         {
-            dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-            send_data_frame(sess);
+            if (sess->need_initial_guard)
+            {
+                /* First DATA after connect: apply channel guard so IRS has
+                 * time to reset decoders from TX→RX before our preamble. */
+                sess->need_initial_guard = false;
+                dflow_enter(sess, ARQ_DFLOW_DATA_TX,
+                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+            else
+            {
+                dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                send_data_frame(sess);
+            }
         }
         else if (ev->id == ARQ_EV_RX_DATA)
         {

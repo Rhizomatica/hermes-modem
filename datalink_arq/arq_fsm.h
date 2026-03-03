@@ -198,6 +198,12 @@ typedef struct
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
 
+    /* --- Initial connect guard --- */
+    bool     need_initial_guard;       /* ISS must apply channel guard before
+                                        * first DATA after connect (prevents
+                                        * transmitting before IRS resets its
+                                        * decoders from TX→RX)               */
+
     /* --- Retransmit buffer --- */
     uint8_t  tx_retransmit_buf[1024];  /* last-sent data frame bytes; must be
                                        * >= max frame: 8 hdr + 502 DATAC1
