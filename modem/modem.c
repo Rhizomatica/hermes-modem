@@ -1268,6 +1268,7 @@ void *rx_thread(void *g_modem)
             if (control_decoder.freedv && control_decoder.demod_in &&
                 control_decoder.bytes_out)
             {
+                freedv_set_sync(control_decoder.freedv, FREEDV_SYNC_UNSYNC);
                 int nin = freedv_nin(control_decoder.freedv);
                 if (nin > 0 && nin <= control_decoder.demod_cap)
                 {
@@ -1280,6 +1281,7 @@ void *rx_thread(void *g_modem)
                 payload_decoder.freedv != control_decoder.freedv &&
                 payload_decoder.demod_in && payload_decoder.bytes_out)
             {
+                freedv_set_sync(payload_decoder.freedv, FREEDV_SYNC_UNSYNC);
                 int nin = freedv_nin(payload_decoder.freedv);
                 if (nin > 0 && nin <= payload_decoder.demod_cap)
                 {
