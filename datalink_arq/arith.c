@@ -214,8 +214,6 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output, int max_output)
     uint64_t low = 0, high = MAX_CODE;
     uint64_t value = 0;
     uint64_t total = cum_freq[NUM_SYMBOLS];
-    int truncated = 0;
-
     int outpos = 0;
     for (int i = 0; i < CODE_BITS; i++) {
         int b = br_read_bit(&br);
@@ -243,10 +241,8 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output, int max_output)
         if (symbols[sym] == '\0') {
             break;  // EOF reached
         }
-        if (outpos >= max_output - 1) {
-            truncated = 1;
+        if (outpos >= max_output - 1)
             goto finish;
-        }
         output[outpos++] = symbols[sym];
 
         high = low + (range * cum_freq[sym + 1]) / total - 1;
@@ -270,17 +266,15 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output, int max_output)
             low <<= 1;
             high = (high << 1) | 1;
             int b = br_read_bit(&br);
-            if (b < 0) {
-                truncated = 1;
+            if (b < 0)
                 goto finish;
-            }
             value = (value << 1) | b;
         }
     }
 
 finish:
     output[outpos] = '\0';
-    return truncated ? -1 : 0;
+    return (outpos == 0) ? -1 : 0;
     
 }
 #endif
