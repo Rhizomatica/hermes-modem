@@ -152,22 +152,15 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = hermes_uptime_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
-    /* Reset data-flow and mode state when returning to idle connection states
-     * so that stale values from a prior session never leak into the next
-     * LISTENING/ACCEPTING cycle.  In particular, a stale peer_tx_mode (e.g.
-     * DATAC1 from the previous session) would cause select_payload_rx_mode()
-     * to run the wrong decoder during ACCEPTING, making the new caller's
-     * DATAC4 DATA frames invisible — the connection never completes. */
+    /* Reset data-flow state when returning to idle connection states so that
+     * a stale dflow_state (e.g. WAIT_ACK) from a prior session never leaks
+     * into the next LISTENING/ACCEPTING cycle.
+     * Do NOT reset peer_tx_mode here — LISTENING needs it to stay at the
+     * broadcast mode (e.g. DATAC3) for receiving broadcast frames.  Mode
+     * state is instead reset in the RX_CALL handler (entering ACCEPTING)
+     * and in the CALLING/ACCEPTING session-start paths. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
-    {
-        sess->dflow_state        = ARQ_DFLOW_IDLE_ISS;
-        sess->payload_mode       = FREEDV_MODE_DATAC4;
-        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
-        sess->speed_level        = 0;
-        sess->tx_success_count   = 0;
-        sess->consecutive_retries = 0;
-        sess->mode_hold_until_ms = 0;
-    }
+        sess->dflow_state = ARQ_DFLOW_IDLE_ISS;
 }
 
 static void dflow_enter(arq_session_t *sess, arq_dflow_state_t new_state,
@@ -676,6 +669,13 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = (uint8_t)(hermes_uptime_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
+        /* Reset mode state for new session */
+        sess->payload_mode       = FREEDV_MODE_DATAC4;
+        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+        sess->speed_level        = 0;
+        sess->tx_success_count   = 0;
+        sess->consecutive_retries = 0;
+        sess->mode_hold_until_ms = 0;
         send_call_accept(sess, false);
         {
             const arq_mode_timing_t *tm =
@@ -699,6 +699,16 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = ev->session_id;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+        /* Reset mode state so the payload decoder matches the new caller's
+         * initial DATAC4.  This must happen here (not in sess_enter for
+         * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
+         * stay at the broadcast mode for receiving broadcast frames. */
+        sess->payload_mode       = FREEDV_MODE_DATAC4;
+        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+        sess->speed_level        = 0;
+        sess->tx_success_count   = 0;
+        sess->consecutive_retries = 0;
+        sess->mode_hold_until_ms = 0;
         /* Do NOT send ACCEPT immediately: the caller's PTT-OFF may not have
          * happened yet when we decode the last samples of their CALL frame.
          * Wait ARQ_CHANNEL_GUARD_MS so their relay is in RX before we TX. */
