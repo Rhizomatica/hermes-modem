@@ -1547,6 +1547,16 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
                 ev->mode != FREEDV_MODE_DATAC13)
             {
+                /* If this MODE_ACK confirms a downgrade, start the hold
+                 * timer NOW (not when MODE_REQ was sent).  The MODE_REQ/ACK
+                 * round trip can exceed the hold duration, so the timer set
+                 * at send time may already have expired. */
+                if (mode_rank(ev->mode) < mode_rank(sess->payload_mode) &&
+                    sess->mode_hold_until_ms != 0)
+                {
+                    sess->mode_hold_until_ms =
+                        hermes_uptime_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
+                }
                 HLOGI(LOG_COMP, "MODE_ACK: payload mode %d -> %d",
                       sess->payload_mode, ev->mode);
                 sess->payload_mode = ev->mode;
