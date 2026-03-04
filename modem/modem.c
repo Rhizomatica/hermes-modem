@@ -808,7 +808,13 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         mode_changed = state->freedv != freedv || state->mode != mode;
         if (mode_changed)
         {
-            freedv_set_sync(freedv, FREEDV_SYNC_UNSYNC);
+            /* Do NOT call freedv_set_sync(UNSYNC) here.  The new mode's
+             * decoder is already in search mode from its last use (or
+             * init).  UNSYNC would zero its rxbuf, starving the preamble
+             * correlation normalizer (same as the was_tx regression).
+             * Stale rxbuf content is harmless: it won't correlate with
+             * the new mode's preamble pattern, and the non-zero energy
+             * keeps the normalizer well-conditioned. */
             state->demod_count = 0;
         }
     }

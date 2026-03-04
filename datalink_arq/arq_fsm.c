@@ -290,14 +290,14 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
     }
 }
 
-/** Compute desired payload mode based on peer_snr_x10, TX backlog, and the
- *  reliability ladder.  Returns current payload_mode if no change is warranted.
+/** Compute desired payload mode based on peer_snr_x10 and TX backlog.
+ *  Returns current payload_mode if no change is warranted.
  *
- *  SNR gates upgrades: both SNR and ladder must permit a higher mode.
- *  Downgrades are driven exclusively by the reliability ladder (via
- *  record_tx_outcome → speed_level--).  SNR is deliberately NOT used to
- *  force downgrades: a stable link just below the SNR threshold but with
- *  zero retries should stay at the current mode. */
+ *  Pure SNR + backlog mode selection.  Upgrades require SNR above the mode
+ *  threshold plus a hysteresis margin.  Downgrades happen when SNR drops
+ *  below the current mode's base threshold.  The reliability ladder
+ *  (speed_level) is tracked for diagnostics but does NOT gate mode selection;
+ *  SNR is the authoritative signal for channel quality. */
 static int select_best_mode(const arq_session_t *sess, int backlog)
 {
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
@@ -307,24 +307,24 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
         return sess->payload_mode;
 
     float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
-    int   lmax     = ladder_max_mode(sess->speed_level);
+    int   cur_rank = mode_rank(sess->payload_mode);
 
-    /* Upgrade path: prefer fastest mode that SNR, backlog, AND ladder permit. */
-    if (peer_snr >= ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB &&
-        backlog  >= ARQ_BACKLOG_MIN_DATAC1 &&
-        mode_rank(lmax) >= mode_rank(FREEDV_MODE_DATAC1))
+    /* For the current mode, stay if SNR is at or above base threshold.
+     * For a higher mode, upgrade only if SNR exceeds threshold + hysteresis.
+     * This asymmetry prevents rapid oscillation at mode boundaries. */
+    float c1_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC1))
+                      ? ARQ_SNR_MIN_DATAC1_DB
+                      : ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB;
+    if (peer_snr >= c1_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC1)
         return FREEDV_MODE_DATAC1;
-    if (peer_snr >= ARQ_SNR_MIN_DATAC3_DB + ARQ_SNR_HYST_DB &&
-        backlog  >= ARQ_BACKLOG_MIN_DATAC3 &&
-        mode_rank(lmax) >= mode_rank(FREEDV_MODE_DATAC3))
+
+    float c3_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC3))
+                      ? ARQ_SNR_MIN_DATAC3_DB
+                      : ARQ_SNR_MIN_DATAC3_DB + ARQ_SNR_HYST_DB;
+    if (peer_snr >= c3_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC3)
         return FREEDV_MODE_DATAC3;
 
-    /* Downgrade path: ladder-only.  If speed_level fell (due to retries),
-     * the ladder cap is now below payload_mode — signal the needed downgrade. */
-    if (mode_rank(sess->payload_mode) > mode_rank(lmax))
-        return lmax;
-
-    return sess->payload_mode; /* no change */
+    return FREEDV_MODE_DATAC4;
 }
 
 /** Check whether a mode upgrade/downgrade is warranted.  If yes, send
