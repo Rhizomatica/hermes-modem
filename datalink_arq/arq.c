@@ -448,7 +448,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
          * up to 511 (needed for DATAC1 which has 502-byte payloads).
          * See ARQ_DATA_LEN_FULL / ARQ_FLAG_LEN_HI in arq_protocol.h. */
         size_t valid_bytes;
-        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL)
+        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL &&
+            !(hdr.flags & ARQ_FLAG_LEN_HI))
         {
             valid_bytes = slot_bytes;
         }
