@@ -152,11 +152,22 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = hermes_uptime_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
-    /* Reset data-flow state when returning to idle connection states so that
-     * a stale dflow_state (e.g. WAIT_ACK) from a prior session never leaks
-     * into the next LISTENING/ACCEPTING cycle. */
+    /* Reset data-flow and mode state when returning to idle connection states
+     * so that stale values from a prior session never leak into the next
+     * LISTENING/ACCEPTING cycle.  In particular, a stale peer_tx_mode (e.g.
+     * DATAC1 from the previous session) would cause select_payload_rx_mode()
+     * to run the wrong decoder during ACCEPTING, making the new caller's
+     * DATAC4 DATA frames invisible — the connection never completes. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
-        sess->dflow_state = ARQ_DFLOW_IDLE_ISS;
+    {
+        sess->dflow_state        = ARQ_DFLOW_IDLE_ISS;
+        sess->payload_mode       = FREEDV_MODE_DATAC4;
+        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+        sess->speed_level        = 0;
+        sess->tx_success_count   = 0;
+        sess->consecutive_retries = 0;
+        sess->mode_hold_until_ms = 0;
+    }
 }
 
 static void dflow_enter(arq_session_t *sess, arq_dflow_state_t new_state,
