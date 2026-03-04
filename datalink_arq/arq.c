@@ -260,7 +260,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_CONNECT:
-        snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
+        snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         ev.id = ARQ_EV_APP_CONNECT;
         break;
 
