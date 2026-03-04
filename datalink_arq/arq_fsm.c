@@ -240,14 +240,6 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
         send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame);
 }
 
-/** Map reliability ladder level to the maximum FreeDV mode allowed. */
-static int ladder_max_mode(int level)
-{
-    if (level >= 2) return FREEDV_MODE_DATAC1;
-    if (level >= 1) return FREEDV_MODE_DATAC3;
-    return FREEDV_MODE_DATAC4;
-}
-
 /** Map a FreeDV payload mode to a comparable rank: higher rank = faster/more
  *  aggressive mode.  DATAC1 (=10) is fastest, DATAC3 (=12) is medium, and
  *  DATAC4 (=18) is slowest — the numeric constants decrease as throughput
@@ -275,9 +267,11 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
             HLOGD(LOG_COMP, "Ladder step-down to %d (retry)", sess->speed_level);
         }
         sess->tx_success_count = 0;
+        sess->consecutive_retries++;
     }
     else
     {
+        sess->consecutive_retries = 0;
         sess->tx_success_count++;
         if (sess->tx_success_count >= ARQ_LADDER_UP_SUCCESSES &&
             sess->speed_level < ARQ_LADDER_LEVELS - 1)
@@ -293,13 +287,25 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
 /** Compute desired payload mode based on peer_snr_x10 and TX backlog.
  *  Returns current payload_mode if no change is warranted.
  *
- *  Pure SNR + backlog mode selection.  Upgrades require SNR above the mode
- *  threshold plus a hysteresis margin.  Downgrades happen when SNR drops
- *  below the current mode's base threshold.  The reliability ladder
- *  (speed_level) is tracked for diagnostics but does NOT gate mode selection;
- *  SNR is the authoritative signal for channel quality. */
+ *  Hybrid SNR + delivery-feedback mode selection.  Upgrades require SNR
+ *  above the mode threshold plus a hysteresis margin.  Downgrades happen
+ *  when SNR drops below the current mode's base threshold, OR when
+ *  consecutive retries indicate the channel can't support the current mode
+ *  (catches deep fades where SNR is stale).  After a retry-forced downgrade,
+ *  a hold timer prevents re-upgrade oscillation. */
 static int select_best_mode(const arq_session_t *sess, int backlog)
 {
+    /* Safety net: if consecutive retries hit the threshold, the channel
+     * can't support the current mode — force one level down.  The hold
+     * timer in maybe_upgrade_mode() prevents immediate re-upgrade. */
+    if (sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD &&
+        mode_rank(sess->payload_mode) > 0)
+    {
+        int cur = sess->payload_mode;
+        if (cur == FREEDV_MODE_DATAC1) return FREEDV_MODE_DATAC3;
+        return FREEDV_MODE_DATAC4;
+    }
+
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
      * MODE_REQ/MODE_ACK airtime overhead is never worthwhile for one frame. */
     const arq_mode_timing_t *cur = arq_protocol_mode_timing(sess->payload_mode);
@@ -348,10 +354,28 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         return false;
     }
 
+    /* After a retry-forced downgrade, don't allow re-upgrade until the
+     * hold timer expires.  This prevents oscillation when stale SNR
+     * says "upgrade" but the channel can't actually support it. */
+    if (mode_rank(desired_mode) > mode_rank(sess->payload_mode) &&
+        hermes_uptime_ms() < sess->mode_hold_until_ms)
+        return false;
+
     /* Hysteresis: require ARQ_MODE_SWITCH_HYST_COUNT consecutive observations. */
     sess->mode_upgrade_count++;
     if (sess->mode_upgrade_count < ARQ_MODE_SWITCH_HYST_COUNT)
         return false;
+
+    /* If this is a retry-forced downgrade, set the hold timer. */
+    if (mode_rank(desired_mode) < mode_rank(sess->payload_mode) &&
+        sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD)
+    {
+        sess->mode_hold_until_ms =
+            hermes_uptime_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
+        sess->consecutive_retries = 0;
+        HLOGI(LOG_COMP, "Retry-forced downgrade: hold for %ds",
+              ARQ_MODE_HOLD_AFTER_DOWNGRADE_S);
+    }
 
     sess->mode_upgrade_count = 0;
     sess->pending_tx_mode = desired_mode;

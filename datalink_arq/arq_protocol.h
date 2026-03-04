@@ -180,7 +180,7 @@ typedef struct
 #define ARQ_KEEPALIVE_MISS_LIMIT      5     /* missed keepalives before disconnect */
 #define ARQ_TURN_REQ_RETRIES          2
 #define ARQ_MODE_REQ_RETRIES          2
-#define ARQ_MODE_SWITCH_HYST_COUNT    1     /* ladder provides stability gate; 1 = immediate */
+#define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
 #define ARQ_STARTUP_MAX_S             8     /* DATAC13-only startup window         */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold peer payload mode after activity */
@@ -193,6 +193,8 @@ typedef struct
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
 #define ARQ_LADDER_LEVELS             3     /* 0=DATAC4, 1=DATAC3, 2=DATAC1     */
 #define ARQ_LADDER_UP_SUCCESSES       4     /* clean ACKs required to step up    */
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
+#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 15  /* hold lower mode after forced downgrade */
 
 /* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
  *   0               = full frame (all user bytes are valid data)

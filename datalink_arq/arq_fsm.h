@@ -204,6 +204,13 @@ typedef struct
                                         * transmitting before IRS resets its
                                         * decoders from TX→RX)               */
 
+    /* --- Delivery-feedback safety net --- */
+    int      consecutive_retries;      /* consecutive non-clean TX outcomes     */
+    uint64_t mode_hold_until_ms;       /* after forced downgrade: don't upgrade
+                                        * until this uptime (prevents oscillation
+                                        * when stale SNR says "upgrade" but the
+                                        * channel can't support it)            */
+
     /* --- Retransmit buffer --- */
     uint8_t  tx_retransmit_buf[1024];  /* last-sent data frame bytes; must be
                                        * >= max frame: 8 hdr + 502 DATAC1
