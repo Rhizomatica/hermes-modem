@@ -123,9 +123,10 @@ void arq_fsm_init(arq_session_t *sess)
     sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
-    sess->control_mode   = FREEDV_MODE_DATAC13;
-    sess->payload_mode   = FREEDV_MODE_DATAC4;  /* my TX mode, starts at safest level */
-    sess->peer_tx_mode   = FREEDV_MODE_DATAC4;  /* RX decoder, starts at safest level */
+    sess->control_mode        = FREEDV_MODE_DATAC13;
+    sess->payload_mode        = FREEDV_MODE_DATAC4;  /* my TX mode, starts at safest level */
+    sess->peer_tx_mode        = FREEDV_MODE_DATAC4;  /* RX decoder, starts at safest level */
+    sess->initial_payload_mode = FREEDV_MODE_DATAC4;  /* overwritten by arq_set_initial_mode */
     sess->speed_level    = 0;
     sess->tx_success_count = 0;
 }
@@ -152,15 +153,16 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = hermes_uptime_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
-    /* Reset data-flow state when returning to idle connection states so that
-     * a stale dflow_state (e.g. WAIT_ACK) from a prior session never leaks
-     * into the next LISTENING/ACCEPTING cycle.
-     * Do NOT reset peer_tx_mode here — LISTENING needs it to stay at the
-     * broadcast mode (e.g. DATAC3) for receiving broadcast frames.  Mode
-     * state is instead reset in the RX_CALL handler (entering ACCEPTING)
-     * and in the CALLING/ACCEPTING session-start paths. */
+    /* Reset data-flow and mode state when returning to idle connection states.
+     * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
+     * payload decoder can receive broadcast frames while LISTENING.  The
+     * session-start paths (RX_CALL, APP_CONNECT) override this to DATAC4
+     * before entering ACCEPTING/CALLING. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
-        sess->dflow_state = ARQ_DFLOW_IDLE_ISS;
+    {
+        sess->dflow_state  = ARQ_DFLOW_IDLE_ISS;
+        sess->peer_tx_mode = sess->initial_payload_mode;
+    }
 }
 
 static void dflow_enter(arq_session_t *sess, arq_dflow_state_t new_state,

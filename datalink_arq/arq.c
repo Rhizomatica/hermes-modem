@@ -529,9 +529,11 @@ int arq_init(size_t frame_size, int mode)
 
     arq_timing_init(&g_timing);
     arq_fsm_init(&g_sess);
-    /* payload_mode and control_mode are set by arq_fsm_init().
-     * arq_set_active_modem_mode() will update payload_mode dynamically
-     * as the modem switches modes during the session. */
+    /* Record the startup payload mode (= broadcast RX mode) so that
+     * sess_enter() can restore peer_tx_mode on disconnect, allowing
+     * the payload decoder to receive broadcast frames while LISTENING. */
+    g_sess.initial_payload_mode = mode;
+    g_sess.peer_tx_mode         = mode;  /* match broadcast mode at startup */
 
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,

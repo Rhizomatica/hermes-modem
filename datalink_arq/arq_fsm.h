@@ -168,6 +168,9 @@ typedef struct
     int      payload_mode;             /* MY data TX mode (ISS); per-direction,
                                         * independent of peer's TX mode        */
     int      control_mode;             /* always FREEDV_MODE_DATAC13           */
+    int      initial_payload_mode;     /* startup payload mode (= broadcast RX
+                                        * mode); restored on disconnect so the
+                                        * payload decoder matches broadcast    */
     int      speed_level;              /* reliability ladder: 0=DATAC4,
                                         * 1=DATAC3, 2=DATAC1                  */
     int      tx_success_count;         /* consecutive clean ACKs (no retry)
