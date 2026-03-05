@@ -57,6 +57,10 @@ typedef struct
 void arq_timing_init(arq_timing_ctx_t *ctx);
 
 /** @brief Record frame queued for TX; logs [TMG] tx_queue.
+ *  @param ctx            Timing context.
+ *  @param seq            TX sequence number.
+ *  @param mode           FreeDV mode used for TX.
+ *  @param backlog_bytes  Application bytes remaining in TX queue.
  *  @param payload_bytes  Actual application bytes in this frame (0 for retransmits). */
 void arq_timing_record_tx_queue(arq_timing_ctx_t *ctx, int seq, int mode,
                                 int backlog_bytes, int payload_bytes);
@@ -70,6 +74,8 @@ void arq_timing_record_tx_end(arq_timing_ctx_t *ctx, int seq);
 
 /**
  * @brief Record ACK received; computes and logs OTA RTT.
+ * @param ctx            Timing context.
+ * @param seq            TX sequence number being ACKed.
  * @param ack_delay_raw  Wire-encoded ack_delay (10ms units, 0=unknown).
  * @param peer_snr_x10   Peer-reported SNR * 10.
  */
@@ -85,6 +91,8 @@ void arq_timing_record_ack_tx(arq_timing_ctx_t *ctx, int seq);
 
 /**
  * @brief Record a retry event; logs [TMG] retry.
+ * @param ctx      Timing context.
+ * @param seq      TX sequence number.
  * @param attempt  1-based retry number.
  * @param reason   Short reason string (e.g. "timeout", "nack").
  */
@@ -93,6 +101,7 @@ void arq_timing_record_retry(arq_timing_ctx_t *ctx, int seq,
 
 /**
  * @brief Record turn direction change; logs [TMG] turn.
+ * @param ctx     Timing context.
  * @param to_iss  true = becoming ISS, false = becoming IRS.
  * @param reason  "piggyback", "turn_req", "startup" etc.
  */

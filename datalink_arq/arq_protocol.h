@@ -287,7 +287,11 @@ int arq_protocol_build_keepalive_ack(uint8_t *buf, size_t buf_len,
 
 /**
  * TURN_REQ frame.
+ * @param buf        Output buffer (caller-provided).
+ * @param buf_len    Size of buf in bytes.
+ * @param session_id ARQ session identifier.
  * @param rx_ack_seq  Last seq received from current ISS (so ISS can flush pending retries).
+ * @param snr_raw    Local SNR encoded for wire.
  */
 int arq_protocol_build_turn_req(uint8_t *buf, size_t buf_len,
                                  uint8_t session_id, uint8_t rx_ack_seq,
@@ -299,6 +303,10 @@ int arq_protocol_build_turn_ack(uint8_t *buf, size_t buf_len,
 
 /**
  * MODE_REQ frame.
+ * @param buf        Output buffer (caller-provided).
+ * @param buf_len    Size of buf in bytes.
+ * @param session_id ARQ session identifier.
+ * @param snr_raw    Local SNR encoded for wire.
  * @param freedv_mode  Requested payload FreeDV mode (FREEDV_MODE_DATAC*).
  */
 int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
@@ -314,9 +322,16 @@ int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
 
 /**
  * DATA frame — 8-byte header + payload bytes.
- * @param flags       ARQ_FLAG_TURN_REQ | ARQ_FLAG_HAS_DATA (bitmask).
- * @param payload     Payload bytes (must be <= buf_len - ARQ_FRAME_HDR_SIZE).
- * @param payload_len Number of payload bytes.
+ * @param buf          Output buffer (caller-provided).
+ * @param buf_len      Size of buf in bytes.
+ * @param session_id   ARQ session identifier.
+ * @param tx_seq       TX sequence number.
+ * @param rx_ack_seq   Last seq received from peer (piggybacked ACK).
+ * @param flags        ARQ_FLAG_TURN_REQ | ARQ_FLAG_HAS_DATA (bitmask).
+ * @param snr_raw      Local SNR encoded for wire.
+ * @param payload_valid Number of valid bytes in the payload slot.
+ * @param payload      Payload bytes (must be <= buf_len - ARQ_FRAME_HDR_SIZE).
+ * @param payload_len  Number of payload bytes.
  */
 int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
                              uint8_t session_id, uint8_t tx_seq,
@@ -328,6 +343,9 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
 
 /**
  * Build a CALL frame.
+ * @param buf          Output buffer (caller-provided).
+ * @param buf_len      Size of buf in bytes.
+ * @param session_id   ARQ session identifier.
  * @param src  Local callsign.
  * @param dst  Remote callsign.
  * @return Total frame bytes (ARQ_CONTROL_FRAME_SIZE = 14) on success, -1 on error.
@@ -338,6 +356,9 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
 
 /**
  * Build an ACCEPT frame.
+ * @param buf          Output buffer (caller-provided).
+ * @param buf_len      Size of buf in bytes.
+ * @param session_id   ARQ session identifier.
  * @param src  Local callsign.
  * @param dst  Remote callsign.
  */
@@ -347,6 +368,8 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
 
 /**
  * Parse a CALL frame; extract callsigns.
+ * @param buf            Input frame buffer.
+ * @param buf_len        Size of buf in bytes.
  * @param session_id_out  Receives the session_id byte.
  * @param src_out         Buffer for local (transmitting) callsign, CALLSIGN_MAX_SIZE bytes.
  * @param dst_out         Buffer for remote callsign, CALLSIGN_MAX_SIZE bytes.
