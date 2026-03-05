@@ -165,14 +165,21 @@ typedef struct
     uint8_t  rx_expected;              /* next seq we expect from peer         */
 
     /* --- Mode / speed --- */
-    int      payload_mode;             /* current data TX FreeDV mode          */
+    int      payload_mode;             /* MY data TX mode (ISS); per-direction,
+                                        * independent of peer's TX mode        */
     int      control_mode;             /* always FREEDV_MODE_DATAC13           */
-    int      speed_level;              /* mode selection ladder index          */
-    int      mode_upgrade_count;       /* hysteresis counter for upgrade       */
-    int      pending_payload_mode;     /* mode requested in MODE_REQ (for retry) */
-    int      peer_payload_mode;        /* mode we last saw peer TX data in;
-                                        * used as TX mode when IRS gains turn
-                                        * to stay in sync with peer's decoder  */
+    int      initial_payload_mode;     /* startup payload mode (= broadcast RX
+                                        * mode); restored on disconnect so the
+                                        * payload decoder matches broadcast    */
+    int      speed_level;              /* reliability ladder: 0=DATAC4,
+                                        * 1=DATAC3, 2=DATAC1                  */
+    int      tx_success_count;         /* consecutive clean ACKs (no retry)
+                                        * towards ladder step-up               */
+    int      mode_upgrade_count;       /* SNR hysteresis counter for upgrade   */
+    int      pending_tx_mode;          /* mode requested in MODE_REQ (retry)   */
+    int      peer_tx_mode;             /* mode peer last TX'd in = my payload
+                                        * RX decoder mode when IRS; updated
+                                        * from ev->mode on every DATA frame    */
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */
@@ -193,6 +200,19 @@ typedef struct
     bool     disconnect_to_no_client;  /* after disconnect: clear arq_info     */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
+
+    /* --- Initial connect guard --- */
+    bool     need_initial_guard;       /* ISS must apply channel guard before
+                                        * first DATA after connect (prevents
+                                        * transmitting before IRS resets its
+                                        * decoders from TX→RX)               */
+
+    /* --- Delivery-feedback safety net --- */
+    int      consecutive_retries;      /* consecutive non-clean TX outcomes     */
+    uint64_t mode_hold_until_ms;       /* after forced downgrade: don't upgrade
+                                        * until this uptime (prevents oscillation
+                                        * when stale SNR says "upgrade" but the
+                                        * channel can't support it)            */
 
     /* --- Retransmit buffer --- */
     uint8_t  tx_retransmit_buf[1024];  /* last-sent data frame bytes; must be

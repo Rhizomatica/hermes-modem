@@ -184,10 +184,13 @@ static void cb_notify_disconnected(bool to_no_client)
     pthread_mutex_unlock(&g_app_tx_mtx);
     tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
-    /* Return to LISTENING automatically after a real session ends.
-     * Only fire if we were actually connected (dst_addr was set): avoids
-     * spurious APP_LISTEN from APP_DISCONNECT-in-DISCONNECTED handlers. */
-    if (was_connected && arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
+    /* Return to LISTENING after any disconnection (failed call, cancelled call,
+     * or ended session) as long as listen mode is active.  The was_connected
+     * guard was thought to prevent spurious APP_LISTEN from APP_DISCONNECT-in-
+     * DISCONNECTED, but fsm_disconnected has no APP_DISCONNECT handler, so
+     * notify_disconnected is never called from that path. */
+    (void)was_connected;
+    if (arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
     {
         arq_event_t ev = { .id = ARQ_EV_APP_LISTEN };
         evq_push(&ev);
@@ -257,7 +260,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_CONNECT:
-        snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
+        snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         ev.id = ARQ_EV_APP_CONNECT;
         break;
 
@@ -445,7 +448,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
          * up to 511 (needed for DATAC1 which has 502-byte payloads).
          * See ARQ_DATA_LEN_FULL / ARQ_FLAG_LEN_HI in arq_protocol.h. */
         size_t valid_bytes;
-        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL)
+        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL &&
+            !(hdr.flags & ARQ_FLAG_LEN_HI))
         {
             valid_bytes = slot_bytes;
         }
@@ -525,9 +529,11 @@ int arq_init(size_t frame_size, int mode)
 
     arq_timing_init(&g_timing);
     arq_fsm_init(&g_sess);
-    /* payload_mode and control_mode are set by arq_fsm_init().
-     * arq_set_active_modem_mode() will update payload_mode dynamically
-     * as the modem switches modes during the session. */
+    /* Record the startup payload mode (= broadcast RX mode) so that
+     * sess_enter() can restore peer_tx_mode on disconnect, allowing
+     * the payload decoder to receive broadcast frames while LISTENING. */
+    g_sess.initial_payload_mode = mode;
+    g_sess.peer_tx_mode         = mode;  /* match broadcast mode at startup */
 
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,
@@ -678,8 +684,9 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->trx              = arq_conn.TRX;
     snapshot->tx_backlog_bytes = cb_tx_backlog();
     snapshot->speed_level      = g_sess.speed_level;
-    snapshot->payload_mode     = g_sess.payload_mode;
-    snapshot->control_mode     = g_sess.control_mode;
+    snapshot->payload_mode      = g_sess.payload_mode;
+    snapshot->peer_tx_mode      = g_sess.peer_tx_mode;
+    snapshot->control_mode      = g_sess.control_mode;
     snapshot->preferred_rx_mode = arq_modem_preferred_rx_mode(&g_sess);
     snapshot->preferred_tx_mode = arq_modem_preferred_tx_mode(&g_sess);
     return true;

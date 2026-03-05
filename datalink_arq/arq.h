@@ -80,7 +80,8 @@ typedef struct
     int trx;
     int tx_backlog_bytes;
     int speed_level;
-    int payload_mode;
+    int payload_mode;    /* my TX mode (ISS direction)                     */
+    int peer_tx_mode;    /* RX decoder mode = peer's TX mode (IRS direction) */
     int control_mode;
     int preferred_rx_mode;
     int preferred_tx_mode;

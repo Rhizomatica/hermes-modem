@@ -144,7 +144,14 @@ typedef struct
 } arq_mode_timing_t;
 
 /* Timing constants shared across modules */
-#define ARQ_CHANNEL_GUARD_MS          500   /* channel guard after PTT-OFF (ms)    */
+#define ARQ_CHANNEL_GUARD_MS          700   /* IRS response guard after frame decode.
+                                            * OFDM decode fires ~200ms before sender
+                                            * PTT-OFF, so effective gap at sender is
+                                            * (guard - 200ms) ≈ 500ms.  Radio needs
+                                            * ~340ms for TX→RX switch → 160ms margin
+                                            * for preamble detection.  At 500ms the
+                                            * effective gap was ~300ms, causing ~50%
+                                            * ACK loss on DATAC1 (< 340ms switch).  */
 #define ARQ_ISS_POST_ACK_GUARD_MS     900   /* ISS guard before resuming DATA TX
                                             * after receiving an ACK from the IRS.
                                             * Larger than ARQ_CHANNEL_GUARD_MS:
@@ -156,7 +163,12 @@ typedef struct
                                             * At 900ms: gap=832ms — 492ms of clear
                                             * air before the DATAC1 preamble. */
 #define ARQ_TURN_WAIT_AFTER_ACK_MS   3500  /* IRS post-ACK wait before TURN_REQ:
-                                            * ISS guard(500ms)+frame(2510ms)+margin */
+                                            * ISS guard(900ms)+frame(2510ms)+margin */
+#define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
+                                            * ISS_guard(900)+DATAC4(5800)+margin(2300)
+                                            * Old value 7000 left only ~300ms margin
+                                            * and raced with TIMER_RETRY, causing
+                                            * 3-4 wasted ACCEPT retries (~28s).    */
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
 #define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries before giving up       */
 #define ARQ_ACCEPT_RETRY_SLOTS        4     /* ACCEPT retries before returning     */
@@ -168,7 +180,7 @@ typedef struct
 #define ARQ_KEEPALIVE_MISS_LIMIT      5     /* missed keepalives before disconnect */
 #define ARQ_TURN_REQ_RETRIES          2
 #define ARQ_MODE_REQ_RETRIES          2
-#define ARQ_MODE_SWITCH_HYST_COUNT    3     /* consecutive observations before mode change */
+#define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
 #define ARQ_STARTUP_MAX_S             8     /* DATAC13-only startup window         */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold peer payload mode after activity */
@@ -179,6 +191,10 @@ typedef struct
 #define ARQ_BACKLOG_MIN_DATAC3        56
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
+#define ARQ_LADDER_LEVELS             3     /* 0=DATAC4, 1=DATAC3, 2=DATAC1     */
+#define ARQ_LADDER_UP_SUCCESSES       4     /* clean ACKs required to step up    */
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
+#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 15  /* hold lower mode after forced downgrade */
 
 /* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
  *   0               = full frame (all user bytes are valid data)

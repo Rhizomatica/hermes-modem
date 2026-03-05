@@ -207,17 +207,20 @@ int arithmetic_encode(const char* msg, uint8_t* output) {
 }
 
 #if 1
-int arithmetic_decode(uint8_t* input, int max_len, char* output) {
+int arithmetic_decode(uint8_t* input, int max_len, char* output, int max_output) {
+    if (!output || max_output <= 0)
+        return -1;
+    if (max_output == 1) {
+        output[0] = '\0';
+        return -1;
+    }
     BitReader br;
     br_init(&br, input, max_len);
 
     uint64_t low = 0, high = MAX_CODE;
     uint64_t value = 0;
     uint64_t total = cum_freq[NUM_SYMBOLS];
-
     int outpos = 0;
-    //printf("br.total_bits_read %d\n", br.total_bits_read);
-    // Initialize value
     for (int i = 0; i < CODE_BITS; i++) {
         int b = br_read_bit(&br);
         if (b < 0) {
@@ -229,8 +232,6 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output) {
 
 
     while (1) {
-        //printf("br.total_bits_read %d\n", br.total_bits_read);
-
         uint64_t range = high - low + 1;
         uint64_t scaled = ((value - low + 1) * total - 1) / range;
 
@@ -246,6 +247,8 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output) {
         if (symbols[sym] == '\0') {
             break;  // EOF reached
         }
+        if (outpos >= max_output - 1)
+            goto finish;
         output[outpos++] = symbols[sym];
 
         high = low + (range * cum_freq[sym + 1]) / total - 1;
@@ -269,18 +272,15 @@ int arithmetic_decode(uint8_t* input, int max_len, char* output) {
             low <<= 1;
             high = (high << 1) | 1;
             int b = br_read_bit(&br);
-            if (b < 0) {
-                fprintf(stderr, "Decode error: bitstream ended too early (loop)\n");
+            if (b < 0)
                 goto finish;
-            }
             value = (value << 1) | b;
         }
     }
 
-    //printf("br.total_bits_read %d\n", br.total_bits_read);
 finish:
     output[outpos] = '\0';
-    return 0;
+    return (outpos == 0) ? -1 : 0;
     
 }
 #endif
@@ -366,7 +366,7 @@ int main() {
     char decoded[100];
     int dec_len1;
 
-    if (arithmetic_decode(encoded, 11, decoded) == 0)
+    if (arithmetic_decode(encoded, 11, decoded, (int)sizeof(decoded)) == 0)
         printf("Decoded: %s\n", decoded);
 
 

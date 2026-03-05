@@ -243,8 +243,8 @@ static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool r
 
     if (is_payload_split_mode(snapshot->preferred_rx_mode))
         mode = snapshot->preferred_rx_mode;
-    else if (is_payload_split_mode(snapshot->payload_mode))
-        mode = snapshot->payload_mode;
+    else if (is_payload_split_mode(snapshot->peer_tx_mode))
+        mode = snapshot->peer_tx_mode;  /* peer's TX mode = what our decoder must match */
 
     return mode;
 }
@@ -808,7 +808,13 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         mode_changed = state->freedv != freedv || state->mode != mode;
         if (mode_changed)
         {
-            freedv_set_sync(freedv, FREEDV_SYNC_UNSYNC);
+            /* Do NOT call freedv_set_sync(UNSYNC) here.  The new mode's
+             * decoder is already in search mode from its last use (or
+             * init).  UNSYNC would zero its rxbuf, starving the preamble
+             * correlation normalizer (same as the was_tx regression).
+             * Stale rxbuf content is harmless: it won't correlate with
+             * the new mode's preamble pattern, and the non-zero energy
+             * keeps the normalizer well-conditioned. */
             state->demod_count = 0;
         }
     }
@@ -1251,45 +1257,21 @@ void *rx_thread(void *g_modem)
          * Also reset the decoder sample accumulators (demod_count=0) so that
          * pre-TX samples queued in demod_in are not mixed with post-TX audio.
          *
-         * After flushing, feed a silence block (nin zeros) through each decoder.
-         * This forces FreeDV out of TRACKING mode — where preamble detection is
-         * restricted to a stale expected position — and into SEARCH mode, where
-         * it scans the full next nin-sample window for a preamble correlation
-         * peak.  Without this, TRACKING misses the peer's ACK preamble ~40% of
-         * the time when the stale expected position does not align with the
-         * actual preamble location (which arrives ~500ms after PTT-OFF). */
+         * We intentionally do NOT call freedv_set_sync(UNSYNC) here.
+         * The OFDM state machine already transitions to "search" mode after
+         * completing or failing a packet (UW_BAD / packet_count == np).
+         * Calling UNSYNC zeros the entire rxbuf, which starves the preamble
+         * correlation normalizer (mag2 ≈ 0 in est_timing_and_freq) and causes
+         * ~50% first-attempt decode failures when the peer's signal arrives
+         * before the rxbuf refills with enough real audio (~770ms).
+         * With rxbuf left intact (containing harmless old decoded audio or
+         * noise floor), the normalizer stays well-conditioned and preamble
+         * detection works immediately on real post-TX audio. */
         if (was_tx)
         {
             clear_buffer(capture_buffer);
             control_decoder.demod_count = 0;
             payload_decoder.demod_count = 0;
-
-            pthread_mutex_lock(&modem_freedv_lock);
-            if (control_decoder.freedv && control_decoder.demod_in &&
-                control_decoder.bytes_out)
-            {
-                int nin = freedv_nin(control_decoder.freedv);
-                if (nin > 0 && nin <= control_decoder.demod_cap)
-                {
-                    memset(control_decoder.demod_in, 0, (size_t)nin * sizeof(int16_t));
-                    freedv_rawdatarx(control_decoder.freedv, control_decoder.bytes_out,
-                                     control_decoder.demod_in);
-                }
-            }
-            if (payload_decoder.freedv &&
-                payload_decoder.freedv != control_decoder.freedv &&
-                payload_decoder.demod_in && payload_decoder.bytes_out)
-            {
-                int nin = freedv_nin(payload_decoder.freedv);
-                if (nin > 0 && nin <= payload_decoder.demod_cap)
-                {
-                    memset(payload_decoder.demod_in, 0, (size_t)nin * sizeof(int16_t));
-                    freedv_rawdatarx(payload_decoder.freedv, payload_decoder.bytes_out,
-                                     payload_decoder.demod_in);
-                }
-            }
-            pthread_mutex_unlock(&modem_freedv_lock);
-
             was_tx = false;
         }
 

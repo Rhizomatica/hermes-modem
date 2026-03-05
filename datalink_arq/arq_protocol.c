@@ -20,7 +20,7 @@
 /* Arithmetic encoder for callsign compression */
 extern void init_model(void);
 extern int  arithmetic_encode(const char *msg, uint8_t *output);
-extern int  arithmetic_decode(uint8_t *input, int max_len, char *output);
+extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max_output);
 
 /* CALLSIGN_MAX_SIZE from arq.h */
 #include "arq.h"
@@ -330,7 +330,8 @@ static int decode_callsign_payload(const uint8_t *in, size_t in_len,
     char *sep;
 
     init_model();
-    if (arithmetic_decode((uint8_t *)in, (int)in_len, decoded) < 0)
+    if (arithmetic_decode((uint8_t *)in, (int)in_len, decoded,
+                          (int)sizeof(decoded)) < 0)
         return -1;
     if (decoded[0] == 0)
         return -1;
