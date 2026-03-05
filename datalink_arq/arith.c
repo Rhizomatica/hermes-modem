@@ -208,6 +208,12 @@ int arithmetic_encode(const char* msg, uint8_t* output) {
 
 #if 1
 int arithmetic_decode(uint8_t* input, int max_len, char* output, int max_output) {
+    if (!output || max_output <= 0)
+        return -1;
+    if (max_output == 1) {
+        output[0] = '\0';
+        return -1;
+    }
     BitReader br;
     br_init(&br, input, max_len);
 

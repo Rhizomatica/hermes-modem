@@ -759,7 +759,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->speed_level        = 0;
             sess->tx_success_count   = 0;
             sess->pending_disconnect = false;  /* clear stale deferred disconnect */
-            sess->startup_deadline_ms =                hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            sess->startup_deadline_ms = hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call);
             if (g_timing)
