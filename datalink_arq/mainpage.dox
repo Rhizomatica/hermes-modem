@@ -1,0 +1,31 @@
+/**
+@mainpage HERMES Modem — ARQ Subsystem
+
+@section intro Introduction
+
+Mercury is the modem component of the
+[HERMES project](https://www.rhizomatica.org/hermes/).
+This documentation covers the ARQ data link subsystem API.
+
+@section docs Documentation
+
+- [ARQ Protocol & Architecture (ARQ.md)](https://github.com/Rhizomatica/mercury/blob/mercuryv2/docs/ARQ.md) —
+  Full protocol reference, state machine, OTA tuning guide.
+- [Mercury README](https://github.com/Rhizomatica/mercury/tree/mercuryv2) —
+  Build instructions, CLI usage, logging.
+- [mercury-qt GUI](https://github.com/Rhizomatica/mercury-qt) —
+  Qt-based graphical interface (under development).
+
+@section modules Key Modules
+
+- @ref arq_protocol.h — Frame builders/parsers, wire format constants.
+- @ref arq_fsm.h — Connection and data-flow state machines, gear-shifting.
+- @ref arq.h — Event loop, channel bus, TCP bridge.
+- @ref arq_timing.h — OTA timing instrumentation and logging.
+
+@section links Links
+
+- Source: https://github.com/Rhizomatica/mercury
+- Mailing list: https://lists.riseup.net/www/info/hermes-general
+- Funded by [ARDC](https://www.ardc.net/) and others.
+*/
