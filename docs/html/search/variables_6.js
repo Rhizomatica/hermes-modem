@@ -1,4 +1,30 @@
 var searchData=
 [
-  ['initialized_0',['initialized',['../structarq__runtime__snapshot__t.html#a227e49bb9501804cc0ae75c1f0753865',1,'arq_runtime_snapshot_t']]]
+  ['g_5fapp_5ftx_5fbuf_0',['g_app_tx_buf',['../arq_8c.html#ae7157a01a232b8ce6e7c1660adb9cf63',1,'arq.c']]],
+  ['g_5fapp_5ftx_5fmtx_1',['g_app_tx_mtx',['../arq_8c.html#a06cd907b75b313d41b72df5193c37e51',1,'arq.c']]],
+  ['g_5fapp_5ftx_5fstorage_2',['g_app_tx_storage',['../arq_8c.html#aae368b330fe05840b26387bbacaa3f0d',1,'arq.c']]],
+  ['g_5fbus_3',['g_bus',['../arq_8c.html#a424b3b626d0c537af8cc65002f862efe',1,'arq.c']]],
+  ['g_5fcap_4',['g_cap',['../arq__modem_8c.html#a536b3d3a51854faff9e8cdd998444bdb',1,'arq_modem.c']]],
+  ['g_5fcbs_5',['g_cbs',['../arq__fsm_8c.html#aeb7279bc393cd1996caac9054e66633f',1,'arq_fsm.c']]],
+  ['g_5fcmd_5ftid_6',['g_cmd_tid',['../arq_8c.html#a6a81588cdf05604a6ee303ef9892df4b',1,'arq.c']]],
+  ['g_5fcount_7',['g_count',['../arq__modem_8c.html#a1301dab94ea8fb1855901172b7281de6',1,'arq_modem.c']]],
+  ['g_5fevq_8',['g_evq',['../arq_8c.html#a13a41fc14513d5c71aea88b3e83b6866',1,'arq.c']]],
+  ['g_5fevq_5fcond_9',['g_evq_cond',['../arq_8c.html#af5293660098f2c4b27ff110bd383f53b',1,'arq.c']]],
+  ['g_5fevq_5fcount_10',['g_evq_count',['../arq_8c.html#ac8aa5c9422a5d3fe2c5b6ec302c2ff69',1,'arq.c']]],
+  ['g_5fevq_5fhead_11',['g_evq_head',['../arq_8c.html#af9396bf0bcd2fcc7b1003566e3cc69d1',1,'arq.c']]],
+  ['g_5fevq_5flock_12',['g_evq_lock',['../arq_8c.html#a2c78021f2332f422237185b86a2e16ab',1,'arq.c']]],
+  ['g_5fevq_5ftail_13',['g_evq_tail',['../arq_8c.html#a551ddbf9b3e71071f82641236bdba4fd',1,'arq.c']]],
+  ['g_5fhead_14',['g_head',['../arq__modem_8c.html#ad6c0b16d9c0b1d1453e8233568202057',1,'arq_modem.c']]],
+  ['g_5finitialized_15',['g_initialized',['../arq_8c.html#a2fc18e858b5a902af2f355d46c4d24d2',1,'arq.c']]],
+  ['g_5finject_5fevent_16',['g_inject_event',['../arq__modem_8c.html#a31de4848be75106fa08df30626a0a6da',1,'arq_modem.c']]],
+  ['g_5floop_5ftid_17',['g_loop_tid',['../arq_8c.html#ae178b56a1193b59c30b418f931edd8e4',1,'arq.c']]],
+  ['g_5fpayload_5ftid_18',['g_payload_tid',['../arq_8c.html#a90cb30b9701ea325b7b1af0e1a11d377',1,'arq.c']]],
+  ['g_5fqcond_19',['g_qcond',['../arq__modem_8c.html#ad39ffebfcd1202534128ff78f5ea524d',1,'arq_modem.c']]],
+  ['g_5fqmtx_20',['g_qmtx',['../arq__modem_8c.html#a9a60ae0022399e7e877ef0a454fc70fe',1,'arq_modem.c']]],
+  ['g_5fqueue_21',['g_queue',['../arq__modem_8c.html#ad3aab913fe9e2268a9ad2aa961953380',1,'arq_modem.c']]],
+  ['g_5frunning_22',['g_running',['../arq_8c.html#a57ed4de51683e0e0d3fb548b11e1ebd1',1,'arq.c']]],
+  ['g_5fsess_23',['g_sess',['../arq_8c.html#ae6efcf4d8ab864a6f3baec466cfb1e23',1,'arq.c']]],
+  ['g_5fshutdown_24',['g_shutdown',['../arq__modem_8c.html#a4c09a9a6cdaf7985f3298836c50bae58',1,'arq_modem.c']]],
+  ['g_5ftail_25',['g_tail',['../arq__modem_8c.html#a10bf4faabca087631f07092160c75200',1,'arq_modem.c']]],
+  ['g_5ftiming_26',['g_timing',['../arq_8c.html#a2acbf921129f15a7d0201b96650a9d5f',1,'g_timing:&#160;arq.c'],['../arq__fsm_8c.html#adf8eae995fb45bc9242aa03c31b21bf6',1,'g_timing:&#160;arq_fsm.c']]]
 ];

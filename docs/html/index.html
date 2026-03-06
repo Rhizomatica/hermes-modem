@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: Main Page</title>
+<title>HERMES Modem: HERMES Modem — ARQ Subsystem</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -69,10 +69,36 @@ $(function() {
 </div>
 </div>
 
-<div class="header">
-  <div class="headertitle"><div class="title">HERMES Modem Documentation</div></div>
+<div><div class="header">
+  <div class="headertitle"><div class="title">HERMES Modem — ARQ Subsystem </div></div>
 </div><!--header-->
 <div class="contents">
+<div class="textblock"><h1><a class="anchor" id="intro"></a>
+Introduction</h1>
+<p>Mercury is the modem component of the <a href="https://www.rhizomatica.org/hermes/">HERMES project</a>. This documentation covers the ARQ data link subsystem API.</p>
+<h1><a class="anchor" id="docs"></a>
+Documentation</h1>
+<ul>
+<li><a href="https://github.com/Rhizomatica/mercury/blob/mercuryv2/docs/ARQ.md">ARQ Protocol &amp; Architecture (ARQ.md)</a> — Full protocol reference, state machine, OTA tuning guide.</li>
+<li><a href="https://github.com/Rhizomatica/mercury/tree/mercuryv2">Mercury README</a> — Build instructions, CLI usage, logging.</li>
+<li><a href="https://github.com/Rhizomatica/mercury-qt">mercury-qt GUI</a> — Qt-based graphical interface (under development).</li>
+</ul>
+<h1><a class="anchor" id="modules"></a>
+Key Modules</h1>
+<ul>
+<li><a class="el" href="arq__protocol_8h.html">arq_protocol.h</a> — Frame builders/parsers, wire format constants.</li>
+<li><a class="el" href="arq__fsm_8h.html">arq_fsm.h</a> — Connection and data-flow state machines, gear-shifting.</li>
+<li><a class="el" href="arq_8h.html">arq.h</a> — Event loop, channel bus, TCP bridge.</li>
+<li><a class="el" href="arq__timing_8h.html">arq_timing.h</a> — OTA timing instrumentation and logging.</li>
+</ul>
+<h1><a class="anchor" id="links"></a>
+Links</h1>
+<ul>
+<li>Source: <a href="https://github.com/Rhizomatica/mercury">https://github.com/Rhizomatica/mercury</a></li>
+<li>Mailing list: <a href="https://lists.riseup.net/www/info/hermes-general">https://lists.riseup.net/www/info/hermes-general</a></li>
+<li>Funded by <a href="https://www.ardc.net/">ARDC</a> and others. </li>
+</ul>
+</div></div><!-- PageDoc -->
 </div><!-- contents -->
 <!-- start footer part -->
 <hr class="footer"/><address class="footer"><small>

@@ -141,8 +141,8 @@ Functions</h2></td></tr>
 <tr class="separator:a0f9a752f2e1ee9777e1990873e2523af"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a02f14a3ab655ebfafa289faf4c0f9b07" id="r_a02f14a3ab655ebfafa289faf4c0f9b07"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arith_8c.html#a02f14a3ab655ebfafa289faf4c0f9b07">arithmetic_encode</a> (const char *msg, uint8_t *output)</td></tr>
 <tr class="separator:a02f14a3ab655ebfafa289faf4c0f9b07"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a459d6261ebc5f568016dfa3766859b2e" id="r_a459d6261ebc5f568016dfa3766859b2e"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arith_8c.html#a459d6261ebc5f568016dfa3766859b2e">arithmetic_decode</a> (uint8_t *input, int max_len, char *output)</td></tr>
-<tr class="separator:a459d6261ebc5f568016dfa3766859b2e"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a1bdbba1d5fb9a13df4aab025dd3bd289" id="r_a1bdbba1d5fb9a13df4aab025dd3bd289"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arith_8c.html#a1bdbba1d5fb9a13df4aab025dd3bd289">arithmetic_decode</a> (uint8_t *input, int max_len, char *output, int max_output)</td></tr>
+<tr class="separator:a1bdbba1d5fb9a13df4aab025dd3bd289"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="var-members" name="var-members"></a>
 Variables</h2></td></tr>
@@ -279,8 +279,8 @@ Variables</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Function Documentation</h2>
-<a id="a459d6261ebc5f568016dfa3766859b2e" name="a459d6261ebc5f568016dfa3766859b2e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a459d6261ebc5f568016dfa3766859b2e">&#9670;&#160;</a></span>arithmetic_decode()</h2>
+<a id="a1bdbba1d5fb9a13df4aab025dd3bd289" name="a1bdbba1d5fb9a13df4aab025dd3bd289"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1bdbba1d5fb9a13df4aab025dd3bd289">&#9670;&#160;</a></span>arithmetic_decode()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -301,7 +301,13 @@ Variables</h2></td></tr>
           <td class="paramkey"></td>
           <td></td>
           <td class="paramtype">char *&#160;</td>
-          <td class="paramname"><em>output</em>&#160;</td>
+          <td class="paramname"><em>output</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>max_output</em>&#160;</td>
         </tr>
         <tr>
           <td></td>

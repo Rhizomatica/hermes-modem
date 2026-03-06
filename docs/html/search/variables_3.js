@@ -1,9 +1,16 @@
 var searchData=
 [
   ['data_0',['data',['../structarq__bytes__msg__t.html#ad71650ffad62d11445d405b45ad35811',1,'arq_bytes_msg_t']]],
-  ['data_5frx_5fbuffer_5farq_1',['data_rx_buffer_arq',['../arq_8c.html#aabc89b126c3230df63b037ed4b018899',1,'arq.c']]],
-  ['data_5ftx_5fbuffer_5farq_2',['data_tx_buffer_arq',['../arq_8c.html#a1cd0cb25fcc04295cbf33d517a927c26',1,'arq.c']]],
-  ['data_5ftx_5fbuffer_5farq_5fcontrol_3',['data_tx_buffer_arq_control',['../arq_8c.html#a4c383c6be5920945378d789ff5b829cc',1,'arq.c']]],
-  ['decoder_5fmode_4',['decoder_mode',['../structarq__frame__msg__t.html#a773f96483b0f2db2baf94a7548cb109d',1,'arq_frame_msg_t']]],
-  ['dst_5faddr_5',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
+  ['data_5fbytes_1',['data_bytes',['../structarq__event__t.html#a4b6c48f8e019c4d77276bad6cad98d11',1,'arq_event_t']]],
+  ['data_5frx_5fbuffer_5farq_2',['data_rx_buffer_arq',['../arq_8c.html#aabc89b126c3230df63b037ed4b018899',1,'arq.c']]],
+  ['data_5frx_5fms_3',['data_rx_ms',['../structarq__timing__ctx__t.html#a4c9300e64fab5c1bfdbf65a2a911bbbb',1,'arq_timing_ctx_t']]],
+  ['data_5ftx_5fbuffer_5farq_4',['data_tx_buffer_arq',['../arq_8c.html#a1cd0cb25fcc04295cbf33d517a927c26',1,'arq.c']]],
+  ['data_5ftx_5fbuffer_5farq_5fcontrol_5',['data_tx_buffer_arq_control',['../arq_8c.html#a4c383c6be5920945378d789ff5b829cc',1,'arq.c']]],
+  ['deadline_5fevent_6',['deadline_event',['../structarq__session__t.html#ac4af3c9a7025182b1ee25999ab15a129',1,'arq_session_t']]],
+  ['deadline_5fms_7',['deadline_ms',['../structarq__session__t.html#ae5427c7247e38025eda04f4500651dd8',1,'arq_session_t']]],
+  ['decoder_5fmode_8',['decoder_mode',['../structarq__frame__msg__t.html#a773f96483b0f2db2baf94a7548cb109d',1,'arq_frame_msg_t']]],
+  ['deliver_5frx_5fdata_9',['deliver_rx_data',['../structarq__fsm__callbacks__t.html#ac9fcbea66140772ba5f409c77c6d4537',1,'arq_fsm_callbacks_t']]],
+  ['dflow_5fstate_10',['dflow_state',['../structarq__session__t.html#a991fe3f262daac29c89145b7600ca690',1,'arq_session_t']]],
+  ['disconnect_5fto_5fno_5fclient_11',['disconnect_to_no_client',['../structarq__session__t.html#a4e6a3d49c47d99860b35efdea27f0574',1,'arq_session_t']]],
+  ['dst_5faddr_12',['dst_addr',['../structarq__info.html#abd24ecb208a254859229cf631962fe90',1,'arq_info']]]
 ];

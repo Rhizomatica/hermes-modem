@@ -5,10 +5,16 @@ var searchData=
   ['arq_5fbytes_5fmsg_5ft_2',['arq_bytes_msg_t',['../structarq__bytes__msg__t.html',1,'']]],
   ['arq_5fchannel_5fbus_5ft_3',['arq_channel_bus_t',['../structarq__channel__bus__t.html',1,'']]],
   ['arq_5fcmd_5fmsg_5ft_4',['arq_cmd_msg_t',['../structarq__cmd__msg__t.html',1,'']]],
-  ['arq_5fframe_5fmsg_5ft_5',['arq_frame_msg_t',['../structarq__frame__msg__t.html',1,'']]],
-  ['arq_5finfo_6',['arq_info',['../structarq__info.html',1,'']]],
-  ['arq_5fmodem_5fmetrics_5fmsg_5ft_7',['arq_modem_metrics_msg_t',['../structarq__modem__metrics__msg__t.html',1,'']]],
-  ['arq_5fruntime_5fsnapshot_5ft_8',['arq_runtime_snapshot_t',['../structarq__runtime__snapshot__t.html',1,'']]],
-  ['arq_5fstatus_5fmsg_5ft_9',['arq_status_msg_t',['../structarq__status__msg__t.html',1,'']]],
-  ['arq_5ftx_5fframe_5fmsg_5ft_10',['arq_tx_frame_msg_t',['../structarq__tx__frame__msg__t.html',1,'']]]
+  ['arq_5fevent_5ft_5',['arq_event_t',['../structarq__event__t.html',1,'']]],
+  ['arq_5fframe_5fhdr_5ft_6',['arq_frame_hdr_t',['../structarq__frame__hdr__t.html',1,'']]],
+  ['arq_5fframe_5fmsg_5ft_7',['arq_frame_msg_t',['../structarq__frame__msg__t.html',1,'']]],
+  ['arq_5ffsm_5fcallbacks_5ft_8',['arq_fsm_callbacks_t',['../structarq__fsm__callbacks__t.html',1,'']]],
+  ['arq_5finfo_9',['arq_info',['../structarq__info.html',1,'']]],
+  ['arq_5fmode_5ftiming_5ft_10',['arq_mode_timing_t',['../structarq__mode__timing__t.html',1,'']]],
+  ['arq_5fmodem_5fmetrics_5fmsg_5ft_11',['arq_modem_metrics_msg_t',['../structarq__modem__metrics__msg__t.html',1,'']]],
+  ['arq_5fruntime_5fsnapshot_5ft_12',['arq_runtime_snapshot_t',['../structarq__runtime__snapshot__t.html',1,'']]],
+  ['arq_5fsession_5ft_13',['arq_session_t',['../structarq__session__t.html',1,'']]],
+  ['arq_5fstatus_5fmsg_5ft_14',['arq_status_msg_t',['../structarq__status__msg__t.html',1,'']]],
+  ['arq_5ftiming_5fctx_5ft_15',['arq_timing_ctx_t',['../structarq__timing__ctx__t.html',1,'']]],
+  ['arq_5ftx_5fframe_5fmsg_5ft_16',['arq_tx_frame_msg_t',['../structarq__tx__frame__msg__t.html',1,'']]]
 ];

@@ -1,9 +1,7 @@
 var searchData=
 [
-  ['idle_5for_5flisten_5fstate_5flocked_0',['idle_or_listen_state_locked',['../arq_8c.html#afdbda16c86f31a803fcbf80cdbd66a81',1,'arq.c']]],
-  ['init_5fmodel_1',['init_model',['../arith_8c.html#aad6f1976a03fe237647f458a44139219',1,'init_model():&#160;arith.c'],['../arq_8c.html#a20ba212914eecfa750df00a0368da233',1,'init_model(void):&#160;arith.c']]],
-  ['initial_5fgear_5flocked_2',['initial_gear_locked',['../arq_8c.html#ad3c92e477279e421db00665cccbf39ca',1,'arq.c']]],
-  ['initialized_3',['initialized',['../structarq__runtime__snapshot__t.html#a227e49bb9501804cc0ae75c1f0753865',1,'arq_runtime_snapshot_t']]],
-  ['is_5fconnected_5fstate_5flocked_4',['is_connected_state_locked',['../arq_8c.html#ac7c9719d9e4df7ff049398089b8e5283',1,'arq.c']]],
-  ['is_5fpayload_5fmode_5',['is_payload_mode',['../arq_8c.html#a4c918a1001cb5c28f13638c4b9afa77d',1,'arq.c']]]
+  ['half_0',['HALF',['../arith_8c.html#a37c4c48ff47f0838f64b5a1fb3c803b2',1,'arith.c']]],
+  ['handle_5fcmd_1',['handle_cmd',['../arq_8c.html#a43cdb08aa62b0a621477ca7a092e9d7d',1,'arq.c']]],
+  ['header_5fsize_2',['HEADER_SIZE',['../arq_8h.html#a49999be01380f41cc0d0f1f1406fb277',1,'arq.h']]],
+  ['hermes_20modem_20—_20arq_20subsystem_3',['HERMES Modem — ARQ Subsystem',['../index.html',1,'']]]
 ];
