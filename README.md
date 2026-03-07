@@ -1,3 +1,7 @@
+# !! THIS REPOSITORY IS NOT IN USE ANYMORE !!
+
+All the code from here was merged to https://github.com/Rhizomatica/mercury branch mercuryv2.
+
 # HERMES modem
 
 ## Introduction
